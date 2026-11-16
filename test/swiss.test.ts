@@ -215,3 +215,25 @@ describe('swiss', () => {
     }
   });
 });
+
+describe('swiss with player reports (shared mode)', () => {
+  it('a round a player reported into is frozen when the tournament loads', async () => {
+    const { toState } = await import('../src/app/lib/model');
+    // round 1 played and frozen; a player then reports a round 2 match straight to the sheet,
+    // which can't freeze round 2 itself
+    let t = createTournament('swiss', names(8));
+    t = playRound(t, 1, favourite(t));
+    const m = round(t, 2)[0];
+    const reported = { ...t.results, [m.template.id]: { winner: 'p1' as const, p1: m.p1 as string, p2: m.p2 as string } };
+    const doc = { format: 'swiss' as const, entrants: t.entrants.map((id) => ({ id, name: id })), options: t.options ?? {}, results: reported };
+    expect(doc.options.swissPairings).toHaveLength(1);
+
+    const loaded = toState(doc);
+    expect(loaded.options?.swissPairings).toHaveLength(2);
+    const before = pairs(loaded, 2);
+    // the organizer now corrects round 1: round 2 must not be re-paired under the reported result
+    const { state, out } = set(loaded, 'S1-1', 'p2');
+    expect(out.conflicts).toEqual([]);
+    expect(pairs(state, 2)).toEqual(before);
+  });
+});

@@ -7,19 +7,33 @@
   import LogView from '../components/LogView.svelte';
   import MatchList from '../components/MatchList.svelte';
   import MatchSheet from '../components/MatchSheet.svelte';
+  import SharePanel from '../components/SharePanel.svelte';
+  import SignUp from '../components/SignUp.svelte';
   import Standings from '../components/Standings.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import {
     describeResult, FORMAT_LABEL, isTableFormat, matchNumbers, nameMap, newId, roundName, STATUS_LABEL, statusOf, tableStandings, toState,
   } from '../lib/model';
   import type { LogEntry, Player, TournamentDoc } from '../lib/model';
-  import { VersionConflictError } from '../lib/store';
+  import { myPin, rememberOrgKey, VersionConflictError } from '../lib/store';
 
   interface Props {
     id: string;
     tab: string;
+    /** Extra path part: the organizer key in a helper link (#/t/<id>/org/<key>). */
+    arg?: string;
   }
-  let { id, tab }: Props = $props();
+  let { id, tab, arg }: Props = $props();
+
+  // Helper link: keep the key on this device, then drop it from the address bar.
+  if (tab === 'org' && arg) {
+    rememberOrgKey(id, arg);
+    location.replace(`#/t/${id}/edit`);
+    app.notify('You can now edit this tournament on this device');
+  }
+
+  /** Organizer or helper of this tournament on this device, or the site admin. */
+  const canEdit = $derived(app.store.canEdit(id));
 
   let doc = $state<TournamentDoc | null>(null);
   let players = $state<Player[]>([]);
@@ -45,7 +59,8 @@
   const poll = app.store.kind === 'sheets' ? setInterval(() => !openMatch && !saving && tab !== 'edit' && load(), 20000) : undefined;
   onDestroy(() => clearInterval(poll));
 
-  const tstate = $derived(doc ? toState(doc) : null);
+  // A bracket needs 2 players; with sign-up open there may be fewer for a while.
+  const tstate = $derived(doc && doc.entrants.length >= 2 ? toState(doc) : null);
   const resolved = $derived(tstate ? resolve(tstate) : new Map<string, ResolvedMatch>());
   const names = $derived(doc ? nameMap(doc, players) : new Map<string, string>());
   const seeds = $derived(new Map((doc?.entrants ?? []).map((e, i) => [e.id, i + 1])));
@@ -96,6 +111,34 @@
     const entry: LogEntry = { id: newId(), time: new Date().toISOString(), summary, changes: out.changes };
     const ok = await persist({ ...doc, results: out.results, options: out.options, log: [...doc.log, entry] });
     if (ok) app.notify('Saved');
+    return ok;
+  }
+
+  /** A player reports their own match (shared mode). The sheet checks the PIN. */
+  async function reportResult(matchId: string, input: ResultInput, pin: string) {
+    if (!doc || !tstate || !app.store.report) return false;
+    const m = resolved.get(matchId);
+    if (!m || typeof m.p1 !== 'string' || typeof m.p2 !== 'string') return false;
+    saving = true;
+    try {
+      const { winner, score1, score2 } = input;
+      doc = await app.store.report(id, matchId, pin, { winner, score1, score2, p1: m.p1, p2: m.p2 }, numbers.get(matchId));
+      app.notify('Result reported');
+      return true;
+    } catch (e) {
+      app.notify(errorText(e), 'error');
+      if (e instanceof VersionConflictError) await load();
+      return false;
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function setSignup(open: boolean) {
+    if (!doc) return false;
+    const entry: LogEntry = { id: newId(), time: new Date().toISOString(), summary: open ? 'Sign-up opened' : 'Sign-up closed', changes: [] };
+    const ok = await persist({ ...doc, signup: open, log: [...doc.log, entry] });
+    if (ok) app.notify(open ? 'Sign-up is open' : 'Sign-up is closed');
     return ok;
   }
 
@@ -157,7 +200,7 @@
     ['matches', 'Matches'],
     ['standings', 'Standings'],
     ['log', 'Log'],
-    ...(app.store.canEdit ? [['edit', 'Edit']] : []),
+    ...(canEdit ? [['edit', 'Edit']] : []),
   ]);
 </script>
 
@@ -165,14 +208,14 @@
   <div class="wrap page"><div class="empty">This tournament doesn't exist (or was deleted). <a href="#/">Back to list</a></div></div>
 {:else if error && !doc}
   <div class="wrap page"><p class="notice">Couldn't load: {error}</p></div>
-{:else if !doc || !tstate}
+{:else if !doc}
   <div class="wrap page"><p class="muted">Loading…</p></div>
 {:else}
   <div class="wrap page">
     <div class="titlebar">
       <div>
         <div class="label">
-          {[doc.game, FORMAT_LABEL[doc.format], `${doc.entrants.length} entrants`].filter(Boolean).join(' · ')}
+          {[doc.game, FORMAT_LABEL[doc.format], `${doc.entrants.length} ${doc.entrants.length === 1 ? 'entrant' : 'entrants'}`].filter(Boolean).join(' · ')}
         </div>
         <h1>{doc.name}</h1>
         <div class="row meta">
@@ -194,6 +237,8 @@
       </p>
     {/if}
 
+    <SignUp {doc} {names} onjoined={(d) => (doc = d)} />
+
     <nav class="tabs no-print">
       {#each tabs as [key, label] (key)}
         <a href="#/t/{id}{key === 'bracket' ? '' : '/' + key}" class:on={tab === key}>{label}</a>
@@ -201,26 +246,33 @@
     </nav>
 
     <div class="body">
-      {#if tab === 'matches'}
-        <MatchList {resolved} {names} {numbers} {titleOf} onselect={(m) => (openMatch = m)} />
-      {:else if tab === 'standings'}
-        <Standings {doc} {tstate} {names} />
-      {:else if tab === 'log'}
-        <LogView log={doc.log} {names} {numbers} canEdit={app.store.canEdit} onundo={undoEntry} />
-      {:else if tab === 'edit' && app.store.canEdit}
+      {#if tab === 'edit' && canEdit}
+        {#if app.store.kind === 'sheets'}<SharePanel {doc} {names} onsignup={setSignup} />{/if}
         {#key doc.version}
           <EditTournament {doc} known={players} {names} onapply={applyEditTournament} ondelete={remove} />
         {/key}
+      {:else if tab === 'log'}
+        <LogView log={doc.log} {names} {numbers} {canEdit} onundo={undoEntry} />
+      {:else if !tstate}
+        <div class="empty">
+          Waiting for players: {doc.entrants.length} so far. The {isTableFormat(doc.format) ? 'rounds appear' : 'bracket appears'} once there are 2.
+        </div>
+      {:else if tab === 'matches'}
+        <MatchList {resolved} {names} {numbers} {titleOf} onselect={(m) => (openMatch = m)} />
+      {:else if tab === 'standings'}
+        <Standings {doc} {tstate} {names} />
       {:else}
-        {#if app.store.canEdit && status === 'setup'}
+        {#if canEdit && status === 'setup'}
           <p class="small muted hint no-print">Tap a match to enter its result.</p>
+        {:else if !canEdit && app.store.report && status !== 'finished'}
+          <p class="small muted hint no-print">Playing? Tap your match to report the result with your PIN.</p>
         {/if}
         <Bracket format={doc.format} {resolved} {names} {seeds} {numbers} onselect={(m) => (openMatch = m)} />
       {/if}
     </div>
   </div>
 
-  {#if openMatch && resolved.get(openMatch)}
+  {#if openMatch && tstate && resolved.get(openMatch)}
     {@const m = resolved.get(openMatch)!}
     {#key openMatch}
       <MatchSheet
@@ -230,8 +282,11 @@
         {names}
         {numbers}
         scoring={doc.scoring}
-        canEdit={app.store.canEdit}
+        {canEdit}
+        canReport={!!app.store.report}
+        me={myPin(id)}
         onsave={(input, decisions) => saveResult(openMatch!, input, decisions)}
+        onreport={(input, pin) => reportResult(openMatch!, input, pin)}
         onclose={() => (openMatch = null)}
       />
     {/key}

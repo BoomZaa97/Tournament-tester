@@ -22,9 +22,6 @@
       <a href="#/settings" class:on={section === 'settings'}>Settings</a>
     </nav>
   </div>
-  {#if !app.store.canEdit}
-    <a class="viewbar" href="#/settings">View only · Admin? Add your key in Settings to create and edit</a>
-  {/if}
 </header>
 
 <main>
@@ -32,7 +29,7 @@
     {#if section === 'new'}
       <Create />
     {:else if section === 't' && app.path[1]}
-      <Tournament id={app.path[1]} tab={app.path[2] ?? 'bracket'} />
+      <Tournament id={app.path[1]} tab={app.path[2] ?? 'bracket'} arg={app.path[3]} />
     {:else if section === 'players'}
       <Players />
     {:else if section === 'p' && app.path[1]}
@@ -113,16 +110,6 @@
   nav a.on {
     color: var(--ink);
     border-bottom-color: var(--accent);
-  }
-  .viewbar {
-    display: block;
-    text-decoration: none;
-    background: var(--ink);
-    color: var(--paper);
-    text-align: center;
-    font: 600 12px/22px var(--font-cond);
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
   }
   main {
     padding-bottom: 80px;

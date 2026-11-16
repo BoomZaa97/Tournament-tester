@@ -11,15 +11,25 @@
     numbers: Map<string, number>;
     scoring: Scoring;
     canEdit: boolean;
+    /** Players may report this match themselves with their PIN (shared mode). */
+    canReport?: boolean;
+    /** The player this browser belongs to, if they signed up or reported before. */
+    me?: { playerId: string; pin: string };
     onsave: (input: ResultInput | null, decisions: Record<string, Decision>) => Promise<boolean>;
+    onreport?: (input: ResultInput, pin: string) => Promise<boolean>;
     onclose: () => void;
   }
-  let { m, tstate, title, names, numbers, scoring, canEdit, onsave, onclose }: Props = $props();
+  let { m, tstate, title, names, numbers, scoring, canEdit, canReport = false, me, onsave, onreport, onclose }: Props = $props();
 
   const allowDraw = allowsDraws(tstate.structure.format);
   /** A conflicted match whose players aren't decided any more can only be cleared. */
   const playable = m.p1 !== null && m.p1 !== BYE && m.p2 !== null && m.p2 !== BYE;
   const existing = m.result;
+  /** A player (not an organizer) reporting an unplayed match. */
+  const reportMode = !canEdit && canReport && !!onreport && m.status === 'ready' && !existing;
+  const myMatch = !!me && (me.playerId === m.p1 || me.playerId === m.p2);
+  let pin = $state(myMatch ? me!.pin : '');
+  const pinOk = $derived(/^\d{6}$/.test(pin.trim()));
   const n1 = names.get(m.p1 as string) ?? '?';
   const n2 = names.get(m.p2 as string) ?? '?';
 
@@ -63,7 +73,17 @@
   let pending = $state<ResultInput | null | undefined>(undefined);
   const preview = $derived(pending === undefined ? null : previewFor(pending));
 
-  function submit(next: ResultInput | null) {
+  async function submit(next: ResultInput | null) {
+    if (reportMode) {
+      if (!next || !pinOk) return;
+      busy = true;
+      try {
+        if (await onreport!(next, pin.trim())) onclose();
+      } finally {
+        busy = false;
+      }
+      return;
+    }
     pending = next;
     const p = previewFor(next);
     if (p.conflicts.length === 0) return commit();
@@ -111,7 +131,7 @@
     </p>
   {/if}
 
-  {#if !canEdit}
+  {#if !canEdit && !reportMode}
     <div class="readonly">
       {#if existing}
         <p>{existing.winner === 'draw' ? 'Draw' : `${existing.winner === 'p1' ? n1 : n2} won`}{existing.forfeit ? ' by forfeit' : ''}
@@ -121,6 +141,16 @@
       {/if}
     </div>
   {:else if step === 'form'}
+    {#if reportMode}
+      {#if myMatch}
+        <p class="small reporter">Reporting as <b>{names.get(me!.playerId)}</b>.</p>
+      {:else}
+        <label class="field pinfield">
+          <span>Playing in this match? Enter your PIN to report the result</span>
+          <input bind:value={pin} inputmode="numeric" autocomplete="off" maxlength="6" placeholder="6-digit PIN" />
+        </label>
+      {/if}
+    {/if}
     <div class="scores">
       {#each [[1, n1, 'p1'], [2, n2, 'p2']] as [i, name, side] (side)}
         <div class="side" class:win={winner === side}>
@@ -152,7 +182,9 @@
     </div>
 
     <div class="row opts">
-      <label class="check"><input type="checkbox" bind:checked={forfeit} /> Forfeit / DQ</label>
+      {#if !reportMode}
+        <label class="check"><input type="checkbox" bind:checked={forfeit} /> Forfeit / DQ</label>
+      {/if}
       {#if allowDraw}
         <button class="small" class:on={winner === 'draw'} onclick={() => { winner = 'draw'; winnerTouched = true; }}>Draw</button>
       {/if}
@@ -164,9 +196,15 @@
         <button class="danger ghost" onclick={() => submit(null)} disabled={busy}>Clear result</button>
       {/if}
       <span class="spacer"></span>
-      <button class="primary big" onclick={() => submit(input)} disabled={!input || busy || !playable}>
-        {existing ? 'Update result' : 'Save result'}
-      </button>
+      {#if reportMode}
+        <button class="primary big" onclick={() => submit(input)} disabled={!input || busy || !playable || !pinOk}>
+          {busy ? 'Sending…' : 'Report result'}
+        </button>
+      {:else}
+        <button class="primary big" onclick={() => submit(input)} disabled={!input || busy || !playable}>
+          {existing ? 'Update result' : 'Save result'}
+        </button>
+      {/if}
     </footer>
   {:else if preview}
     <div class="confirm">
@@ -251,6 +289,9 @@
   .stepper button { width: 44px; min-height: 48px; padding: 0; font-size: 22px; }
   .stepper input { width: 56px; min-height: 48px; text-align: center; font: 700 24px var(--font-cond); padding: 0; }
   .opts { justify-content: space-between; }
+  .reporter { margin: 0 0 10px; }
+  .pinfield { margin-bottom: 12px; }
+  .pinfield input { max-width: 180px; letter-spacing: 0.2em; font-variant-numeric: tabular-nums; }
   .on { border-color: var(--ink); background: var(--ink); color: var(--paper); }
   .warnline { color: var(--warn); margin: 0; }
   footer { display: flex; align-items: center; gap: 8px; }

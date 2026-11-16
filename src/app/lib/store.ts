@@ -1,3 +1,4 @@
+import type { MatchResult } from '../../core';
 import type { Player, TournamentDoc } from './model';
 
 export class VersionConflictError extends Error {
@@ -14,14 +15,65 @@ export interface AllData {
 /** Where data lives. Swap implementations without touching the UI. */
 export interface Store {
   kind: 'local' | 'sheets';
-  /** False for viewers of a shared Google Sheet who don't have the admin key. */
-  canEdit: boolean;
+  /** Site admin (the owner's key): can change every tournament. Always true in local mode. */
+  isAdmin: boolean;
+  /** Can this browser change this tournament? Admin, or its organizer/helper key is saved here. */
+  canEdit(id: string): boolean;
   loadAll(): Promise<AllData>;
   get(id: string): Promise<TournamentDoc | null>;
   /** Saves and returns the doc with its new version. Throws VersionConflictError. */
   save(doc: TournamentDoc, players: Player[]): Promise<TournamentDoc>;
   remove(id: string): Promise<void>;
   renamePlayer(id: string, name: string): Promise<void>;
+  /** Shared (Google Sheet) mode only: players join and report their own scores. */
+  signup?(id: string, name: string): Promise<{ playerId: string; pin: string; tournament: TournamentDoc }>;
+  report?(id: string, matchId: string, pin: string, result: ReportedResult, matchNo?: number): Promise<TournamentDoc>;
+  /** Organizer/admin only: every entrant's PIN, by player id. */
+  pins?(id: string): Promise<Record<string, string>>;
+}
+
+export type ReportedResult = Pick<MatchResult, 'winner' | 'score1' | 'score2' | 'p1' | 'p2'>;
+
+// ---------------------------------------------------------------- keys kept in this browser
+
+const KEYS = 'tt.keys.v1'; // { tournamentId: organizer key }
+const PINS = 'tt.pins.v1'; // { tournamentId: { playerId, pin } }
+
+function readJson<T>(k: string): Record<string, T> {
+  try {
+    return JSON.parse(localStorage.getItem(k) ?? '{}') ?? {};
+  } catch {
+    return {};
+  }
+}
+function writeJson(k: string, v: unknown) {
+  try {
+    localStorage.setItem(k, JSON.stringify(v));
+  } catch {
+    /* private mode: works until the tab closes */
+  }
+}
+
+export function orgKeyFor(id: string): string | undefined {
+  return readJson<string>(KEYS)[id];
+}
+export function rememberOrgKey(id: string, key: string) {
+  writeJson(KEYS, { ...readJson<string>(KEYS), [id]: key });
+}
+export function makeOrgKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(18));
+  return [...bytes].map((b) => 'abcdefghijkmnpqrstuvwxyz23456789'[b % 32]).join('');
+}
+export function myPin(id: string): { playerId: string; pin: string } | undefined {
+  return readJson<{ playerId: string; pin: string }>(PINS)[id];
+}
+export function rememberPin(id: string, playerId: string, pin: string) {
+  writeJson(PINS, { ...readJson(PINS), [id]: { playerId, pin } });
+}
+/** Link that gives a helper the same rights as the organizer. */
+export function helperLink(id: string): string | undefined {
+  const key = orgKeyFor(id);
+  return key ? `${location.href.split('#')[0]}#/t/${id}/org/${key}` : undefined;
 }
 
 // ---------------------------------------------------------------- local
@@ -50,7 +102,10 @@ function upsertPlayers(list: Player[], add: Player[]): Player[] {
 
 export class LocalStore implements Store {
   kind = 'local' as const;
-  canEdit = true;
+  isAdmin = true;
+  canEdit() {
+    return true;
+  }
 
   async loadAll() {
     return readLocal();
@@ -100,10 +155,14 @@ export class LocalStore implements Store {
  */
 export class SheetsStore implements Store {
   kind = 'sheets' as const;
-  canEdit: boolean;
+  isAdmin: boolean;
 
   constructor(private url: string, private key: string) {
-    this.canEdit = key.length > 0;
+    this.isAdmin = key.length > 0;
+  }
+
+  canEdit(id: string) {
+    return this.isAdmin || !!orgKeyFor(id);
   }
 
   private async call<T>(method: 'GET' | 'POST', params: Record<string, unknown>): Promise<T> {
@@ -135,12 +194,37 @@ export class SheetsStore implements Store {
   }
 
   async save(doc: TournamentDoc, players: Player[]) {
-    const r = await this.call<{ tournament: TournamentDoc }>('POST', { action: 'save', tournament: doc, players });
+    let orgKey = orgKeyFor(doc.id);
+    if (!orgKey && doc.version === 0) {
+      // A new tournament: whoever creates it is its organizer.
+      orgKey = makeOrgKey();
+      rememberOrgKey(doc.id, orgKey);
+    }
+    const r = await this.call<{ tournament: TournamentDoc }>('POST', { action: 'save', tournament: doc, players, orgKey: orgKey ?? '' });
     return r.tournament;
   }
 
   async remove(id: string) {
-    await this.call('POST', { action: 'delete', id });
+    await this.call('POST', { action: 'delete', id, orgKey: orgKeyFor(id) ?? '' });
+  }
+
+  async signup(id: string, name: string) {
+    const r = await this.call<{ playerId: string; pin: string; tournament: TournamentDoc }>('POST', { action: 'signup', id, name });
+    rememberPin(id, r.playerId, r.pin);
+    return r;
+  }
+
+  async report(id: string, matchId: string, pin: string, result: ReportedResult, matchNo?: number) {
+    const r = await this.call<{ tournament: TournamentDoc; playerId: string }>('POST', { action: 'report', id, matchId, pin, result, matchNo });
+    // So they don't have to type it again, unless this device already belongs to another player
+    // (a borrowed phone keeps its owner).
+    if (!myPin(id)) rememberPin(id, r.playerId, pin);
+    return r.tournament;
+  }
+
+  async pins(id: string) {
+    const r = await this.call<{ pins: Record<string, string> }>('POST', { action: 'pins', id, orgKey: orgKeyFor(id) ?? '' });
+    return r.pins;
   }
 
   async renamePlayer(id: string, name: string) {

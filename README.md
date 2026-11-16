@@ -10,6 +10,7 @@ Free tournament brackets for any game, where any result can be edited later with
   - Change an old result and every later match updates. Matches that were already played get flagged so you can choose to reset (replay) or keep the score.
   - Add a late entrant, remove someone, put in a sub, reseed, or change the format partway through.
   - Every change goes in the log and can be undone.
+- **Run it together, like Challonge:** anyone can create a tournament and becomes its organizer. Send helpers a link to run it with you, let players sign themselves up, and let them report their own scores with a PIN. No accounts.
 - **Match history:** player pages show W–L record, win rate, titles, head-to-head, and every match across all tournaments
 - **Works on phones:** big buttons for entering scores, and it can be added to your home screen
 - **Costs nothing:** a static site on GitHub Pages plus a Google Sheet you own. No server to run.
@@ -51,5 +52,6 @@ npm run build     # build the site into dist/
 - [x] Web app: bracket maker, score entry, change log and undo, player history, Google Sheets
 - [x] Swiss format
 - [ ] Group stage → playoffs
-- [ ] Players report their own scores, Discord announcements
+- [x] Organizers, helpers, player sign-up, players report their own scores (PIN)
+- [ ] Discord announcements
 - [ ] Import from Challonge

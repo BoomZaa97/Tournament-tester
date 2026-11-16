@@ -73,7 +73,7 @@
         </form>
       {:else}
         <h1>{stats.player.name}</h1>
-        {#if app.store.canEdit}
+        {#if app.store.isAdmin}
           <button class="small ghost" onclick={() => { newName = stats!.player.name; renaming = true; }}>Rename</button>
         {/if}
       {/if}

@@ -22,10 +22,25 @@ Made because Challonge made fixing wrong results hard.
   (https://docs.google.com/spreadsheets/d/1M4MlnOivfrHzZAOAV8v4p3dhVMBuPslIJ-pe3tZun4g/edit),
   with `apps-script/Code.gs` pasted into Extensions → Apps Script and deployed as a web app
   (Execute as: Me, Access: Anyone). Its `/exec` URL is in `public/config.json`.
-- Writes need `ADMIN_KEY` (Apps Script → Project Settings → Script properties). The owner keeps the key;
-  never ask for it in chat and never commit it. It's entered per device in the site's Settings page.
+- `ADMIN_KEY` (Apps Script → Project Settings → Script properties) is the site admin key: full rights everywhere.
+  The owner keeps it; never ask for it in chat and never commit it. It's entered per device in the site's Settings page.
 - If `Code.gs` changes, the owner must paste it again and do Deploy → Manage deployments → edit →
   Version: New version (URL stays the same). Their Google UI is in Thai.
+
+## Roles (no accounts; secrets live in each browser's localStorage)
+
+| Role | Proof sent to Code.gs | Rights |
+|---|---|---|
+| Site admin | `key` = `ADMIN_KEY` | Everything; only one who can rename players or import backups |
+| Organizer / helper | `orgKey` (random, made by the creator's browser, `tt.keys.v1`); sheet stores only `Tournaments.orgKeyHash` (SHA-256) | Save/delete that tournament, `pins`. Helper link = `#/t/<id>/org/<key>` |
+| Player | 6-digit `Entrants.pin` (`tt.pins.v1`); never in GET responses | `signup` (only while `signup` is on and no results), `report` (own match, no result yet) |
+
+- Anyone can create: a new tournament (`version` 0) is accepted with any `orgKey` ≥ 16 chars.
+- Code.gs has no bracket engine, so `report` trusts the reporter's `p1`/`p2` snapshot; a wrong pairing shows up as
+  a normal conflict for the organizer. Swiss rounds a player reports into get frozen on load (`toState` calls
+  `lockSwissRounds`) and stored on the next organizer save.
+- Entrant rewrites carry PINs over by playerId; new entrants get a PIN.
+- `store.canEdit(id)` (admin key or org key for that id) replaces the old global flag.
 
 ## Architecture
 
@@ -83,4 +98,5 @@ Push to `main` = deploy. Check UI changes in a real browser (Playwright, desktop
 
 1. Groups → playoffs (two stages; playoffs seeded from group standings).
 2. Maybe for Swiss: drop a player from future rounds without deleting their past results; top-cut playoff.
-3. Later: players report own scores, Discord announcements, import from Challonge, Elo.
+3. Maybe: rate-limit PIN guesses; let players confirm/dispute an opponent's report.
+4. Later: Discord announcements, import from Challonge, Elo.

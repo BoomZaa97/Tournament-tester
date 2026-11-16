@@ -22,9 +22,7 @@
 <div class="wrap page">
   <div class="head">
     <h1>Tournaments</h1>
-    {#if app.store.canEdit}
-      <a class="btn primary" href="#/new">+ New tournament</a>
-    {/if}
+    <a class="btn primary" href="#/new">+ New tournament</a>
   </div>
 
   {#if app.store.kind === 'local'}
@@ -41,7 +39,7 @@
   {:else if tournaments.length === 0}
     <div class="empty">
       <p>No tournaments yet.</p>
-      {#if app.store.canEdit}<a class="btn primary" href="#/new">Make your first bracket</a>{/if}
+      <a class="btn primary" href="#/new">Make your first bracket</a>
     </div>
   {:else}
     <div class="filters" role="tablist">

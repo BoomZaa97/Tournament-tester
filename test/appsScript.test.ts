@@ -2,6 +2,7 @@
  * Runs apps-script/Code.gs in Node against a fake in-memory spreadsheet,
  * so the Google Sheets backend is tested without a Google account.
  */
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
@@ -58,6 +59,12 @@ function fakeGoogle(adminKey = 'secret') {
     },
     PropertiesService: { getScriptProperties: () => ({ getProperty: () => adminKey }) },
     LockService: { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) },
+    Utilities: {
+      DigestAlgorithm: { SHA_256: 'sha256' },
+      Charset: { UTF_8: 'utf8' },
+      // Apps Script returns signed bytes (-128..127)
+      computeDigest: (_alg: string, s: string) => [...createHash('sha256').update(s, 'utf8').digest()].map((b) => (b > 127 ? b - 256 : b)),
+    },
     JSON,
     Date,
     Object,
@@ -139,11 +146,11 @@ describe('Google Sheets backend (Code.gs)', () => {
     expect(entrants.some((r) => r.includes("'=Bob"))).toBe(true);
   });
 
-  it('rejects writes without the admin key, but anyone can read', () => {
+  it('anyone can read; writing needs the admin key or an organizer key', () => {
     const g = fakeGoogle();
-    expect(g.post({ key: 'wrong', action: 'save', tournament: doc }).error).toMatch(/admin key/);
-    expect(g.post({ key: 'wrong', action: 'check' })).toEqual({ admin: false });
-    expect(g.post({ key: 'secret', action: 'check' })).toEqual({ admin: true });
+    expect(g.post({ key: 'wrong', action: 'save', tournament: doc }).error).toMatch(/organizer key/);
+    expect(g.post({ key: 'wrong', action: 'check' })).toEqual({ admin: false, organizer: false });
+    expect(g.post({ key: 'secret', action: 'check' })).toEqual({ admin: true, organizer: false });
     expect(g.get({ action: 'all' }).tournaments).toEqual([]);
   });
 
@@ -175,6 +182,97 @@ describe('Google Sheets backend (Code.gs)', () => {
 
     g.post({ key: 'secret', action: 'delete', id: 't2' });
     expect(g.get({ action: 'all' }).tournaments.map((t: { id: string }) => t.id)).toEqual(['t1']);
+  });
+
+  describe('organizers, sign-up and player reports', () => {
+    const ORG = 'organizer-key-0123456789';
+    const swiss = { ...doc, id: 'o1', format: 'swiss', options: {}, results: {}, log: [], signup: true };
+    const create = (g: ReturnType<typeof fakeGoogle>) => g.post({ action: 'save', orgKey: ORG, tournament: swiss, players: swiss.entrants });
+    const pins = (g: ReturnType<typeof fakeGoogle>) => g.post({ action: 'pins', id: 'o1', orgKey: ORG }).pins as Record<string, string>;
+
+    it('anyone can create a tournament; only its organizer (or the admin) can change it', () => {
+      const g = fakeGoogle();
+      expect(create(g).error).toBeUndefined();
+      expect(g.post({ action: 'check', id: 'o1', orgKey: ORG })).toEqual({ admin: false, organizer: true });
+      expect(g.post({ action: 'save', orgKey: 'someone-else-key-12345', tournament: { ...swiss, version: 1 } }).error).toMatch(/organizer/);
+      expect(g.post({ action: 'save', orgKey: ORG, tournament: { ...swiss, name: 'Renamed', version: 1 } }).tournament.version).toBe(2);
+      expect(g.post({ action: 'save', key: 'secret', tournament: { ...swiss, version: 2 } }).tournament.version).toBe(3);
+      expect(g.post({ action: 'delete', id: 'o1', orgKey: 'nope-nope-nope-nope' }).error).toMatch(/organizer/);
+      expect(g.post({ action: 'renamePlayer', id: 'a', name: 'X', orgKey: ORG }).error).toMatch(/site admin/);
+      // the organizer key is never stored in plain text
+      expect(g.sheets.get('Tournaments')!.flat()).not.toContain(ORG);
+      expect(g.post({ action: 'delete', id: 'o1', orgKey: ORG }).ok).toBe(true);
+    });
+
+    it('organizers cannot rename people in the shared player list', () => {
+      const g = fakeGoogle();
+      g.post({ key: 'secret', action: 'save', tournament: doc, players: doc.entrants });
+      create(g);
+      g.post({ action: 'save', orgKey: ORG, tournament: { ...swiss, version: 1 }, players: [{ id: 'a', name: 'Hacked' }] });
+      expect(g.get({ action: 'all' }).players.find((p: { id: string }) => p.id === 'a').name).toBe('Alice');
+    });
+
+    it('players sign up and get a PIN that survives organizer saves and is never public', () => {
+      const g = fakeGoogle();
+      create(g);
+      const out = g.post({ action: 'signup', id: 'o1', name: '  Dana  ' });
+      expect(out.pin).toMatch(/^\d{6}$/);
+      expect(out.tournament.entrants.map((e: { name: string }) => e.name)).toEqual(['Alice', '=Bob', '007', 'Dana']);
+      expect(out.tournament.version).toBe(2);
+      expect(g.post({ action: 'signup', id: 'o1', name: 'dana' }).error).toMatch(/already signed up/);
+
+      const before = pins(g);
+      expect(before[out.playerId]).toBe(out.pin);
+      expect(Object.keys(before)).toHaveLength(4);
+      // organizer reorders entrants and saves: PINs stay with their players
+      const t = g.get({ action: 'get', id: 'o1' }).tournament;
+      g.post({ action: 'save', orgKey: ORG, tournament: { ...t, entrants: [...t.entrants].reverse() } });
+      expect(pins(g)).toEqual(before);
+
+      const publicText = JSON.stringify(g.get({ action: 'all' }));
+      for (const pin of Object.values(before)) expect(publicText).not.toContain(pin);
+      expect(publicText).not.toContain('orgKeyHash');
+      expect(g.post({ action: 'pins', id: 'o1', orgKey: 'wrong-wrong-wrong-wrong' }).error).toMatch(/organizer/);
+    });
+
+    it('sign-up only while open and before anything is played', () => {
+      const g = fakeGoogle();
+      g.post({ action: 'save', orgKey: ORG, tournament: { ...swiss, signup: false } });
+      expect(g.post({ action: 'signup', id: 'o1', name: 'Eve' }).error).toMatch(/closed/);
+      const t = g.get({ action: 'get', id: 'o1' }).tournament;
+      expect(t.signup).toBe(false);
+      g.post({ action: 'save', orgKey: ORG, tournament: { ...t, signup: true, results: { 'S1-1': { winner: 'p1', p1: 'a', p2: 'c' } } } });
+      expect(g.post({ action: 'signup', id: 'o1', name: 'Eve' }).error).toMatch(/already started/);
+    });
+
+    it('a player reports their own unplayed match with their PIN', () => {
+      const g = fakeGoogle();
+      create(g);
+      const p = pins(g);
+      const result = { winner: 'p2', score1: 1, score2: 2, p1: 'a', p2: 'c' };
+      const send = (pin: string, r: object, matchId = 'S1-1') => g.post({ action: 'report', id: 'o1', matchId, pin, result: r, matchNo: 1 });
+
+      expect(send('000000', result).error).toBe('Wrong PIN');
+      expect(send(p.b, result).error).toMatch(/your own matches/);
+      expect(send(p.a, { ...result, p2: 'zzz' }).error).toMatch(/not in this match/);
+      expect(send(p.a, { ...result, winner: 'nobody' }).error).toMatch(/winner/);
+
+      const ok = send(p.a, result);
+      expect(ok.error).toBeUndefined();
+      expect(ok.tournament.results['S1-1']).toMatchObject({ winner: 'p2', score1: 1, score2: 2, p1: 'a', p2: 'c' });
+      expect(ok.tournament.version).toBe(2);
+      const entry = ok.tournament.log.at(-1);
+      expect(entry.summary).toBe('Match 1: Alice 1–2 007 (reported by Alice)');
+      expect(entry.changes).toEqual([{ matchId: 'S1-1', after: ok.tournament.results['S1-1'] }]);
+
+      // fixes are for the organizer: players can't overwrite a result
+      expect(send(p.c, { ...result, winner: 'p1' }).error).toMatch(/already has a result/);
+      // draws only where the format allows them
+      const se = { ...swiss, id: 'o2', format: 'single_elim' };
+      g.post({ action: 'save', orgKey: ORG, tournament: se });
+      const p2 = g.post({ action: 'pins', id: 'o2', orgKey: ORG }).pins;
+      expect(g.post({ action: 'report', id: 'o2', matchId: 'W1-2', pin: p2.b, result: { winner: 'draw', p1: 'b', p2: 'c' } }).error).toMatch(/winner/);
+    });
   });
 
   it('renaming a player updates every tab', () => {

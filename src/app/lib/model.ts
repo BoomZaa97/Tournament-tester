@@ -1,4 +1,4 @@
-import { BYE, createTournament, defaultTiebreakers, isComplete, roundRobinStandings } from '../../core';
+import { BYE, createTournament, defaultTiebreakers, isComplete, lockSwissRounds, roundRobinStandings } from '../../core';
 import type {
   Change, EntrantId, Format, FormatOptions, MatchResult, MatchTemplate, ResolvedMatch, Source, Tiebreaker, TournamentState,
 } from '../../core';
@@ -45,6 +45,8 @@ export interface TournamentDoc {
   /** Seed order. `id` is the player id, so history works across tournaments. */
   entrants: Player[];
   results: Record<string, MatchResult>;
+  /** Players can add themselves (shared Google Sheet mode, before anything is played). */
+  signup?: boolean;
   log: LogEntry[];
   createdAt: string;
   updatedAt: string;
@@ -81,8 +83,12 @@ export function newId(): string {
 }
 
 export function toState(doc: Pick<TournamentDoc, 'format' | 'entrants' | 'options' | 'results'>): TournamentState {
-  const base = createTournament(doc.format, doc.entrants.map((e) => e.id), doc.options);
-  return { ...base, results: doc.results };
+  const ids = doc.entrants.map((e) => e.id);
+  const state = { ...createTournament(doc.format, ids, doc.options), results: doc.results };
+  if (doc.format !== 'swiss') return state;
+  // A player may have reported into a swiss round the sheet couldn't freeze (it has no bracket
+  // engine). Freeze it now, from the same results the player saw; the next save stores it.
+  return { ...createTournament(doc.format, ids, lockSwissRounds(state, doc.results)), results: doc.results };
 }
 
 export function nameMap(doc: TournamentDoc, players: Player[] = []): Map<EntrantId, string> {

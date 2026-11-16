@@ -15,12 +15,12 @@
       const st = new SheetsStore(s.sheetsUrl.trim(), s.adminKey.trim());
       const data = await st.loadAll();
       let msg = `Connected. ${data.tournaments.length} tournament(s) in the sheet.`;
-      if (!s.adminKey.trim()) msg += ' No admin key: view only.';
+      if (!s.adminKey.trim()) msg += ' No admin key: you can still create and run your own tournaments.';
       else if (await st.checkKey()) {
         // A key that works is what people want kept; don't make them find the Save button too.
         save();
         msg += ' Admin key accepted and saved. You can create and edit tournaments now.';
-      } else msg += ' Admin key is WRONG — you can only view. Nothing was saved.';
+      } else msg += ' Admin key is WRONG. Nothing was saved.';
       testResult = msg;
     } catch (e) {
       testResult = `Couldn't connect: ${errorText(e)}`;
@@ -110,7 +110,7 @@
           <input bind:value={s.sheetsUrl} placeholder="https://script.google.com/macros/s/…/exec" inputmode="url" />
         </label>
         <label class="field">
-          <span>Admin key <span class="muted">(leave empty to just view)</span></span>
+          <span>Site admin key <span class="muted">(owner only; everyone else leaves this empty)</span></span>
           <input bind:value={s.adminKey} type="password" autocomplete="off" />
         </label>
         <div class="row">
@@ -134,10 +134,10 @@
     <p class="small muted">Download everything as one file, or load a backup into the current data source.</p>
     <div class="row">
       <button onclick={exportBackup}>Download backup</button>
-      {#if app.store.canEdit}
+      {#if app.store.isAdmin}
         <label class="btn">Import backup<input type="file" accept="application/json,.json" hidden onchange={importBackup} /></label>
       {/if}
-      {#if app.store.kind === 'sheets' && app.store.canEdit}
+      {#if app.store.kind === 'sheets'}
         <button onclick={uploadLocal}>Copy this browser's tournaments to the sheet</button>
       {/if}
       {#if busy}<span class="small muted">{busy}</span>{/if}
