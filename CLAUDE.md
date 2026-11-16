@@ -113,8 +113,35 @@ Push to `main` = deploy. Check UI changes in a real browser (Playwright, desktop
 - Draws per match: `matchAllowsDraws(template)` (sides RR/SW only). Code.gs `report` mirrors this (`F-` ids never).
 - `restructure` carries `qualified` by player; if a finalist is removed the finals go back to unconfirmed.
 
+### Venue features (join codes, waitlist, check-in, drop-outs, confirmations)
+
+- Old-script compatibility: `SheetsStore.call` turns "Unknown action" into `UPDATE_SCRIPT` ("The site owner needs to update
+  the Google script for this."). `scriptOutdated(doc)` = sheets mode and no `doc.code` (the new script always returns one).
+- Join code: `Tournaments.code`, 6 chars from `CODE_CHARS` (no 0/O/1/I), made by Code.gs on first save, or by `ensureCodes`
+  on any GET for older rows. Public lookup `GET action=code&code=…`. LocalStore makes codes too. Poster: `#/t/<id>/poster`
+  (`routes/Poster.svelte`, QR drawn by `components/QrCode.svelte` with `qrcode-generator`, always black on white).
+- Saves now return `assemble(...)` of what was stored (code, waitlist, check-ins), not the posted doc.
+- Waitlist: `Tournaments.maxPlayers`; `signup` puts people on the `Waitlist` tab when full or when anyone is already
+  waiting. Waitlisted people are NOT entrants (`doc.waitlist`, ignored on save). Moving up = a normal organizer save that
+  adds them as the last seed (`withEntrants` + `restore` log entry); `saveTournament` then takes their PIN (and check-in)
+  from the Waitlist row and deletes it. Undoing a move-up removes them from the bracket (not back onto the waitlist).
+- Check-in: `Tournaments.checkIn`, `Entrants/Waitlist.checkedIn`; `doc.checkedIn` = player ids. `checkin` action takes a
+  PIN or (organizer) a playerId, only before the first result, and does NOT bump `version` (only `updatedAt`), so the
+  page reloads on `updatedAt` changes too. "Remove no-shows" = `withEntrants` with a `restore` log entry. Removed
+  players get a new PIN if they're added back (PINs aren't kept for removed entrants).
+- Drop-outs: `options.dropped` (seeds). `resolve()` turns any unplayed match with a dropped player into a walkover
+  (`status:'bye'`, `walkover:true`, real `loser`); swiss pairs only active players in unstarted rounds. Points tables
+  count walkovers as a win/loss (byes exclude them); `swissRecord` gives the winner a point but no bye. A walkover GF
+  needs no reset. `restructure` carries drops by player and leaves them out while re-placing results.
+  `lockSwissRounds`: if a round someone reported into (not frozen yet) clashes with the pairing without dropped
+  players, it freezes the pairing with everyone instead. Players drop with Code.gs `drop` (needs a result to exist;
+  logged with `restore`); organizers via Edit tab → Drop-outs. `report` refuses matches with a dropped player.
+- Confirmations: `MatchResult.status` ('reported' | 'confirmed' | 'disputed') + `reportedBy` (Results columns).
+  `report` sets 'reported'; `confirm` (opponent's PIN, `ok`) sets confirmed/disputed with a before/after log entry.
+  Anything the organizer saves through `applyEdit` has no status (= confirmed). The engine ignores these fields.
+
 ## Next up (agreed roadmap)
 
-1. Maybe for Swiss: drop a player from future rounds without deleting their past results.
-2. Maybe: rate-limit PIN guesses; let players confirm/dispute an opponent's report.
+1. Maybe: rate-limit PIN guesses.
+2. Maybe: keep PINs of removed entrants so undoing a removal gives them the same PIN.
 3. Later: Discord announcements, import from Challonge, Elo.

@@ -7,9 +7,9 @@ This lets other people see, run and join tournaments, and keeps all data in a Go
 | Who | How | Can |
 |---|---|---|
 | You (site admin) | Your **admin key**, entered in the site's Settings | Everything, on every tournament. Rename players, delete spam. |
-| Organizer | Whoever creates a tournament. Their browser gets a secret organizer key for it automatically | Edit or delete **that** tournament, open sign-up, see its player PINs |
+| Organizer | Whoever creates a tournament. Their browser gets a secret organizer key for it automatically | Edit or delete **that** tournament, open sign-up, set a player limit, move people up from the waitlist, run check-in, drop players, settle disputed scores, see its player PINs |
 | Helper | Opens the organizer's **helper link** (Edit tab → Players and helpers) | Same as the organizer, for that tournament |
-| Player | Signs up on the tournament page (if sign-up is open) and gets a **6-digit PIN**, or gets it from the organizer | Report the score of their own unplayed match. Fixing a result stays with the organizer. |
+| Player | Signs up on the tournament page (if sign-up is open) and gets a **6-digit PIN**, or gets it from the organizer | Report the score of their own unplayed match; confirm or dispute a score their opponent reported; check in ("I'm here") before the start; drop out once it has started. Fixing a result stays with the organizer. |
 | Everyone else | The site link | View |
 
 There are no accounts: keys and PINs are remembered by each browser. The sheet only stores a hash of each organizer key,
@@ -18,7 +18,7 @@ so the sheet itself doesn't give it away. PINs are stored in the `Entrants` tab 
 ## 1. Make the sheet
 
 1. Go to [sheets.new](https://sheets.new) and name it something like `Tournament Tester data`.
-2. Leave it empty. The script creates the tabs (`Players`, `Tournaments`, `Entrants`, `Results`, `Log`) on first save.
+2. Leave it empty. The script creates the tabs (`Players`, `Tournaments`, `Entrants`, `Results`, `Log`, `Waitlist`) on first save.
 
 ## 2. Add the script
 
@@ -63,7 +63,21 @@ If you already made tournaments in your browser before connecting, use **Setting
 ## Updating the script later
 
 If `Code.gs` changes: paste the new version, then **Deploy → Manage deployments → ✏️ edit → Version: New version → Deploy**.
-The URL stays the same. New columns (for example `orgKeyHash`, `signup`, `pin`) are added to the tabs by themselves on the next save.
+The URL stays the same. New columns are added to the tabs by themselves on the next save:
+
+| Tab | Column | What |
+|---|---|---|
+| Tournaments | `code` | Join code (6 letters/digits, unique). Older tournaments get one the first time they're opened. |
+| Tournaments | `maxPlayers` | Player limit for self sign-up (empty = none) |
+| Tournaments | `checkIn` | `yes` = check-in is on |
+| Entrants | `checkedIn` | When the player tapped "I'm here" (empty = not yet) |
+| Results | `status`, `reportedBy` | For scores players reported: `reported` → `confirmed` or `disputed`; empty = entered by the organizer |
+| Waitlist (new tab) | `playerId`, `name`, `pin`, `at`, `checkedIn` | People waiting for a spot, oldest first. Not in the bracket. |
+
+Players who dropped out are in the Tournaments `options` column (`"dropped": [seed, …]`).
+
+Until the new script is deployed, the site still works: join codes, the player limit, check-in, drop-outs and score
+confirmation just show "The site owner needs to update the Google script for this".
 
 ## Fixing things by hand
 
