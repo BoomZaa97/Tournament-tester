@@ -69,6 +69,7 @@ function doPost(e) {
       if (body.action === 'report') return report(body.id, body.matchId, body.pin, body.result, body.matchNo);
       if (body.action === 'pins') return { pins: pinsFor(body.id, body, isAdmin) };
       if (body.action === 'checkin') return checkIn(body, isAdmin);
+      if (body.action === 'drop') return dropOut(body.id, body.pin);
       throw new Error('Unknown action: ' + body.action);
     } finally {
       lock.releaseLock();
@@ -606,6 +607,61 @@ function checkIn(body, isAdmin) {
   return { playerId: who.playerId, tournament: assemble(t, data) };
 }
 
+/** A tournament's entrants in seed order (seed k = position k, as the bracket engine counts). */
+function seedOrder(id, data) {
+  return data.Entrants.filter(function (e) {
+    return e.tournamentId === id;
+  }).sort(function (a, b) {
+    return num(a.seed) - num(b.seed);
+  });
+}
+
+/** Seeds (1-based) of players who dropped out, from the options column. */
+function droppedSeeds(t) {
+  var d = json(t.options, {}).dropped;
+  return Array.isArray(d) ? d : [];
+}
+
+/**
+ * A player drops out with their PIN, once the tournament has started. They keep their results;
+ * the app stops pairing them (options.dropped, by seed) and their remaining matches are walkovers.
+ * Logged with the previous setup, so the organizer can undo it from the Log tab.
+ */
+function dropOut(id, rawPin) {
+  var data = loadTables();
+  var t = findTournament(data.Tournaments, id);
+  if (!t) throw new Error('Tournament not found');
+  var me = byPin(id, rawPin, data, false);
+  if (!me) throw new Error('Wrong PIN');
+  var started = data.Results.some(function (r) {
+    return r.tournamentId === id;
+  });
+  if (!started) throw new Error("The tournament hasn't started yet: ask the organizer to take you off the list");
+  var seed = seedOrder(id, data).indexOf(me) + 1;
+  var dropped = droppedSeeds(t).slice();
+  if (dropped.indexOf(seed) >= 0) throw new Error('You have already dropped out');
+
+  var before = assemble(t, data);
+  var restore = JSON.stringify({
+    name: before.name, game: before.game, format: before.format, options: before.options,
+    scoring: before.scoring, entrants: before.entrants, results: before.results,
+  });
+  dropped.push(seed);
+  dropped.sort(function (a, b) {
+    return a - b;
+  });
+  var options = json(t.options, {});
+  options.dropped = dropped;
+  t.options = JSON.stringify(options);
+  var row = logRow(id, me.name + ' dropped out');
+  row.restore = restore.length > CELL_LIMIT ? '' : restore;
+  data.Log.push(row);
+  bump(t);
+  writeTable('Tournaments', data.Tournaments);
+  writeTable('Log', data.Log);
+  return { playerId: me.playerId, tournament: assemble(t, data) };
+}
+
 /** A tournament's waitlist, oldest first. */
 function waitlistOf(id, data) {
   return (data.Waitlist || [])
@@ -650,6 +706,11 @@ function report(id, matchId, rawPin, result, matchNo) {
     byId[e.playerId] = e;
   });
   if (!byId[result.p1] || !byId[result.p2] || result.p1 === result.p2) throw new Error('Those players are not in this match');
+  var order = seedOrder(id, data);
+  var out = droppedSeeds(t);
+  [result.p1, result.p2].forEach(function (pid) {
+    if (out.indexOf(order.indexOf(byId[pid]) + 1) >= 0) throw new Error(byId[pid].name + ' has dropped out of this tournament');
+  });
   // Draws only in points stages, never in a knockout (incl. finals, whose ids start with "F-").
   var draws = ['round_robin', 'swiss', 'groups'].indexOf(t.format) >= 0 && String(matchId).indexOf('F-') !== 0;
   if (['p1', 'p2'].indexOf(result.winner) < 0 && !(draws && result.winner === 'draw')) throw new Error('Pick a winner');

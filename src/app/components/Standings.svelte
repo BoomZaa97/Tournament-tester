@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { eliminationPlacements, finalsSize, groupStandings, overallPlacements } from '../../core';
+  import { droppedEntrants, eliminationPlacements, finalsSize, groupStandings, overallPlacements } from '../../core';
   import type { StandingRow, TournamentState } from '../../core';
   import { hasFinals, isTableFormat, standingOptions, tableStandings } from '../lib/model';
   import type { TournamentDoc } from '../lib/model';
@@ -25,6 +25,7 @@
     finalsStarted ? overallPlacements(tstate, standingOptions(doc)) : rr ? [] : eliminationPlacements(tstate),
   );
   const alive = $derived(places.filter((p) => p.place === null));
+  const out = $derived(droppedEntrants(tstate));
   const pct = (x: number) => (x * 100).toFixed(1);
   const ordinal = (n: number) => n + (['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] ?? 'th');
 </script>
@@ -49,7 +50,7 @@
         {#each rows as r, i (r.entrant)}
           <tr class:top={r.rank === 1 && r.played > 0} class:cut={i === cut - 1 && i < rows.length - 1}>
             <td class="num rank">{r.rank}</td>
-            <td class="name"><a href="#/p/{r.entrant}">{names.get(r.entrant)}</a></td>
+            <td class="name"><a href="#/p/{r.entrant}">{names.get(r.entrant)}</a>{#if out.has(r.entrant)} <span class="dropped">dropped</span>{/if}</td>
             <td class="num">{r.played}</td><td class="num">{r.wins}</td><td class="num">{r.draws}</td><td class="num">{r.losses}</td>
             <td class="num hide-s">{r.for}</td><td class="num hide-s">{r.against}</td>
             <td class="num">{r.diff > 0 ? '+' : ''}{r.diff}</td>
@@ -72,6 +73,7 @@
       <li class:gold={p.place === 1}>
         <span class="pl">{ordinal(p.place!)}</span>
         <a href="#/p/{p.entrant}">{names.get(p.entrant)}</a>
+        {#if out.has(p.entrant)}<span class="dropped">dropped</span>{/if}
       </li>
     {/each}
   </ol>
@@ -128,6 +130,7 @@
   .gold .pl { color: var(--accent); }
   .gold a { font-size: 20px; }
   .still { margin-top: 12px; }
+  .dropped { font: 600 12px var(--font-cond); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
   .note { margin-top: 10px; max-width: 560px; }
   @media (max-width: 520px) { .hide-s { display: none; } td, th { padding: 8px 6px; } }
 </style>

@@ -33,6 +33,8 @@ export interface Store {
   report?(id: string, matchId: string, pin: string, result: ReportedResult, matchNo?: number): Promise<TournamentDoc>;
   /** Mark someone as arrived (or not): a player with their PIN, or the organizer by player id. */
   checkin?(id: string, who: { pin: string } | { playerId: string }, here: boolean): Promise<TournamentDoc>;
+  /** A player drops out of a running tournament with their PIN. */
+  drop?(id: string, pin: string): Promise<TournamentDoc>;
   /** Organizer/admin only: every entrant's PIN, by player id. */
   pins?(id: string): Promise<Record<string, string>>;
 }
@@ -254,6 +256,11 @@ export class SheetsStore implements Store {
       action: 'checkin', id, here, ...who, orgKey: orgKeyFor(id) ?? '',
     });
     if ('pin' in who && !myPin(id)) rememberPin(id, r.playerId, who.pin);
+    return r.tournament;
+  }
+
+  async drop(id: string, pin: string) {
+    const r = await this.call<{ tournament: TournamentDoc; playerId: string }>('POST', { action: 'drop', id, pin });
     return r.tournament;
   }
 

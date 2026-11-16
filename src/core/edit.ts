@@ -1,5 +1,5 @@
 import { BYE } from './types';
-import type { EntrantId, FormatOptions, MatchResult, MatchTemplate, Slot, SwissPair, TournamentState, Winner } from './types';
+import type { EntrantId, FormatOptions, MatchResult, MatchTemplate, ResolvedMatch, Slot, SwissPair, TournamentState, Winner } from './types';
 import { resolve } from './resolve';
 
 export type ResultInput = Omit<MatchResult, 'p1' | 'p2'>;
@@ -155,12 +155,25 @@ export function lockSwissRounds(state: TournamentState, results: Record<string, 
   const old = state.options?.swissPairings ?? [];
   const rounds = Math.max(0, ...state.structure.matches.filter((m) => m.side === 'SW').map((m) => m.round));
   const next: (SwissPair[] | null)[] = [];
+  const clash = (ms: ResolvedMatch[]) => ms.some((m) => m.status === 'conflict' && results[m.template.id]);
+  let everyone: ResolvedMatch[] | undefined;
   for (let r = 1; r <= rounds; r++) {
     const ms = resolved.filter((m) => m.template.side === 'SW' && m.template.round === r);
     if (!ms.some((m) => results[m.template.id])) next.push(null);
     else if (old[r - 1]) next.push(old[r - 1]);
     else if (ms.some((m) => m.p1 === null || m.p2 === null)) next.push(null); // not paired yet: nothing to freeze
-    else next.push(ms.map((m) => [seedOf(m.p1), seedOf(m.p2)]));
+    else {
+      let pick = ms;
+      if (state.options?.dropped?.length && clash(ms)) {
+        // Someone reported into this round through the sheet (which can't freeze it), then a player
+        // dropped out. Freeze the round as it was paired when it was played: with everyone.
+        everyone ??= [...resolve({ ...state, options: { ...state.options, dropped: [] }, results }).values()];
+        const alt = everyone.filter((m) => m.template.side === 'SW' && m.template.round === r);
+        if (!clash(alt) && !alt.some((m) => m.p1 === null || m.p2 === null)) pick = alt;
+      }
+      // (a slot left empty because players dropped out has nobody in it: nothing to keep)
+      next.push(pick.map((m): SwissPair => [seedOf(m.p1), seedOf(m.p2)]).filter(([a, b]) => a || b));
+    }
   }
   while (next.length && next[next.length - 1] === null) next.pop();
   if (next.length) options.swissPairings = next;

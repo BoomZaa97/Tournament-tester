@@ -19,6 +19,8 @@
     { key: ['ready'], title: 'Up next' },
     { key: ['waiting'], title: 'Waiting for earlier matches' },
     { key: ['done'], title: 'Completed' },
+    // the only 'bye' matches listed: real byes are filtered out below, walkovers have two players
+    { key: ['bye'], title: 'Walkovers (a player dropped out)' },
   ];
 
   const nm = (s: string | null) => (s && s !== BYE ? (names.get(s) ?? '?') : 'TBD');
@@ -32,6 +34,7 @@
   });
 
   function score(m: ResolvedMatch) {
+    if (m.walkover) return 'W/O';
     const r = m.result;
     if (!r || m.status !== 'done') return '';
     if (r.forfeit) return 'FF';
@@ -51,9 +54,9 @@
       <h3>{g.title} <span class="count">{list.length}</span></h3>
       <ul>
         {#each list as m (m.template.id)}
-          {@const r = m.status === 'done' ? m.result : undefined}
+          {@const r = m.status === 'done' ? m.result : m.walkover ? { winner: m.winner === m.p1 ? 'p1' : 'p2' } : undefined}
           <li>
-            <button class="item st-{m.status}" onclick={() => onselect(m.template.id)} disabled={m.status === 'waiting'}>
+            <button class="item st-{m.status}" onclick={() => onselect(m.template.id)} disabled={m.status === 'waiting' || m.status === 'bye'}>
               <span class="num">{numbers.get(m.template.id)}</span>
               <span class="body">
                 <span class="label">{titleOf(m)}</span>

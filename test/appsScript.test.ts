@@ -325,6 +325,34 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(checkin({ pin: p.a, here: false }).error).toMatch(/already started/);
     });
 
+    it('a player drops out with their PIN once the tournament has started; logged so the organizer can undo it', () => {
+      const g = fakeGoogle();
+      create(g);
+      const p = pins(g);
+      const drop = (pin: string) => g.post({ action: 'drop', id: 'o1', pin });
+      expect(drop(p.c).error).toMatch(/hasn't started/);
+      const report = (pin: string, r: object, matchId: string) => g.post({ action: 'report', id: 'o1', matchId, pin, result: r });
+      expect(report(p.a, { winner: 'p1', p1: 'a', p2: 'c' }, 'S1-1').error).toBeUndefined();
+
+      expect(drop('999999').error).toBe('Wrong PIN');
+      const before = g.get({ action: 'get', id: 'o1' }).tournament;
+      const out = drop(p.c);
+      expect(out.error).toBeUndefined();
+      expect(out.tournament.options.dropped).toEqual([3]); // 007 is seed 3
+      expect(out.tournament.version).toBe(before.version + 1);
+      const entry = out.tournament.log.at(-1);
+      expect(entry.summary).toBe('007 dropped out');
+      expect(entry.restore.options).toEqual(before.options);
+      expect(entry.restore.results).toEqual(before.results);
+      expect(drop(p.c).error).toMatch(/already dropped/);
+      // a dropped player can't report, and nobody can report a match against them
+      expect(report(p.c, { winner: 'p1', p1: 'c', p2: 'b' }, 'S2-1').error).toMatch(/dropped out/);
+      expect(report(p.b, { winner: 'p1', p1: 'b', p2: 'c' }, 'S2-1').error).toMatch(/dropped out/);
+      // organizer saves keep it (it's in options)
+      const t = g.get({ action: 'get', id: 'o1' }).tournament;
+      expect(g.post({ action: 'save', orgKey: ORG, tournament: t }).tournament.options.dropped).toEqual([3]);
+    });
+
     it('no limit set: nobody is waitlisted', () => {
       const g = fakeGoogle();
       create(g);

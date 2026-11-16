@@ -1,7 +1,7 @@
 import { createTournament } from './create';
 import { allowsDraws, lockSwissRounds } from './edit';
 import { finalsSize } from './formats/finals';
-import { resolve } from './resolve';
+import { droppedEntrants, resolve } from './resolve';
 import type { EntrantId, Format, FormatOptions, MatchResult, SwissPair, TournamentState } from './types';
 
 export interface RestructureInput {
@@ -42,9 +42,14 @@ export function restructure(state: TournamentState, input: RestructureInput): Re
     const pairings = carrySwissPairings(state, entrants);
     if (pairings.length) options.swissPairings = pairings;
   }
+  const newSeed = new Map(entrants.map((e, i) => [e, i + 1]));
+  // Dropped players stay dropped (by player, not seed; removed ones are forgotten). Never taken from
+  // input. Left out while old results are placed (a dropped player's unplayed matches look like
+  // walkovers, which would stop their played results from fitting) and added back at the end.
+  const dropped = [...droppedEntrants(state)].map((e) => newSeed.get(e) ?? 0).filter((s) => s > 0).sort((a, b) => a - b);
+  delete options.dropped;
   if (options.finals?.qualified) {
     // Finalists stay the same people. If one was removed, the organizer picks again.
-    const newSeed = new Map(entrants.map((e, i) => [e, i + 1]));
     const moved = options.finals.qualified.map((s) => newSeed.get(state.entrants[s - 1]) ?? 0);
     const { qualified: _, ...rest } = options.finals;
     options.finals =
@@ -86,9 +91,9 @@ export function restructure(state: TournamentState, input: RestructureInput): Re
     }
   }
 
-  const dropped = [...pool.values()].flat();
   if (format === 'swiss') next = createTournament(format, entrants, lockSwissRounds({ ...next, results }, results));
-  return { state: { ...next, results }, kept, dropped };
+  if (dropped.length) next = { ...next, options: { ...next.options, dropped } };
+  return { state: { ...next, results }, kept, dropped: [...pool.values()].flat() };
 }
 
 /** Started swiss rounds, re-expressed in the new seed order. */

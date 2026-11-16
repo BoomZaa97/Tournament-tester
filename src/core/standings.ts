@@ -1,6 +1,6 @@
 import { BYE } from './types';
 import type { EntrantId, Format, ResolvedMatch, TournamentState } from './types';
-import { resolve } from './resolve';
+import { droppedEntrants, resolve } from './resolve';
 import { groupMembers } from './formats/groups';
 import { finalsSize } from './formats/finals';
 
@@ -109,7 +109,9 @@ function pointsTable(resolved: ResolvedMatch[], entrants: EntrantId[], opts: Rou
   const points = opts.points ?? { win: 3, draw: 1, loss: 0 };
   const tiebreakers = opts.tiebreakers ?? defaultTiebreakers(format);
   const done = resolved.filter((m) => m.status === 'done');
-  const byes = resolved.filter((m) => m.status === 'bye' && m.template.side === 'SW' && m.winner && m.winner !== BYE);
+  const byes = resolved.filter((m) => m.status === 'bye' && !m.walkover && m.template.side === 'SW' && m.winner && m.winner !== BYE);
+  // A player dropped out: their remaining matches count as forfeits (a win for the opponent, a loss for them).
+  const walkovers = resolved.filter((m) => m.walkover);
 
   const tally = (subset: EntrantId[], matches: ResolvedMatch[]) => {
     const rows = new Map<EntrantId, StandingRow>(
@@ -141,6 +143,12 @@ function pointsTable(resolved: ResolvedMatch[], entrants: EntrantId[], opts: Rou
     const row = all.get(m.winner!);
     if (!row) continue;
     row.played++; row.wins++; row.byes++; row.points += points.win;
+  }
+  for (const m of walkovers) {
+    const w = all.get(m.winner as EntrantId);
+    const l = all.get(m.loser as EntrantId);
+    if (w) { w.played++; w.wins++; w.points += points.win; }
+    if (l) { l.played++; l.losses++; l.points += points.loss; }
   }
   for (const m of done) {
     const a = all.get(m.result!.p1);
@@ -201,7 +209,10 @@ export interface FinalistSuggestion {
 export function suggestFinalists(state: TournamentState, opts: RoundRobinOptions = {}): FinalistSuggestion {
   const format = state.structure.format;
   const size = finalsSize(format, state.entrants.length, state.options);
-  const tables = format === 'groups' ? [...groupStandings(state, opts).values()] : [roundRobinStandings(state, opts)];
+  const out = droppedEntrants(state); // dropped players don't go through
+  const tables = (format === 'groups' ? [...groupStandings(state, opts).values()] : [roundRobinStandings(state, opts)]).map((t) =>
+    t.filter((r) => !out.has(r.entrant)),
+  );
   const finalists: EntrantId[] = [];
   const taken = tables.map(() => 0);
   for (let place = 0; finalists.length < size; place++) {

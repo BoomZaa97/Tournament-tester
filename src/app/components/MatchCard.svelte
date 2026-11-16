@@ -18,7 +18,11 @@
   const clickable = $derived(!!onselect && ['ready', 'done', 'conflict'].includes(m.status));
 
 
+  /** Side that won a walkover (the other player dropped out). */
+  const woWinner = $derived(m.walkover ? (m.winner === m.p1 ? 'p1' : 'p2') : null);
+
   function score(side: 'p1' | 'p2'): string {
+    if (woWinner) return woWinner === side ? 'W' : '–';
     if (!r) return '';
     if (r.forfeit) return r.winner === side ? 'W' : 'FF';
     const s = side === 'p1' ? r.score1 : r.score2;
@@ -35,8 +39,8 @@
         id,
         name: id ? (names.get(id) ?? '?') : slot === BYE ? 'Bye' : describe(m.template[side]),
         seed: id ? seeds.get(id) : undefined,
-        won: !!r && r.winner === side,
-        lost: !!r && r.winner !== side && r.winner !== 'draw',
+        won: woWinner ? woWinner === side : !!r && r.winner === side,
+        lost: woWinner ? woWinner !== side : !!r && r.winner !== side && r.winner !== 'draw',
         tbd: !id,
       };
     }),
@@ -47,6 +51,7 @@
   this={clickable ? 'button' : 'div'}
   role={clickable ? undefined : 'group'}
   class="card st-{m.status}"
+  class:walkover={m.walkover}
   class:clickable
   class:conditional={!!m.template.onlyIf}
   onclick={clickable ? () => onselect?.(m.template.id) : undefined}
@@ -75,6 +80,8 @@
     <span class="flag">Not needed</span>
   {:else if m.status === 'conflict'}
     <span class="flag warn">Check</span>
+  {:else if m.walkover}
+    <span class="flag">Walkover</span>
   {:else if m.template.onlyIf && m.status === 'waiting'}
     <span class="flag">If needed</span>
   {/if}
@@ -101,6 +108,7 @@
   .st-ready { border-left: 4px solid var(--accent); }
   .st-conflict { border-color: var(--warn); border-left: 4px solid var(--warn); }
   .st-skipped, .st-bye { opacity: 0.5; border-style: dashed; }
+  .walkover { opacity: 0.8; }
   .conditional.st-waiting { border-style: dashed; }
 
   .num {

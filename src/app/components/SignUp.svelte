@@ -6,9 +6,11 @@
   interface Props {
     doc: TournamentDoc;
     names: Map<string, string>;
+    /** The tournament is over (no dropping out any more). */
+    finished?: boolean;
     onjoined: (doc: TournamentDoc) => void;
   }
-  let { doc, names, onjoined }: Props = $props();
+  let { doc, names, finished = false, onjoined }: Props = $props();
 
   let name = $state('');
   let busy = $state(false);
@@ -24,6 +26,24 @@
   const waitPlace = $derived(mine ? (doc.waitlist ?? []).findIndex((w) => w.id === mine!.playerId) + 1 : 0);
   /** Self sign-up would put you on the waitlist: the limit is reached, or others are already waiting. */
   const full = $derived(!!doc.maxPlayers && (doc.entrants.length >= doc.maxPlayers || (doc.waitlist?.length ?? 0) > 0));
+
+  const iDropped = $derived(!!mine && (doc.options.dropped ?? []).includes(doc.entrants.findIndex((e) => e.id === mine!.playerId) + 1));
+  const canDrop = $derived(!!app.store.drop && Object.keys(doc.results).length > 0 && !finished);
+
+  async function dropOut() {
+    if (!mine || !app.store.drop) return;
+    if (!confirm("Drop out of this tournament? You keep your results, but you won't get any more matches: your opponents win them.")) return;
+    busy = true;
+    error = '';
+    try {
+      onjoined(await app.store.drop(doc.id, mine.pin));
+      app.notify('You dropped out');
+    } catch (e) {
+      error = errorText(e);
+    } finally {
+      busy = false;
+    }
+  }
 
   async function join() {
     if (!name.trim() || !app.store.signup) return;
@@ -44,7 +64,15 @@
 {#if joined}
   <div class="panel box">
     <p>You're in as <b>{names.get(mine!.playerId)}</b>. Your PIN is <b class="pin">{mine!.pin}</b>.</p>
-    <p class="small muted">You need it to report your own scores. This device remembers it; write it down for other devices.</p>
+    {#if iDropped}
+      <p class="small"><b>You dropped out.</b> Your results stay in the standings. Ask the organizer if you want back in.</p>
+    {:else}
+      <p class="small muted">You need it to report your own scores. This device remembers it; write it down for other devices.</p>
+      {#if canDrop}
+        <div class="row"><button class="small danger" disabled={busy} onclick={dropOut}>Drop out</button></div>
+      {/if}
+    {/if}
+    {#if error}<p class="small err">{error}</p>{/if}
   </div>
 {:else if waitPlace}
   <div class="panel box">

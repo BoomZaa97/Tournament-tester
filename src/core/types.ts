@@ -110,6 +110,14 @@ export interface FormatOptions {
   groupCount?: number;
   /** Swiss, round robin and groups: the best players go on to a knockout final. */
   finals?: FinalsOptions;
+  /**
+   * Players who dropped out, as entrant seeds (1-based). They keep their results and their place in
+   * the standings, but play no more: swiss doesn't pair them in rounds that haven't started, and any
+   * match they would still have to play is a walkover (their opponent wins, nothing is stored).
+   * The bracket structure doesn't change, so undoing a drop is just removing the seed again.
+   * Carried over by player through `restructure`.
+   */
+  dropped?: number[];
 }
 
 /**
@@ -146,7 +154,7 @@ export type MatchStatus =
   | 'waiting' // at least one participant not decided yet
   | 'ready' // both participants known, no result yet
   | 'done' // result recorded and valid
-  | 'bye' // auto-resolved because one or both sides are empty
+  | 'bye' // auto-resolved: one or both sides are empty, or (a walkover) a player dropped out
   | 'skipped' // conditional match that is not needed (e.g. no GF reset)
   | 'conflict'; // result recorded, but the players no longer match it
 
@@ -159,4 +167,6 @@ export interface ResolvedMatch {
   /** Set when status is done or bye. 'draw' gives no winner/loser. */
   winner: Slot;
   loser: Slot;
+  /** A 'bye' between two real players because one dropped out (the loser). See `isWalkover`. */
+  walkover?: boolean;
 }

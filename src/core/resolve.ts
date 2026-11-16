@@ -12,13 +12,15 @@ export function resolve(state: TournamentState): Map<string, ResolvedMatch> {
   const out = new Map<string, ResolvedMatch>();
   const visiting = new Set<string>();
   const swissRounds = new Map<number, [EntrantId, EntrantId | Bye][] | null>();
+  const dropped = droppedEntrants(state);
 
-  /** Pairing for a swiss round that hasn't started: needs every earlier round finished. */
+  /** Pairing for a swiss round that hasn't started: needs every earlier round finished. Dropped players sit out. */
   const swissPairing = (round: number) => {
     if (!swissRounds.has(round)) {
       const earlier = state.structure.matches.filter((m) => m.side === 'SW' && m.round < round).map((m) => get(m.id));
       const ready = earlier.every((m) => m.status === 'done' || m.status === 'bye');
-      swissRounds.set(round, ready ? pairSwiss(state.entrants, swissRecord(earlier)) : null);
+      const active = state.entrants.filter((e) => !dropped.has(e));
+      swissRounds.set(round, ready ? pairSwiss(active, swissRecord(earlier)) : null);
     }
     return swissRounds.get(round)!;
   };
@@ -64,7 +66,8 @@ export function resolve(state: TournamentState): Map<string, ResolvedMatch> {
     let needed: boolean | null = true; // null = not known yet
     if (template.onlyIf) {
       const dep = get(template.onlyIf.match);
-      needed = dep.status === 'done' ? dep.result!.winner === 'p2' : null;
+      // a walkover grand final settles it: nobody is left to play a reset
+      needed = dep.status === 'done' ? dep.result!.winner === 'p2' : dep.status === 'bye' ? false : null;
     }
 
     if (needed === false) {
@@ -78,6 +81,12 @@ export function resolve(state: TournamentState): Map<string, ResolvedMatch> {
         rm.winner = p1 === BYE ? p2 : p1;
         rm.loser = BYE;
       }
+    } else if (!result && (dropped.has(p1) || dropped.has(p2))) {
+      // Walkover: whoever dropped out loses without playing (both dropped: the first one goes through,
+      // and loses their next match the same way). Nothing is stored, so undoing the drop brings the match back.
+      rm.status = 'bye';
+      rm.walkover = true;
+      [rm.winner, rm.loser] = dropped.has(p1) && !dropped.has(p2) ? [p2, p1] : [p1, p2];
     } else if (!result) {
       rm.status = 'ready';
     } else if (result.p1 !== p1 || result.p2 !== p2) {
@@ -95,6 +104,11 @@ export function resolve(state: TournamentState): Map<string, ResolvedMatch> {
 
   for (const m of state.structure.matches) get(m.id);
   return out;
+}
+
+/** Entrants who dropped out (`options.dropped`, by seed). */
+export function droppedEntrants(state: Pick<TournamentState, 'entrants' | 'options'>): Set<EntrantId> {
+  return new Set((state.options?.dropped ?? []).map((s) => state.entrants[s - 1]).filter(Boolean));
 }
 
 /** Matches that can be played right now. */

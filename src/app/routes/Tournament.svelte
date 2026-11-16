@@ -13,6 +13,7 @@
   import Standings from '../components/Standings.svelte';
   import Waitlist from '../components/Waitlist.svelte';
   import CheckIn from '../components/CheckIn.svelte';
+  import DropPanel from '../components/DropPanel.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import {
     describeResult, finalPlaces, FORMAT_LABEL, hasFinals, isTableFormat, logEntry, matchNumbers, nameMap, newId, pointsStageName,
@@ -182,6 +183,23 @@
     return ok;
   }
 
+  /** Organizer drops a player (or brings them back). Only options.dropped changes. Undoable from the log. */
+  async function setDropped(playerId: string, out: boolean) {
+    if (!doc) return false;
+    const seed = doc.entrants.findIndex((e) => e.id === playerId) + 1;
+    const now = new Set(doc.options.dropped ?? []);
+    if (out) now.add(seed);
+    else now.delete(seed);
+    // from tstate: includes any swiss round a player reported into that isn't stored as frozen yet
+    const { dropped: _, ...rest } = tstate?.options ?? doc.options;
+    const options = now.size ? { ...rest, dropped: [...now].sort((a, b) => a - b) } : rest;
+    const name = names.get(playerId) ?? '?';
+    const entry = logEntry(out ? `${name} dropped out (by the organizer)` : `${name} is back in`, { restore: restorePoint(doc) });
+    const ok = await persist({ ...doc, options, log: [...doc.log, entry] });
+    if (ok) app.notify(out ? `${name} dropped` : `${name} is back in`);
+    return ok;
+  }
+
   /** Organizer confirms who goes to the finals (or clears them to pick again). Undoable from the log. */
   async function setFinalists(qualified: number[] | null) {
     if (!doc?.options.finals) return false;
@@ -301,7 +319,7 @@
       </p>
     {/if}
 
-    <SignUp {doc} {names} onjoined={(d) => (doc = d)} />
+    <SignUp {doc} {names} finished={status === 'finished'} onjoined={(d) => (doc = d)} />
     {#if doc.checkIn && app.store.checkin && status === 'setup' && Object.keys(doc.results).length === 0 && doc.entrants.length}
       <CheckIn {doc} {names} {canEdit} onchange={(d) => (doc = d)} onnoshows={removeNoShows} />
     {/if}
@@ -316,6 +334,7 @@
     <div class="body">
       {#if tab === 'edit' && canEdit}
         {#if app.store.kind === 'sheets'}<SharePanel {doc} {names} onsignup={setSignup} onmax={setMaxPlayers} oncheckin={setCheckIn} />{/if}
+        {#if status !== 'setup' && tstate}<DropPanel {doc} {names} ondrop={setDropped} />{/if}
         {#key doc.version}
           <EditTournament {doc} known={players} {names} onapply={applyEditTournament} ondelete={remove} />
         {/key}

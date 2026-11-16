@@ -79,7 +79,9 @@ export function swissRecord(matches: Iterable<ResolvedMatch>): SwissRecord {
   const byes = new Map<EntrantId, number>();
   const add = (e: EntrantId, x: number) => score.set(e, (score.get(e) ?? 0) + x);
   for (const m of matches) {
-    if (m.status === 'bye' && m.winner && m.winner !== BYE) {
+    if (m.walkover && m.winner && m.winner !== BYE) {
+      add(m.winner, 1); // opponent dropped out: a win, but not a bye (and they didn't meet)
+    } else if (m.status === 'bye' && m.winner && m.winner !== BYE) {
       add(m.winner, 1);
       byes.set(m.winner, (byes.get(m.winner) ?? 0) + 1);
     } else if (m.status === 'done' && m.result) {
