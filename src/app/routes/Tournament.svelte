@@ -237,6 +237,7 @@
         <h1>{doc.name}</h1>
         <div class="row meta">
           <span class="status s-{status}">{STATUS_LABEL[status]}</span>
+          {#if doc.code && app.store.kind === 'sheets'}<span class="small muted">Code <b class="jcode">{doc.code}</b></span>{/if}
           {#if champion}<span class="champ">Champion: <b>{champion}</b></span>{/if}
           {#if saving}<span class="muted small">Saving…</span>{/if}
         </div>
@@ -327,6 +328,7 @@
   .s-running { border-color: var(--accent); color: var(--accent); }
   .s-finished { background: var(--ink); color: var(--paper); border-color: var(--ink); }
   .champ { font-size: 16px; }
+  .jcode { font: 700 16px var(--font-cond); letter-spacing: 0.12em; color: var(--ink); }
   .notice { margin-top: 16px; }
   .tabs {
     display: flex;

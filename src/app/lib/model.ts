@@ -50,6 +50,12 @@ export interface TournamentDoc {
   results: Record<string, MatchResult>;
   /** Players can add themselves (shared Google Sheet mode, before anything is played). */
   signup?: boolean;
+  /**
+   * Short join code people type on the home page (or scan as a QR code at the door). Made by the
+   * Google script (unique there) or by this browser in local mode. Missing = the Google script is
+   * an older version that doesn't know about codes yet.
+   */
+  code?: string;
   log: LogEntry[];
   createdAt: string;
   updatedAt: string;
@@ -110,6 +116,30 @@ export function tableStandings(doc: Pick<TournamentDoc, 'format' | 'scoring'>, t
 export function standingOptions(doc: Pick<TournamentDoc, 'format' | 'scoring'>) {
   return { points: doc.scoring.points, tiebreakers: tiebreakersFor(doc.format, doc.scoring) };
 }
+
+/** Join code letters: no look-alikes (no 0/O, no 1/I). Same set as Code.gs. */
+export const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+export function makeCode(used: Iterable<string> = []): string {
+  const taken = new Set([...used].map(cleanCode));
+  for (;;) {
+    const bytes = crypto.getRandomValues(new Uint8Array(6));
+    const code = [...bytes].map((b) => CODE_CHARS[b % CODE_CHARS.length]).join('');
+    if (!taken.has(code)) return code;
+  }
+}
+
+/** What someone typed, as a code: capitals, no spaces or dashes. */
+export function cleanCode(s: string): string {
+  return s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/** Shared mode, but the Google script was pasted before the newer features existed. */
+export function scriptOutdated(doc: Pick<TournamentDoc, 'code'>, kind: 'local' | 'sheets'): boolean {
+  return kind === 'sheets' && !doc.code;
+}
+
+export const UPDATE_SCRIPT = 'The site owner needs to update the Google script for this.';
 
 export function newId(): string {
   return Date.now().toString(36).slice(-5) + Math.random().toString(36).slice(2, 7);

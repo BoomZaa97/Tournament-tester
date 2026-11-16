@@ -16,6 +16,24 @@
     (tournaments ?? []).map((t) => ({ t, status: statusOf(t) })).filter((r) => filter === 'all' || r.status === filter),
   );
 
+  let code = $state('');
+  let joinError = $state('');
+  let joining = $state(false);
+
+  async function join() {
+    if (!code.trim()) return;
+    joining = true;
+    joinError = '';
+    try {
+      const t = await app.store.findByCode(code);
+      app.go(`t/${t.id}`);
+    } catch (e) {
+      joinError = errorText(e);
+    } finally {
+      joining = false;
+    }
+  }
+
   const date = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 </script>
 
@@ -24,6 +42,17 @@
     <h1>Tournaments</h1>
     <a class="btn primary" href="#/new">+ New tournament</a>
   </div>
+
+  <form class="join" onsubmit={(e) => { e.preventDefault(); join(); }}>
+    <label class="field">
+      <span>Join with code</span>
+      <span class="row">
+        <input bind:value={code} placeholder="e.g. K7QM2X" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+        <button type="submit" disabled={!code.trim() || joining}>{joining ? 'Looking…' : 'Open'}</button>
+      </span>
+    </label>
+    {#if joinError}<p class="small err">{joinError}</p>{/if}
+  </form>
 
   {#if app.store.kind === 'local'}
     <p class="notice small">
@@ -94,4 +123,9 @@
   .s-finished { background: var(--ink); color: var(--paper); border-color: var(--ink); }
   .none { padding: 14px 4px; }
   .notice { margin-bottom: 20px; }
+  .join { max-width: 360px; margin-bottom: 24px; }
+  .join .row { flex-wrap: nowrap; }
+  .join input { flex: 1; min-width: 0; font: 700 18px var(--font-cond); letter-spacing: 0.14em; text-transform: uppercase; }
+  .join input::placeholder { letter-spacing: 0.05em; font-weight: 500; text-transform: none; }
+  .err { color: var(--danger); margin: 6px 0 0; }
 </style>

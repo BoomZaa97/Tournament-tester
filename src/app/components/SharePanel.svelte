@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app, errorText } from '../lib/app.svelte';
   import { helperLink } from '../lib/store';
+  import { UPDATE_SCRIPT } from '../lib/model';
   import type { TournamentDoc } from '../lib/model';
 
   interface Props {
@@ -56,6 +57,16 @@
   </div>
 
   <div class="item">
+    <div class="label">Join code and door poster</div>
+    {#if doc.code}
+      <p class="small muted">People type <b class="code">{doc.code}</b> on the home page, or scan the QR code on the poster.</p>
+    {:else}
+      <p class="small muted">No join code yet: {UPDATE_SCRIPT} The poster's QR code works already.</p>
+    {/if}
+    <a class="btn small" href="#/t/{doc.id}/poster">Door poster (QR code)</a>
+  </div>
+
+  <div class="item">
     <div class="label">Helper link</div>
     {#if helper}
       <p class="small muted"><b>Anyone with this link can edit this tournament.</b> Only send it to people helping you run it.</p>
@@ -94,7 +105,9 @@
   .share { padding: 14px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-bottom: 20px; }
   .item { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .item p { margin: 0; }
-  .item > button { justify-self: start; }
+  .item > button, .item > .btn { justify-self: start; }
+  .btn.small { min-height: 32px; padding: 0 10px; font-size: 14px; }
+  .code { font: 700 17px var(--font-cond); letter-spacing: 0.12em; color: var(--ink); }
   .row { flex-wrap: nowrap; align-items: center; }
   code {
     flex: 1;

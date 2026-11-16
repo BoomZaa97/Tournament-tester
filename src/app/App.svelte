@@ -3,6 +3,7 @@
   import Home from './routes/Home.svelte';
   import Create from './routes/Create.svelte';
   import Tournament from './routes/Tournament.svelte';
+  import Poster from './routes/Poster.svelte';
   import Players from './routes/Players.svelte';
   import PlayerPage from './routes/Player.svelte';
   import Settings from './routes/Settings.svelte';
@@ -28,6 +29,8 @@
   {#key app.path.join('/')}
     {#if section === 'new'}
       <Create />
+    {:else if section === 't' && app.path[1] && app.path[2] === 'poster'}
+      <Poster id={app.path[1]} />
     {:else if section === 't' && app.path[1]}
       <Tournament id={app.path[1]} tab={app.path[2] ?? 'bracket'} arg={app.path[3]} />
     {:else if section === 'players'}

@@ -20,7 +20,7 @@
 
 var TABLES = {
   Players: ['id', 'name'],
-  Tournaments: ['id', 'name', 'game', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash'],
+  Tournaments: ['id', 'name', 'game', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash', 'code'],
   Entrants: ['tournamentId', 'seed', 'playerId', 'name', 'pin'],
   Results: ['tournamentId', 'matchId', 'p1Name', 'p2Name', 'winner', 'score1', 'score2', 'forfeit', 'at', 'p1Id', 'p2Id', 'games'],
   Log: ['tournamentId', 'time', 'summary', 'undone', 'id', 'changes', 'restore'],
@@ -35,6 +35,7 @@ function doGet(e) {
     var action = (e && e.parameter && e.parameter.action) || 'all';
     if (action === 'all') return readAll();
     if (action === 'get') return { tournament: readTournament(e.parameter.id) };
+    if (action === 'code') return findByCode(e.parameter.code);
     throw new Error('Unknown action: ' + action);
   });
 }
@@ -83,6 +84,7 @@ function handle(fn) {
 
 function readAll() {
   var data = loadTables();
+  ensureCodes(data);
   var tournaments = data.Tournaments.map(function (t) {
     return assemble(t, data);
   });
@@ -91,10 +93,66 @@ function readAll() {
 
 function readTournament(id) {
   var data = loadTables();
+  ensureCodes(data);
   var t = data.Tournaments.filter(function (r) {
     return r.id === id;
   })[0];
   return t ? assemble(t, data) : null;
+}
+
+// ------------------------------------------------------------------ join codes
+
+/** Short codes people type at the door. No look-alikes: no 0/O, no 1/I. */
+var CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function newCode(rows) {
+  var used = {};
+  rows.forEach(function (r) {
+    if (r.code) used[String(r.code).toUpperCase()] = true;
+  });
+  for (var tries = 0; tries < 1000; tries++) {
+    var code = '';
+    for (var i = 0; i < 6; i++) code += CODE_CHARS.charAt(Math.floor(Math.random() * CODE_CHARS.length));
+    if (!used[code]) return code;
+  }
+  throw new Error('Could not make a join code');
+}
+
+function cleanCode(s) {
+  return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/** Tournaments made before join codes existed get one the first time they are read. */
+function ensureCodes(data) {
+  var missing = data.Tournaments.filter(function (t) {
+    return !t.code;
+  });
+  if (!missing.length) return;
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var fresh = readTable('Tournaments'); // someone may have saved since we read
+    fresh.forEach(function (t) {
+      if (!t.code) t.code = newCode(fresh);
+    });
+    writeTable('Tournaments', fresh);
+    data.Tournaments = fresh;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Public: which tournament has this join code. */
+function findByCode(raw) {
+  var code = cleanCode(raw);
+  if (!code) throw new Error('Type a code');
+  var data = loadTables();
+  ensureCodes(data);
+  var t = data.Tournaments.filter(function (r) {
+    return cleanCode(r.code) === code;
+  })[0];
+  if (!t) throw new Error('No tournament has the code ' + code);
+  return { id: t.id, name: t.name };
 }
 
 function toPlayer(r) {
@@ -140,6 +198,7 @@ function assemble(t, data) {
     name: t.name,
     game: t.game,
     signup: truthy(t.signup),
+    code: t.code || '',
     format: t.format,
     options: json(t.options, {}),
     scoring: json(t.scoring, {}),
@@ -175,9 +234,11 @@ function saveTournament(doc, players, body, isAdmin) {
   }
   if (existing && num(existing.version) !== num(doc.version)) return conflict();
   var orgKeyHash = existing && existing.orgKeyHash ? existing.orgKeyHash : body.orgKey ? sha256(String(body.orgKey)) : '';
+  var code = existing && existing.code ? existing.code : newCode(data.Tournaments);
 
   var now = new Date().toISOString();
   var saved = JSON.parse(JSON.stringify(doc));
+  saved.code = code;
   saved.version = num(doc.version) + 1;
   saved.updatedAt = now;
   if (!saved.createdAt) saved.createdAt = now;
@@ -214,6 +275,7 @@ function saveTournament(doc, players, body, isAdmin) {
     version: saved.version,
     signup: saved.signup ? 'yes' : '',
     orgKeyHash: orgKeyHash,
+    code: code,
   };
   var tournaments = data.Tournaments.filter(function (r) {
     return r.id !== doc.id;

@@ -1,4 +1,5 @@
 import type { MatchResult } from '../../core';
+import { cleanCode, makeCode, UPDATE_SCRIPT } from './model';
 import type { Player, TournamentDoc } from './model';
 
 export class VersionConflictError extends Error {
@@ -25,6 +26,8 @@ export interface Store {
   save(doc: TournamentDoc, players: Player[]): Promise<TournamentDoc>;
   remove(id: string): Promise<void>;
   renamePlayer(id: string, name: string): Promise<void>;
+  /** The tournament with this join code. Throws if there is none. */
+  findByCode(code: string): Promise<{ id: string; name: string }>;
   /** Shared (Google Sheet) mode only: players join and report their own scores. */
   signup?(id: string, name: string): Promise<{ playerId: string; pin: string; tournament: TournamentDoc }>;
   report?(id: string, matchId: string, pin: string, result: ReportedResult, matchNo?: number): Promise<TournamentDoc>;
@@ -83,7 +86,19 @@ const LS_KEY = 'tt.data.v1';
 function readLocal(): AllData {
   try {
     const raw = localStorage.getItem(LS_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const data: AllData = JSON.parse(raw);
+      // tournaments made before join codes existed get one now
+      if (data.tournaments.some((t) => !t.code)) {
+        for (const t of data.tournaments) t.code ||= makeCode(data.tournaments.map((x) => x.code ?? ''));
+        try {
+          writeLocal(data);
+        } catch {
+          /* storage full: codes are made again next time */
+        }
+      }
+      return data;
+    }
   } catch {
     /* private mode or corrupted: start empty */
   }
@@ -119,7 +134,8 @@ export class LocalStore implements Store {
     const data = readLocal();
     const i = data.tournaments.findIndex((t) => t.id === doc.id);
     if (i >= 0 && data.tournaments[i].version !== doc.version) throw new VersionConflictError();
-    const saved = { ...doc, version: doc.version + 1, updatedAt: new Date().toISOString() };
+    const code = doc.code || makeCode(data.tournaments.map((t) => t.code ?? ''));
+    const saved = { ...doc, code, version: doc.version + 1, updatedAt: new Date().toISOString() };
     if (i >= 0) data.tournaments[i] = saved;
     else data.tournaments.push(saved);
     data.players = upsertPlayers(data.players, players);
@@ -137,6 +153,13 @@ export class LocalStore implements Store {
     const data = readLocal();
     data.players = upsertPlayers(data.players, [{ id, name }]);
     writeLocal(data);
+  }
+
+  async findByCode(code: string) {
+    const want = cleanCode(code);
+    const t = readLocal().tournaments.find((t) => t.code && cleanCode(t.code) === want);
+    if (!want || !t) throw new Error(`No tournament has the code ${want}`);
+    return { id: t.id, name: t.name };
   }
 
   /** Replace everything (backup import). */
@@ -180,6 +203,8 @@ export class SheetsStore implements Store {
     if (!res.ok) throw new Error(`Google Sheet request failed (${res.status})`);
     const body = await res.json();
     if (body.error === 'conflict') throw new VersionConflictError();
+    // An older Google script that doesn't have this feature yet.
+    if (typeof body.error === 'string' && body.error.startsWith('Unknown action')) throw new Error(UPDATE_SCRIPT);
     if (body.error) throw new Error(body.error);
     return body as T;
   }
@@ -229,6 +254,10 @@ export class SheetsStore implements Store {
 
   async renamePlayer(id: string, name: string) {
     await this.call('POST', { action: 'renamePlayer', id, name });
+  }
+
+  findByCode(code: string) {
+    return this.call<{ id: string; name: string }>('GET', { action: 'code', code: cleanCode(code) });
   }
 
   /** Returns true if the admin key is accepted. */

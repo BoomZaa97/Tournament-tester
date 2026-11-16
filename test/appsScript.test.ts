@@ -287,6 +287,36 @@ describe('Google Sheets backend (Code.gs)', () => {
     });
   });
 
+  describe('join codes', () => {
+    it('every tournament gets a unique code that never changes; anyone can look it up', () => {
+      const g = fakeGoogle();
+      const a = g.post({ key: 'secret', action: 'save', tournament: doc }).tournament;
+      const b = g.post({ key: 'secret', action: 'save', tournament: { ...doc, id: 't2' } }).tournament;
+      expect(a.code).toMatch(/^[A-HJ-NP-Z2-9]{6}$/);
+      expect(b.code).not.toBe(a.code);
+      const again = g.post({ key: 'secret', action: 'save', tournament: { ...doc, version: 1, code: 'HACKED' } }).tournament;
+      expect(again.code).toBe(a.code);
+      expect(g.get({ action: 'get', id: 't1' }).tournament.code).toBe(a.code);
+
+      const typed = a.code.toLowerCase().slice(0, 3) + ' - ' + a.code.slice(3);
+      expect(g.get({ action: 'code', code: typed })).toEqual({ id: 't1', name: 'Friday' });
+      expect(g.get({ action: 'code', code: 'ZZZZZZ' }).error).toMatch(/No tournament/);
+      expect(g.get({ action: 'code', code: '' }).error).toMatch(/Type a code/);
+    });
+
+    it('tournaments saved by an older script get a code the first time they are read', () => {
+      const g = fakeGoogle();
+      g.post({ key: 'secret', action: 'save', tournament: doc });
+      const rows = g.sheets.get('Tournaments')!;
+      const col = rows[0].indexOf('code');
+      rows[1][col] = ''; // as if the old script had saved it
+      const code = g.get({ action: 'all' }).tournaments[0].code;
+      expect(code).toMatch(/^[A-HJ-NP-Z2-9]{6}$/);
+      expect(rows[1][col]).toBe(code);
+      expect(g.get({ action: 'code', code }).id).toBe('t1');
+    });
+  });
+
   it('renaming a player updates every tab', () => {
     const g = fakeGoogle();
     g.post({ key: 'secret', action: 'save', tournament: doc, players: doc.entrants });
