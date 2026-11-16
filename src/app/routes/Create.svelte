@@ -5,7 +5,7 @@
   import EntrantEditor from '../components/EntrantEditor.svelte';
   import FormatFields from '../components/FormatFields.svelte';
   import { app, errorText } from '../lib/app.svelte';
-  import { emptyDoc, matchNumbers } from '../lib/model';
+  import { emptyDoc, isByeMatch, matchNumbers } from '../lib/model';
   import type { Player, Row, Scoring } from '../lib/model';
   import { rowsToPlayers } from '../lib/players';
 
@@ -38,7 +38,7 @@
       names: new Map(live.map((r) => [r.key, r.name.trim()])),
       seeds: new Map(live.map((r, i) => [r.key, i + 1])),
       numbers: matchNumbers(resolved),
-      count: [...resolved.values()].filter((m) => m.status !== 'bye').length,
+      count: [...resolved.values()].filter((m) => !isByeMatch(m)).length,
     };
   });
 
@@ -82,7 +82,7 @@
           <datalist id="known-games">{#each games as g}<option value={g}></option>{/each}</datalist>
         </label>
 
-        <FormatFields bind:format bind:options bind:scoring />
+        <FormatFields bind:format bind:options bind:scoring entrantCount={names.length} />
 
         <hr class="rule" />
         <div class="label">Entrants <span class="muted">— top of the list is seed 1</span></div>

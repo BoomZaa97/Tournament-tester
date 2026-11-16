@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { BYE } from '../../core';
   import type { Format, ResolvedMatch } from '../../core';
   import { describeSource, isByeMatch, roundName } from '../lib/model';
   import MatchCard from './MatchCard.svelte';
@@ -18,7 +19,7 @@
   interface Section {
     key: string;
     title: string;
-    columns: { title: string; matches: ResolvedMatch[] }[];
+    columns: { title: string; matches: ResolvedMatch[]; note?: string }[];
   }
 
   const sections = $derived.by<Section[]>(() => {
@@ -33,13 +34,17 @@
         columns: rounds
           .map((r) => {
             const col = ms.filter((m) => m.template.round === r).sort((a, b) => a.template.index - b.template.index);
-            return { title: roundName(col[0].template, templates, format), matches: col };
+            // swiss: a round is paired only once the round before it is finished
+            const unpaired = side === 'SW' && col.every((m) => m.p1 === null);
+            const note = unpaired ? `Paired when round ${r - 1} is finished` : undefined;
+            return { title: roundName(col[0].template, templates, format), matches: col, note };
           })
           // a column made only of byes (e.g. Losers Round 1 with 6 players) is noise
           .filter((c) => c.matches.some((m) => !isByeMatch(m))),
       };
     };
     if (format === 'round_robin') return [build('RR', '', 'RR')];
+    if (format === 'swiss') return [build('SW', '', 'SW')];
     if (format === 'single_elim') {
       const s = [build('W', '', 'W')];
       if (all.some((m) => m.template.side === '3P')) s.push(build('3P', '3rd place match', '3P'));
@@ -57,7 +62,7 @@
     const out: typeof lines = {};
     for (const s of sections) {
       const box = containers[s.key];
-      if (!box || s.key === 'RR') continue;
+      if (!box || s.key === 'RR' || s.key === 'SW') continue;
       const origin = box.getBoundingClientRect();
       const pos = new Map<string, DOMRect>();
       box.querySelectorAll<HTMLElement>('[data-mid]').forEach((el) => {
@@ -107,7 +112,7 @@
 {#each sections as s (s.key)}
   <section class="section">
     {#if s.title}<h3 class="title">{s.title}</h3>{/if}
-    <div class="scroller" bind:this={containers[s.key]} class:rr={s.key === 'RR'}>
+    <div class="scroller" bind:this={containers[s.key]} class:rr={s.key === 'RR' || s.key === 'SW'}>
       <svg class="lines" aria-hidden="true">
         {#each lines[s.key] ?? [] as l}
           <path d={l.d} class:on={l.on} />
@@ -116,11 +121,19 @@
       {#each s.columns as col}
         <div class="col">
           <div class="label colhead">{col.title}</div>
+          {#if col.note}<div class="small muted colnote">{col.note}</div>{/if}
           <div class="stack">
             {#each col.matches as m (m.template.id)}
-              <div class="cell" data-mid={m.template.id} data-hidden={hidden(m)} class:hidden={hidden(m)}>
-                <MatchCard {m} {names} {seeds} {numbers} {describe} {hover} onhover={(id) => (hover = id)} {onselect} />
-              </div>
+              {#if s.key === 'SW' && hidden(m)}
+                <!-- swiss bye: say who sits out instead of leaving a gap -->
+                {#if m.p1 && m.p1 !== BYE}
+                  <div class="byeline small"><span class="muted">Bye</span> {names.get(m.p1) ?? '?'} <span class="muted">· counts as a win</span></div>
+                {/if}
+              {:else}
+                <div class="cell" data-mid={m.template.id} data-hidden={hidden(m)} class:hidden={hidden(m)}>
+                  <MatchCard {m} {names} {seeds} {numbers} {describe} {hover} onhover={(id) => (hover = id)} {onselect} />
+                </div>
+              {/if}
             {/each}
           </div>
         </div>
@@ -181,6 +194,14 @@
   }
   .rr .stack { justify-content: flex-start; gap: 10px; }
   .cell { position: relative; z-index: 1; }
+  .colnote { margin: -4px 0 8px; max-width: var(--card-w, 210px); }
+  .byeline {
+    box-sizing: border-box;
+    width: var(--card-w, 210px);
+    padding: 6px 8px;
+    border: 1px dashed var(--line-strong);
+    border-radius: var(--radius);
+  }
   .cell.hidden { visibility: hidden; }
 
   @media (max-width: 600px) {

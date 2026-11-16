@@ -1,6 +1,7 @@
 <script lang="ts">
   import { BYE } from '../../core';
   import type { MatchStatus, ResolvedMatch } from '../../core';
+  import { isByeMatch } from '../lib/model';
 
   interface Props {
     resolved: Map<string, ResolvedMatch>;
@@ -24,8 +25,9 @@
 
   const filtered = $derived.by(() => {
     const needle = q.trim().toLowerCase();
+    // bye slots are never played (and have no number), even while still waiting for a player
     return [...resolved.values()].filter(
-      (m) => !needle || [m.p1, m.p2].some((s) => nm(s).toLowerCase().includes(needle)),
+      (m) => !isByeMatch(m) && (!needle || [m.p1, m.p2].some((s) => nm(s).toLowerCase().includes(needle))),
     );
   });
 

@@ -10,7 +10,7 @@
   import Standings from '../components/Standings.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import {
-    describeResult, FORMAT_LABEL, matchNumbers, nameMap, newId, roundName, STATUS_LABEL, statusOf, toState,
+    describeResult, FORMAT_LABEL, isTableFormat, matchNumbers, nameMap, newId, roundName, STATUS_LABEL, statusOf, tableStandings, toState,
   } from '../lib/model';
   import type { LogEntry, Player, TournamentDoc } from '../lib/model';
   import { VersionConflictError } from '../lib/store';
@@ -53,7 +53,12 @@
   const status = $derived(doc ? statusOf(doc) : 'setup');
   const conflicts = $derived([...resolved.values()].filter((m) => m.status === 'conflict').length);
   const champion = $derived.by(() => {
-    if (!tstate || status !== 'finished' || doc?.format === 'round_robin') return null;
+    if (!tstate || !doc || status !== 'finished') return null;
+    if (isTableFormat(doc.format)) {
+      // only a clear winner, not a tie for first
+      const top = tableStandings(doc, tstate).filter((r) => r.rank === 1);
+      return top.length === 1 ? names.get(top[0].entrant) : null;
+    }
     const first = eliminationPlacements(tstate).find((p) => p.place === 1);
     return first ? names.get(first.entrant) : null;
   });
@@ -89,7 +94,7 @@
       (input ? describeResult(main?.after ?? out.results[matchId], names) : 'result cleared') +
       (extra ? ` (+${extra} later match${extra === 1 ? '' : 'es'} updated)` : '');
     const entry: LogEntry = { id: newId(), time: new Date().toISOString(), summary, changes: out.changes };
-    const ok = await persist({ ...doc, results: out.results, log: [...doc.log, entry] });
+    const ok = await persist({ ...doc, results: out.results, options: out.options, log: [...doc.log, entry] });
     if (ok) app.notify('Saved');
     return ok;
   }
@@ -107,7 +112,7 @@
     } else {
       const out = undo(tstate, entry.changes);
       changes = out.changes;
-      next = { ...doc, results: out.results };
+      next = { ...doc, results: out.results, options: out.options };
     }
     const log = doc.log.map((e) => (e.id === entry.id ? { ...e, undone: true } : e));
     log.push({ id: newId(), time: new Date().toISOString(), summary: `Undo: ${entry.summary}`, changes });
@@ -148,7 +153,7 @@
   }
 
   const tabs = $derived([
-    ['bracket', doc?.format === 'round_robin' ? 'Rounds' : 'Bracket'],
+    ['bracket', doc && isTableFormat(doc.format) ? 'Rounds' : 'Bracket'],
     ['matches', 'Matches'],
     ['standings', 'Standings'],
     ['log', 'Log'],
@@ -199,7 +204,7 @@
       {#if tab === 'matches'}
         <MatchList {resolved} {names} {numbers} {titleOf} onselect={(m) => (openMatch = m)} />
       {:else if tab === 'standings'}
-        <Standings {tstate} {names} scoring={doc.scoring} />
+        <Standings {doc} {tstate} {names} />
       {:else if tab === 'log'}
         <LogView log={doc.log} {names} {numbers} canEdit={app.store.canEdit} onundo={undoEntry} />
       {:else if tab === 'edit' && app.store.canEdit}

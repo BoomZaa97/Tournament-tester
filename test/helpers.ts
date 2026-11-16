@@ -1,5 +1,10 @@
-import { applyEdit, playableMatches } from '../src/core';
-import type { ResolvedMatch, TournamentState, Winner } from '../src/core';
+import { applyEdit, createTournament, playableMatches } from '../src/core';
+import type { EditOutcome, ResolvedMatch, TournamentState, Winner } from '../src/core';
+
+/** Save an edit the way the app does: new results + options (swiss freezes rounds in options). */
+export function commit(state: TournamentState, out: Pick<EditOutcome, 'results' | 'options'>): TournamentState {
+  return { ...createTournament(state.structure.format, state.entrants, out.options), results: out.results };
+}
 
 export const names = (n: number) => Array.from({ length: n }, (_, i) => `P${i + 1}`);
 
@@ -18,8 +23,9 @@ export function playAll(state: TournamentState, pick: (m: ResolvedMatch) => Winn
     if (ready.length === 0) return state;
     const m = ready[0];
     const winner = pick(m);
-    const out = applyEdit(state, m.template.id, { winner, score1: winner === 'p1' ? 2 : 0, score2: winner === 'p2' ? 2 : 0 });
-    state = { ...state, results: out.results };
+    const score = winner === 'draw' ? [1, 1] : winner === 'p1' ? [2, 0] : [0, 2];
+    const out = applyEdit(state, m.template.id, { winner, score1: score[0], score2: score[1] });
+    state = commit(state, out);
   }
   throw new Error('Tournament never finished');
 }
@@ -30,5 +36,5 @@ export const favourite = (state: TournamentState) => (m: ResolvedMatch): Winner 
 
 export function set(state: TournamentState, id: string, winner: Winner, decide?: Parameters<typeof applyEdit>[3]) {
   const out = applyEdit(state, id, { winner }, decide);
-  return { state: { ...state, results: out.results }, out };
+  return { state: commit(state, out), out };
 }

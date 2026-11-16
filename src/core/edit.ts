@@ -1,5 +1,5 @@
 import { BYE } from './types';
-import type { EntrantId, MatchResult, Slot, TournamentState, Winner } from './types';
+import type { EntrantId, FormatOptions, MatchResult, Slot, SwissPair, TournamentState, Winner } from './types';
 import { resolve } from './resolve';
 
 export type ResultInput = Omit<MatchResult, 'p1' | 'p2'>;
@@ -34,13 +34,14 @@ export interface EditOutcome {
   changes: Change[];
   /** Every conflict that had to be decided, with what was decided. */
   conflicts: (Conflict & { decision: Decision })[];
+  /** Format options to save with the results (swiss: which rounds are now frozen). */
+  options: FormatOptions;
 }
 
 const isEntrant = (s: Slot): s is EntrantId => s !== null && s !== BYE;
 
 function validate(state: TournamentState, matchId: string, input: ResultInput) {
-  const allowDraw = state.structure.format === 'round_robin';
-  if (input.winner === 'draw' && !allowDraw) throw new Error('Draws are not allowed in elimination brackets');
+  if (input.winner === 'draw' && !allowsDraws(state.structure.format)) throw new Error('Draws are not allowed in elimination brackets');
   if (!['p1', 'p2', 'draw'].includes(input.winner)) throw new Error(`Invalid winner: ${input.winner}`);
   if (!state.structure.matches.some((m) => m.id === matchId)) throw new Error(`Unknown match ${matchId}`);
 }
@@ -127,7 +128,38 @@ function settle(state: TournamentState, results: Record<string, MatchResult>, de
   for (const id of ids) {
     if (!sameResult(original[id], results[id])) changes.push({ matchId: id, before: original[id], after: results[id] });
   }
-  return { results, changes, conflicts: decisions };
+  return { results, changes, conflicts: decisions, options: lockSwissRounds(state, results) };
+}
+
+/** Draws only make sense where points are counted. */
+export function allowsDraws(format: TournamentState['structure']['format']): boolean {
+  return format === 'round_robin' || format === 'swiss';
+}
+
+/**
+ * Swiss: freeze the pairing of every round that has a result, and unfreeze rounds
+ * that have none (so they re-pair from the current standings). Returns the options
+ * to store. Other formats: options unchanged.
+ */
+export function lockSwissRounds(state: TournamentState, results: Record<string, MatchResult>): FormatOptions {
+  const options = { ...state.options };
+  if (state.structure.format !== 'swiss') return options;
+  const resolved = [...resolve({ ...state, results }).values()];
+  const seedOf = (s: Slot) => (s && s !== BYE ? state.entrants.indexOf(s) + 1 : 0);
+  const old = state.options?.swissPairings ?? [];
+  const rounds = Math.max(0, ...state.structure.matches.map((m) => m.round));
+  const next: (SwissPair[] | null)[] = [];
+  for (let r = 1; r <= rounds; r++) {
+    const ms = resolved.filter((m) => m.template.round === r);
+    if (!ms.some((m) => results[m.template.id])) next.push(null);
+    else if (old[r - 1]) next.push(old[r - 1]);
+    else if (ms.some((m) => m.p1 === null || m.p2 === null)) next.push(null); // not paired yet: nothing to freeze
+    else next.push(ms.map((m) => [seedOf(m.p1), seedOf(m.p2)]));
+  }
+  while (next.length && next[next.length - 1] === null) next.pop();
+  if (next.length) options.swissPairings = next;
+  else delete options.swissPairings;
+  return options;
 }
 
 /** A conditional match (GF reset) that is not needed can never "keep" a result. */

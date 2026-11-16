@@ -1,5 +1,6 @@
 import { BYE } from './types';
-import type { ResolvedMatch, Slot, Source, TournamentState } from './types';
+import type { Bye, EntrantId, ResolvedMatch, Slot, Source, TournamentState } from './types';
+import { pairSwiss, swissRecord } from './formats/swiss';
 
 /**
  * Work out who is in every match, from the structure + results.
@@ -10,6 +11,17 @@ export function resolve(state: TournamentState): Map<string, ResolvedMatch> {
   const byId = new Map(state.structure.matches.map((m) => [m.id, m]));
   const out = new Map<string, ResolvedMatch>();
   const visiting = new Set<string>();
+  const swissRounds = new Map<number, [EntrantId, EntrantId | Bye][] | null>();
+
+  /** Pairing for a swiss round that hasn't started: needs every earlier round finished. */
+  const swissPairing = (round: number) => {
+    if (!swissRounds.has(round)) {
+      const earlier = state.structure.matches.filter((m) => m.side === 'SW' && m.round < round).map((m) => get(m.id));
+      const ready = earlier.every((m) => m.status === 'done' || m.status === 'bye');
+      swissRounds.set(round, ready ? pairSwiss(state.entrants, swissRecord(earlier)) : null);
+    }
+    return swissRounds.get(round)!;
+  };
 
   const slotFrom = (src: Source): Slot => {
     switch (src.type) {
@@ -21,6 +33,11 @@ export function resolve(state: TournamentState): Map<string, ResolvedMatch> {
         return get(src.match).winner;
       case 'loser':
         return get(src.match).loser;
+      case 'swiss': {
+        const pairing = swissPairing(src.round);
+        if (!pairing) return null;
+        return pairing[src.index - 1]?.[src.slot - 1] ?? BYE;
+      }
     }
   };
 

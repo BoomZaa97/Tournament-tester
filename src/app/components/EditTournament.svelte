@@ -70,7 +70,8 @@
     if (game.trim() !== doc.game) notes.push('game changed');
 
     const out = restructure(tstate, { format, entrants: ids, options });
-    return { entrants, created, notes, results: out.state.results, dropped: out.dropped, kept: out.kept.length };
+    // options from the rebuilt state: swiss rounds already played are carried over there
+    return { entrants, created, notes, options: out.state.options ?? options, results: out.state.results, dropped: out.dropped, kept: out.kept.length };
   });
 
   async function apply() {
@@ -92,7 +93,7 @@
       name: name.trim(),
       game: game.trim(),
       format,
-      options,
+      options: plan.options,
       scoring,
       entrants: plan.entrants,
       results: plan.results,
@@ -107,7 +108,7 @@
     <div class="col">
       <label class="field"><span>Name</span><input bind:value={name} /></label>
       <label class="field"><span>Game</span><input bind:value={game} /></label>
-      <FormatFields bind:format bind:options bind:scoring />
+      <FormatFields bind:format bind:options bind:scoring entrantCount={rows.filter((r) => r.name.trim()).length} />
     </div>
     <div class="col">
       <div class="label">Entrants</div>

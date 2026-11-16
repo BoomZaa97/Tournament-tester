@@ -1,6 +1,6 @@
-import { eliminationPlacements, resolve, roundRobinStandings } from '../../core';
+import { eliminationPlacements, resolve } from '../../core';
 import type { EntrantId } from '../../core';
-import { matchNumbers, roundName, statusOf, toState } from './model';
+import { isTableFormat, matchNumbers, roundName, statusOf, tableStandings, toState } from './model';
 import type { Player, TournamentDoc } from './model';
 
 export interface HistoryMatch {
@@ -47,8 +47,8 @@ export function buildHistory(tournaments: TournamentDoc[], players: Player[]): M
     const numbers = matchNumbers(resolved);
     const finished = statusOf(t) === 'finished';
     const places = new Map<string, number | null>(
-      t.format === 'round_robin'
-        ? roundRobinStandings(state, t.scoring).map((r) => [r.entrant, finished ? r.rank : null])
+      isTableFormat(t.format)
+        ? tableStandings(t, state).map((r) => [r.entrant, finished ? r.rank : null])
         : eliminationPlacements(state).map((p) => [p.entrant, p.place]),
     );
 

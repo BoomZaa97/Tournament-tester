@@ -6,7 +6,7 @@ Made because Challonge made fixing wrong results hard.
 ## Owner's goals (from the planning chat)
 
 - Universal: any game, solo or teams, any scoring (incl. lower-score-wins).
-- All formats eventually: single elim, double elim, round robin (done), Swiss, groups → playoffs (to do).
+- All formats eventually: single elim, double elim, round robin, Swiss (done), groups → playoffs (to do).
 - Owner + others can view; owner (and helpers with the admin key) edit.
 - Works on phones and desktop. Low maintenance, no paid server.
 - Design must NOT look AI-generated: plain "printed bracket sheet" look. Paper background, ink text,
@@ -46,8 +46,22 @@ if the bracket later resolves different players into that match, it's a **confli
 preview, shows conflicts, then again with the admin's decisions.
 
 Other details:
-- Bye matches (a slot is BYE) are hidden in the UI and not numbered.
-- Draws only allowed in round robin.
+- Bye matches (a slot is BYE) are hidden in the UI and not numbered (Swiss shows "Bye: name" instead).
+- Draws only allowed in round robin and Swiss (`allowsDraws`).
+
+### Swiss (`src/core/formats/swiss.ts`)
+
+- Rounds that haven't started are NOT stored: their match slots use `{type:'swiss'}` sources and `resolve()`
+  pairs them (`pairSwiss`) once every earlier round is done. So editing a past result re-pairs them for free.
+- Rounds that HAVE started (≥1 result) are frozen in `options.swissPairings` (by seed, 0 = bye), so
+  `structure = f(format, entrant count, options)` still holds. `applyEdit`/`undo` return `options` (via
+  `lockSwissRounds`), and the app must save `out.options` with `out.results`. A round with no results left unfreezes.
+- `restructure` carries frozen rounds over by player: removed player → their opponent gets a bye in started rounds;
+  late entrant → sits out started rounds. Code.gs needed no change (options is already a JSON column).
+- Pairing: rank by match points (win/bye 1, draw ½) then seed; top half vs bottom half within a score group;
+  backtracking avoids rematches (rematches only if impossible); bye → lowest-ranked with fewest byes.
+- Standings: same table as round robin (`roundRobinStandings`), byes = wins, extra `buchholz` tiebreaker
+  (default first for Swiss). Default rounds = ceil(log2 n), max n−1 (even) / n (odd).
 - Log entries keep `changes` (for undo) or `restore` (previous setup, for tournament edits).
 - `SheetsStore` POSTs as `text/plain` (no CORS preflight, which Apps Script can't answer). Saves carry a `version`;
   mismatch → `conflict` error → app reloads.
@@ -67,7 +81,6 @@ Push to `main` = deploy. Check UI changes in a real browser (Playwright, desktop
 
 ## Next up (agreed roadmap)
 
-1. Swiss format (pair by score, avoid rematches, one round generated at a time; editing a past round only
-   re-pairs rounds that haven't started).
-2. Groups → playoffs (two stages; playoffs seeded from group standings).
+1. Groups → playoffs (two stages; playoffs seeded from group standings).
+2. Maybe for Swiss: drop a player from future rounds without deleting their past results; top-cut playoff.
 3. Later: players report own scores, Discord announcements, import from Challonge, Elo.

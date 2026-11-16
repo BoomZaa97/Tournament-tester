@@ -17,14 +17,17 @@ export type Source =
   | { type: 'seed'; seed: number } // 1-based seed in the entrant list
   | { type: 'winner'; match: string }
   | { type: 'loser'; match: string }
-  | { type: 'empty' }; // always a bye
+  | { type: 'empty' } // always a bye
+  /** Swiss: filled by the pairing for that round, worked out from the earlier rounds. */
+  | { type: 'swiss'; round: number; index: number; slot: 1 | 2 };
 
 export type BracketSide =
   | 'W' // winners bracket (or the only bracket in single elim)
   | 'L' // losers bracket
   | 'GF' // grand final (double elim)
   | '3P' // third place match
-  | 'RR'; // round robin
+  | 'RR' // round robin
+  | 'SW'; // swiss
 
 export interface MatchTemplate {
   id: string;
@@ -49,7 +52,7 @@ export interface MatchTemplate {
   group?: string;
 }
 
-export type Format = 'single_elim' | 'double_elim' | 'round_robin';
+export type Format = 'single_elim' | 'double_elim' | 'round_robin' | 'swiss';
 
 export interface Structure {
   format: Format;
@@ -91,7 +94,20 @@ export interface FormatOptions {
   grandFinal?: 'reset' | 'single';
   /** Round robin: everyone plays everyone twice. */
   doubleRound?: boolean;
+  /** Swiss: number of rounds. Default: enough to find a clear winner (log2 of the entrant count). */
+  swissRounds?: number;
+  /**
+   * Swiss: the pairings of rounds that have STARTED (at least one result), frozen so that
+   * editing an earlier result can't change a round people are already playing.
+   * swissPairings[r - 1] = round r as [seed, seed] pairs, 0 = bye; null = not started
+   * (paired automatically from the standings). Kept up to date by applyEdit and
+   * restructure; never set by hand.
+   */
+  swissPairings?: (SwissPair[] | null)[];
 }
+
+/** Two seeds (1-based) paired in a swiss round. A second seed of 0 means a bye. */
+export type SwissPair = [number, number];
 
 export interface TournamentState {
   structure: Structure;

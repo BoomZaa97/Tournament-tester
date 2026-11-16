@@ -1,5 +1,5 @@
 import { BYE } from './types';
-import type { EntrantId, ResolvedMatch, TournamentState } from './types';
+import type { EntrantId, Format, ResolvedMatch, TournamentState } from './types';
 import { resolve } from './resolve';
 
 export interface Placement {
@@ -46,7 +46,12 @@ export type Tiebreaker =
   | 'h2h' // points in matches between the tied players only
   | 'diff' // score difference
   | 'for' // total score
-  | 'wins'; // number of wins
+  | 'wins' // number of wins
+  | 'buchholz'; // total points of everyone you played (swiss: rewards a harder schedule)
+
+export function defaultTiebreakers(format: Format): Tiebreaker[] {
+  return format === 'swiss' ? ['buchholz', 'h2h', 'diff', 'for'] : ['h2h', 'diff', 'for'];
+}
 
 export interface RoundRobinOptions {
   points?: { win: number; draw: number; loss: number };
@@ -64,16 +69,31 @@ export interface StandingRow {
   against: number;
   diff: number;
   points: number;
+  /** Swiss byes (each counts as a win). */
+  byes: number;
+  /** Sum of opponents' points. */
+  buchholz: number;
 }
 
+/** Standings table for swiss (same rules as round robin, byes count as wins). */
+export function swissStandings(state: TournamentState, opts: RoundRobinOptions = {}): StandingRow[] {
+  return roundRobinStandings(state, opts);
+}
+
+/** Points table for round robin and swiss. */
 export function roundRobinStandings(state: TournamentState, opts: RoundRobinOptions = {}): StandingRow[] {
   const points = opts.points ?? { win: 3, draw: 1, loss: 0 };
-  const tiebreakers = opts.tiebreakers ?? ['h2h', 'diff', 'for'];
-  const done = [...resolve(state).values()].filter((m) => m.status === 'done');
+  const tiebreakers = opts.tiebreakers ?? defaultTiebreakers(state.structure.format);
+  const resolved = [...resolve(state).values()];
+  const done = resolved.filter((m) => m.status === 'done');
+  const byes = resolved.filter((m) => m.status === 'bye' && m.template.side === 'SW' && m.winner && m.winner !== BYE);
 
   const tally = (subset: EntrantId[], matches: ResolvedMatch[]) => {
     const rows = new Map<EntrantId, StandingRow>(
-      subset.map((e) => [e, { entrant: e, rank: 0, played: 0, wins: 0, draws: 0, losses: 0, for: 0, against: 0, diff: 0, points: 0 }]),
+      subset.map((e) => [
+        e,
+        { entrant: e, rank: 0, played: 0, wins: 0, draws: 0, losses: 0, for: 0, against: 0, diff: 0, points: 0, byes: 0, buchholz: 0 },
+      ]),
     );
     for (const m of matches) {
       const r = m.result!;
@@ -94,6 +114,16 @@ export function roundRobinStandings(state: TournamentState, opts: RoundRobinOpti
   };
 
   const all = tally(state.entrants, done);
+  for (const m of byes) {
+    const row = all.get(m.winner!);
+    if (!row) continue;
+    row.played++; row.wins++; row.byes++; row.points += points.win;
+  }
+  for (const m of done) {
+    const a = all.get(m.result!.p1);
+    const b = all.get(m.result!.p2);
+    if (a && b) { a.buchholz += b.points; b.buchholz += a.points; }
+  }
 
   // Split a tied group using tiebreakers in order. Returns groups, best first.
   const breakTie = (group: EntrantId[], tbs: Tiebreaker[]): EntrantId[][] => {

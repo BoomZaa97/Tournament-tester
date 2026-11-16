@@ -1,6 +1,7 @@
 import { createTournament } from './create';
+import { lockSwissRounds } from './edit';
 import { resolve } from './resolve';
-import type { EntrantId, Format, FormatOptions, MatchResult, TournamentState } from './types';
+import type { EntrantId, Format, FormatOptions, MatchResult, SwissPair, TournamentState } from './types';
 
 export interface RestructureInput {
   format?: Format;
@@ -26,12 +27,21 @@ export interface RestructureOutcome {
  * round; in round robin, anywhere). Results that no longer fit are returned
  * in `dropped` so the UI can show them before the admin confirms. Like
  * everything else here this is a pure function, so it doubles as a preview.
+ *
+ * Swiss: rounds that have started keep their pairings (by player, not seed).
+ * A removed player's opponent gets a bye in those rounds; a late entrant sits
+ * them out with no points. Rounds not started yet are simply re-paired.
  */
 export function restructure(state: TournamentState, input: RestructureInput): RestructureOutcome {
   const format = input.format ?? state.structure.format;
   const entrants = input.entrants ?? state.entrants;
-  const options = { ...state.options, ...input.options };
-  const next = createTournament(format, entrants, options);
+  const options: FormatOptions = { ...state.options, ...input.options };
+  delete options.swissPairings; // never taken from input: rebuilt from the current state below
+  if (format === 'swiss' && state.structure.format === 'swiss') {
+    const pairings = carrySwissPairings(state, entrants);
+    if (pairings.length) options.swissPairings = pairings;
+  }
+  let next = createTournament(format, entrants, options);
 
   const oldResolved = resolve(state);
   const keyOf = (a: string, b: string, side: string, round: number) =>
@@ -68,7 +78,27 @@ export function restructure(state: TournamentState, input: RestructureInput): Re
   }
 
   const dropped = [...pool.values()].flat();
+  if (format === 'swiss') next = createTournament(format, entrants, lockSwissRounds({ ...next, results }, results));
   return { state: { ...next, results }, kept, dropped };
+}
+
+/** Started swiss rounds, re-expressed in the new seed order. */
+function carrySwissPairings(state: TournamentState, entrants: EntrantId[]): (SwissPair[] | null)[] {
+  const newSeed = new Map(entrants.map((e, i) => [e, i + 1]));
+  const seedNow = (oldSeed: number) => (oldSeed ? (newSeed.get(state.entrants[oldSeed - 1]) ?? 0) : 0);
+  const out = (state.options?.swissPairings ?? []).map((round) => {
+    if (!round) return null;
+    const pairs: SwissPair[] = [];
+    const byes: SwissPair[] = [];
+    for (const [a, b] of round) {
+      const [x, y] = [seedNow(a), seedNow(b)];
+      if (x && y) pairs.push([x, y]);
+      else if (x || y) byes.push([x || y, 0]);
+    }
+    return pairs.length || byes.length ? [...pairs, ...byes] : null;
+  });
+  while (out.length && out[out.length - 1] === null) out.pop();
+  return out;
 }
 
 /** Same result seen from the other side. */

@@ -1,4 +1,4 @@
-import { BYE, createTournament, isComplete } from '../../core';
+import { BYE, createTournament, defaultTiebreakers, isComplete, roundRobinStandings } from '../../core';
 import type {
   Change, EntrantId, Format, FormatOptions, MatchResult, MatchTemplate, ResolvedMatch, Source, Tiebreaker, TournamentState,
 } from '../../core';
@@ -56,7 +56,25 @@ export const FORMAT_LABEL: Record<Format, string> = {
   single_elim: 'Single elimination',
   double_elim: 'Double elimination',
   round_robin: 'Round robin',
+  swiss: 'Swiss',
 };
+
+/** Formats ranked by a points table (round robin, swiss) rather than a bracket. */
+export function isTableFormat(format: Format): boolean {
+  return format === 'round_robin' || format === 'swiss';
+}
+
+/** The admin's tiebreaker order, fitted to the format (Buchholz only means something in swiss). */
+export function tiebreakersFor(format: Format, scoring: Scoring): Tiebreaker[] {
+  const list = scoring.tiebreakers ?? defaultTiebreakers(format);
+  if (format !== 'swiss') return list.filter((t) => t !== 'buchholz');
+  return list.includes('buchholz') ? list : ['buchholz', ...list];
+}
+
+/** Points table for round robin / swiss, using the tournament's own scoring. */
+export function tableStandings(doc: Pick<TournamentDoc, 'format' | 'scoring'>, tstate: TournamentState) {
+  return roundRobinStandings(tstate, { points: doc.scoring.points, tiebreakers: tiebreakersFor(doc.format, doc.scoring) });
+}
 
 export function newId(): string {
   return Date.now().toString(36).slice(-5) + Math.random().toString(36).slice(2, 7);
@@ -78,6 +96,7 @@ export function roundName(t: MatchTemplate, all: MatchTemplate[], format: Format
   const lastOf = (side: string) => Math.max(...all.filter((m) => m.side === side).map((m) => m.round));
   switch (t.side) {
     case 'RR':
+    case 'SW':
       return `Round ${t.round}`;
     case '3P':
       return '3rd Place';

@@ -1,18 +1,23 @@
 <script lang="ts">
+  import { swissDefaultRounds, swissMaxRounds, swissRoundCount } from '../../core';
   import type { Format, FormatOptions, Tiebreaker } from '../../core';
+  import { tiebreakersFor } from '../lib/model';
   import type { Scoring } from '../lib/model';
 
   interface Props {
     format: Format;
     options: FormatOptions;
     scoring: Scoring;
+    /** Used for the swiss round count hint. */
+    entrantCount?: number;
   }
-  let { format = $bindable(), options = $bindable(), scoring = $bindable() }: Props = $props();
+  let { format = $bindable(), options = $bindable(), scoring = $bindable(), entrantCount = 0 }: Props = $props();
 
   const formats: { id: Format; name: string; blurb: string }[] = [
     { id: 'single_elim', name: 'Single elimination', blurb: 'Lose once and you are out.' },
     { id: 'double_elim', name: 'Double elimination', blurb: 'Out after two losses. Losers bracket included.' },
     { id: 'round_robin', name: 'Round robin', blurb: 'Everyone plays everyone. Best record wins.' },
+    { id: 'swiss', name: 'Swiss', blurb: 'A set number of rounds. Each round you play someone on the same score. No one is knocked out.' },
   ];
 
   const TB_LABEL: Record<Tiebreaker, string> = {
@@ -20,8 +25,17 @@
     diff: 'Score difference',
     for: 'Total score',
     wins: 'Wins',
+    buchholz: "Opponents' points (Buchholz)",
   };
-  const tiebreakers = $derived<Tiebreaker[]>(scoring.tiebreakers ?? ['h2h', 'diff', 'for']);
+  const tiebreakers = $derived<Tiebreaker[]>(tiebreakersFor(format, scoring));
+  const n = $derived(Math.max(2, entrantCount));
+
+  function setRounds(v: number) {
+    const next = { ...options };
+    if (Number.isFinite(v) && v > 0) next.swissRounds = Math.round(v);
+    else delete next.swissRounds;
+    options = next;
+  }
   const points = $derived(scoring.points ?? { win: 3, draw: 1, loss: 0 });
 
   function setPoints(k: 'win' | 'draw' | 'loss', v: number) {
@@ -57,10 +71,34 @@
       Grand final reset (losers-bracket player must win twice)
     </label>
   {:else}
-    <label class="check">
-      <input type="checkbox" checked={!!options.doubleRound} onchange={(e) => (options = { ...options, doubleRound: e.currentTarget.checked })} />
-      Play everyone twice
-    </label>
+    {#if format === 'swiss'}
+      <label class="field rounds">
+        <span>Rounds</span>
+        <input
+          type="number"
+          inputmode="numeric"
+          min="1"
+          max={swissMaxRounds(n)}
+          placeholder={String(swissDefaultRounds(n))}
+          value={options.swissRounds ?? ''}
+          oninput={(e) => setRounds(e.currentTarget.valueAsNumber)}
+        />
+      </label>
+      <p class="small muted hint">
+        {#if entrantCount >= 2}
+          {swissDefaultRounds(n)} rounds finds a clear winner with {entrantCount} players (most possible: {swissMaxRounds(n)}).
+          {#if options.swissRounds && swissRoundCount(n, options) !== options.swissRounds}Using {swissRoundCount(n, options)}.{/if}
+        {:else}
+          Leave blank to pick automatically from the number of players.
+        {/if}
+        Each round is paired when the one before it is finished.
+      </p>
+    {:else}
+      <label class="check">
+        <input type="checkbox" checked={!!options.doubleRound} onchange={(e) => (options = { ...options, doubleRound: e.currentTarget.checked })} />
+        Play everyone twice
+      </label>
+    {/if}
     <div class="pts">
       <span class="label">Points</span>
       {#each [['win', 'Win'], ['draw', 'Draw'], ['loss', 'Loss']] as [k, label]}
@@ -109,5 +147,7 @@
   .pts .label { width: 100%; }
   .pt { display: grid; gap: 2px; width: 72px; }
   .tbs { list-style: none; padding: 0; margin: 4px 0 0; }
+  .rounds { max-width: 120px; }
+  .hint { margin: -6px 0 0; }
   .tbs li { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding: 2px 0; max-width: 320px; }
 </style>
