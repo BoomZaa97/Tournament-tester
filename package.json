@@ -1,0 +1,18 @@
+{
+  "name": "tournament-manager",
+  "version": "1.0.0",
+  "description": "Free tournament brackets with editable results and match history",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p ."
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "private": true,
+  "type": "module"
+}
