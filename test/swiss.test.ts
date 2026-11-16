@@ -66,6 +66,20 @@ describe('swiss', () => {
     expect(new Set(met).size).toBe(6);
   });
 
+  it('works out OMW%: the average win rate of your opponents, each at least 1/3', () => {
+    // R1: P1 beats P3, P4 beats P2. R2: P1 beats P4, P2 beats P3.
+    // Win rates: P1 1, P4 1/2, P2 1/2, P3 0 -> counted as 1/3.
+    let t = createTournament('swiss', names(4), { swissRounds: 2 });
+    const win = (who: string) => (m: ResolvedMatch) => (m.p1 === who ? 'p1' : 'p2') as 'p1' | 'p2';
+    t = playRound(t, 1, (m) => win(m.p1 === 'P1' ? 'P1' : 'P4')(m));
+    expect(pairs(t, 2)).toEqual(['P1-P4', 'P2-P3']);
+    t = playRound(t, 2, (m) => win(m.p1 === 'P1' ? 'P1' : 'P2')(m));
+    const omw = Object.fromEntries(swissStandings(t).map((r) => [r.entrant, Number(r.omw.toFixed(4))]));
+    expect(omw).toEqual({ P1: Number(((1 / 3 + 1 / 2) / 2).toFixed(4)), P2: Number(((1 / 2 + 1 / 3) / 2).toFixed(4)), P3: 0.75, P4: 0.75 });
+    // P4 and P2 are both 1-1; P4 faced the stronger field
+    expect(swissStandings(t).map((r) => r.entrant)).toEqual(['P1', 'P4', 'P2', 'P3']);
+  });
+
   it('ranks by points, then Buchholz (strength of opponents)', () => {
     let t = createTournament('swiss', names(8));
     t = playAll(t, favourite(t));

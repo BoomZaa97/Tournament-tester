@@ -49,10 +49,11 @@ export type Tiebreaker =
   | 'diff' // score difference
   | 'for' // total score
   | 'wins' // number of wins
-  | 'buchholz'; // total points of everyone you played (swiss: rewards a harder schedule)
+  | 'buchholz' // total points of everyone you played (swiss: rewards a harder schedule)
+  | 'omw'; // opponents' match-win % (swiss, as in card game events): losing to strong players ranks you higher
 
 export function defaultTiebreakers(format: Format): Tiebreaker[] {
-  return format === 'swiss' ? ['buchholz', 'h2h', 'diff', 'for'] : ['h2h', 'diff', 'for'];
+  return format === 'swiss' ? ['omw', 'buchholz', 'h2h', 'diff', 'for'] : ['h2h', 'diff', 'for'];
 }
 
 export interface RoundRobinOptions {
@@ -75,6 +76,8 @@ export interface StandingRow {
   byes: number;
   /** Sum of opponents' points. */
   buchholz: number;
+  /** Opponents' match-win % (0–1): the average win rate of everyone this player faced, each counted as at least 33%. */
+  omw: number;
 }
 
 /** Standings table for swiss (same rules as round robin, byes count as wins). */
@@ -112,7 +115,7 @@ function pointsTable(resolved: ResolvedMatch[], entrants: EntrantId[], opts: Rou
     const rows = new Map<EntrantId, StandingRow>(
       subset.map((e) => [
         e,
-        { entrant: e, rank: 0, played: 0, wins: 0, draws: 0, losses: 0, for: 0, against: 0, diff: 0, points: 0, byes: 0, buchholz: 0 },
+        { entrant: e, rank: 0, played: 0, wins: 0, draws: 0, losses: 0, for: 0, against: 0, diff: 0, points: 0, byes: 0, buchholz: 0, omw: 0 },
       ]),
     );
     for (const m of matches) {
@@ -144,6 +147,19 @@ function pointsTable(resolved: ResolvedMatch[], entrants: EntrantId[], opts: Rou
     const b = all.get(m.result!.p2);
     if (a && b) { a.buchholz += b.points; b.buchholz += a.points; }
   }
+  // OMW%, the usual card-game rule: a win rate counts byes as wins and draws as half,
+  // and is never below 1/3 (so beating someone who lost everything isn't worth nothing).
+  const winRate = (row: StandingRow) => (row.played ? Math.max(1 / 3, (row.wins + row.draws / 2) / row.played) : 1 / 3);
+  const opponents = new Map<EntrantId, EntrantId[]>();
+  for (const m of done) {
+    const { p1, p2 } = m.result!;
+    if (!all.has(p1) || !all.has(p2)) continue;
+    opponents.set(p1, [...(opponents.get(p1) ?? []), p2]);
+    opponents.set(p2, [...(opponents.get(p2) ?? []), p1]);
+  }
+  for (const [e, opps] of opponents) {
+    all.get(e)!.omw = opps.reduce((sum, o) => sum + winRate(all.get(o)!), 0) / opps.length;
+  }
 
   // Split a tied group using tiebreakers in order. Returns groups, best first.
   const breakTie = (group: EntrantId[], tbs: Tiebreaker[]): EntrantId[][] => {
@@ -154,7 +170,8 @@ function pointsTable(resolved: ResolvedMatch[], entrants: EntrantId[], opts: Rou
       const mini = tally(group, done);
       key = (e) => mini.get(e)!.points;
     } else {
-      key = (e) => all.get(e)![tb];
+      // rounded, so equal percentages reached by different sums still tie
+      key = tb === 'omw' ? (e) => Math.round(all.get(e)!.omw * 1e6) : (e) => all.get(e)![tb];
     }
     return splitBy(group, key).flatMap((g) => breakTie(g, rest));
   };

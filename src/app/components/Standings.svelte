@@ -25,6 +25,7 @@
     finalsStarted ? overallPlacements(tstate, standingOptions(doc)) : rr ? [] : eliminationPlacements(tstate),
   );
   const alive = $derived(places.filter((p) => p.place === null));
+  const pct = (x: number) => (x * 100).toFixed(1);
   const ordinal = (n: number) => n + (['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] ?? 'th');
 </script>
 
@@ -37,7 +38,11 @@
           <th class="num" title="Played">P</th><th class="num" title="Wins">W</th><th class="num" title="Draws">D</th><th class="num" title="Losses">L</th>
           <th class="num hide-s" title="Score for">+</th><th class="num hide-s" title="Score against">−</th><th class="num" title="Difference">±</th>
           <th class="num">Pts</th>
-          {#if swiss}<th class="num" title="Buchholz: total points of everyone this player has played">Opp</th>{/if}
+          {#if swiss}
+            <th class="num" title="Win %: wins (byes count) and half of draws, out of matches played">Win%</th>
+            <th class="num" title="Opponents' win %: the average win rate of everyone this player faced">OMW%</th>
+            <th class="num hide-s" title="Buchholz: total points of everyone this player has played">Opp</th>
+          {/if}
         </tr>
       </thead>
       <tbody>
@@ -49,7 +54,11 @@
             <td class="num hide-s">{r.for}</td><td class="num hide-s">{r.against}</td>
             <td class="num">{r.diff > 0 ? '+' : ''}{r.diff}</td>
             <td class="num pts">{r.points}</td>
-            {#if swiss}<td class="num">{r.buchholz}</td>{/if}
+            {#if swiss}
+              <td class="num">{pct(r.played ? (r.wins + r.draws / 2) / r.played : 0)}</td>
+              <td class="num">{pct(r.omw)}</td>
+              <td class="num hide-s">{r.buchholz}</td>
+            {/if}
           </tr>
         {/each}
       </tbody>
@@ -92,8 +101,9 @@
   {/if}
   {#if swiss}
     <p class="small muted note">
-      A bye counts as a win. <b>Opp</b> is the total points of everyone a player has faced (Buchholz): a higher number means a
-      harder draw, and it breaks ties.
+      A bye counts as a win. <b>OMW%</b> is the average win rate of everyone a player has faced (each counted as at least
+      33%): if you lost to strong players, you rank above someone on the same points who played weaker ones. <b>Opp</b> is
+      the same idea as total points (Buchholz). Tiebreakers are applied in the order set in Edit.
     </p>
   {/if}
 {:else}

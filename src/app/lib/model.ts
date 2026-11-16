@@ -93,11 +93,12 @@ export function finalPlaces(doc: TournamentDoc, tstate: TournamentState): Map<En
   return new Map(eliminationPlacements(tstate).map((p) => [p.entrant, p.place]));
 }
 
-/** The admin's tiebreaker order, fitted to the format (Buchholz only means something in swiss). */
+/** The admin's tiebreaker order, fitted to the format (OMW% and Buchholz only mean something in swiss). */
 export function tiebreakersFor(format: Format, scoring: Scoring): Tiebreaker[] {
   const list = scoring.tiebreakers ?? defaultTiebreakers(format);
-  if (format !== 'swiss') return list.filter((t) => t !== 'buchholz');
-  return list.includes('buchholz') ? list : ['buchholz', ...list];
+  const swissOnly: Tiebreaker[] = ['omw', 'buchholz'];
+  if (format !== 'swiss') return list.filter((t) => !swissOnly.includes(t));
+  return [...list, ...swissOnly.filter((t) => !list.includes(t))];
 }
 
 /** Points table for round robin / swiss, using the tournament's own scoring. */

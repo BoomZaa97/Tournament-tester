@@ -29,6 +29,7 @@
     for: 'Total score',
     wins: 'Wins',
     buchholz: "Opponents' points (Buchholz)",
+    omw: "Opponents' win % (OMW%)",
   };
   const tiebreakers = $derived<Tiebreaker[]>(tiebreakersFor(format, scoring));
   const n = $derived(Math.max(2, entrantCount));

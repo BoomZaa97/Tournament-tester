@@ -75,8 +75,8 @@ Other details:
   late entrant → sits out started rounds. Code.gs needed no change (options is already a JSON column).
 - Pairing: rank by match points (win/bye 1, draw ½) then seed; top half vs bottom half within a score group;
   backtracking avoids rematches (rematches only if impossible); bye → lowest-ranked with fewest byes.
-- Standings: same table as round robin (`roundRobinStandings`), byes = wins, extra `buchholz` tiebreaker
-  (default first for Swiss). Default rounds = ceil(log2 n), max n−1 (even) / n (odd).
+- Standings: same table as round robin (`roundRobinStandings`), byes = wins, extra `omw` (OMW%, floor 1/3) and `buchholz` tiebreakers
+  (default order OMW%, Buchholz, h2h, diff, for). Default rounds = ceil(log2 n), max n−1 (even) / n (odd).
 - Log entries keep `changes` (for undo) or `restore` (previous setup, for tournament edits).
 - `SheetsStore` POSTs as `text/plain` (no CORS preflight, which Apps Script can't answer). Saves carry a `version`;
   mismatch → `conflict` error → app reloads.
