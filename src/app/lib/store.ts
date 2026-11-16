@@ -33,6 +33,8 @@ export interface Store {
   report?(id: string, matchId: string, pin: string, result: ReportedResult, matchNo?: number): Promise<TournamentDoc>;
   /** Mark someone as arrived (or not): a player with their PIN, or the organizer by player id. */
   checkin?(id: string, who: { pin: string } | { playerId: string }, here: boolean): Promise<TournamentDoc>;
+  /** The opponent of whoever reported a result confirms it (ok) or disputes it, with their PIN. */
+  confirm?(id: string, matchId: string, pin: string, ok: boolean, matchNo?: number): Promise<TournamentDoc>;
   /** A player drops out of a running tournament with their PIN. */
   drop?(id: string, pin: string): Promise<TournamentDoc>;
   /** Organizer/admin only: every entrant's PIN, by player id. */
@@ -256,6 +258,12 @@ export class SheetsStore implements Store {
       action: 'checkin', id, here, ...who, orgKey: orgKeyFor(id) ?? '',
     });
     if ('pin' in who && !myPin(id)) rememberPin(id, r.playerId, who.pin);
+    return r.tournament;
+  }
+
+  async confirm(id: string, matchId: string, pin: string, ok: boolean, matchNo?: number) {
+    const r = await this.call<{ tournament: TournamentDoc; playerId: string }>('POST', { action: 'confirm', id, matchId, pin, ok, matchNo });
+    if (!myPin(id)) rememberPin(id, r.playerId, pin);
     return r.tournament;
   }
 

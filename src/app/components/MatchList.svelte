@@ -14,13 +14,19 @@
 
   let q = $state('');
 
-  const groups: { key: MatchStatus[]; title: string }[] = [
-    { key: ['conflict'], title: 'Needs checking' },
-    { key: ['ready'], title: 'Up next' },
-    { key: ['waiting'], title: 'Waiting for earlier matches' },
-    { key: ['done'], title: 'Completed' },
+  /** A result a player reported, by its confirmation state ('' = entered by the organizer or confirmed). */
+  const check = (m: ResolvedMatch) => (m.status === 'done' && m.result?.status !== 'confirmed' ? (m.result?.status ?? '') : '');
+  const is = (s: MatchStatus) => (m: ResolvedMatch) => m.status === s;
+
+  const groups: { test: (m: ResolvedMatch) => boolean; title: string }[] = [
+    { test: is('conflict'), title: 'Needs checking' },
+    { test: (m) => check(m) === 'disputed', title: 'Disputed: the organizer settles these' },
+    { test: is('ready'), title: 'Up next' },
+    { test: is('waiting'), title: 'Waiting for earlier matches' },
+    { test: (m) => check(m) === 'reported', title: 'Reported, waiting for the opponent to confirm' },
+    { test: (m) => m.status === 'done' && !check(m), title: 'Completed' },
     // the only 'bye' matches listed: real byes are filtered out below, walkovers have two players
-    { key: ['bye'], title: 'Walkovers (a player dropped out)' },
+    { test: is('bye'), title: 'Walkovers (a player dropped out)' },
   ];
 
   const nm = (s: string | null) => (s && s !== BYE ? (names.get(s) ?? '?') : 'TBD');
@@ -48,7 +54,7 @@
 </div>
 
 {#each groups as g (g.title)}
-  {@const list = filtered.filter((m) => g.key.includes(m.status))}
+  {@const list = filtered.filter(g.test)}
   {#if list.length}
     <section>
       <h3>{g.title} <span class="count">{list.length}</span></h3>

@@ -353,6 +353,44 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.post({ action: 'save', orgKey: ORG, tournament: t }).tournament.options.dropped).toEqual([3]);
     });
 
+    it("the opponent confirms or disputes a reported score with their PIN; the organizer's results count as confirmed", () => {
+      const g = fakeGoogle();
+      create(g);
+      const p = pins(g);
+      const rep = g.post({ action: 'report', id: 'o1', matchId: 'S1-1', pin: p.a, result: { winner: 'p1', score1: 2, score2: 0, p1: 'a', p2: 'c' } });
+      expect(rep.tournament.results['S1-1']).toMatchObject({ status: 'reported', reportedBy: 'a' });
+      const confirm = (pin: string, ok: boolean, matchId = 'S1-1') => g.post({ action: 'confirm', id: 'o1', matchId, pin, ok, matchNo: 1 });
+
+      expect(confirm('000000', true).error).toBe('Wrong PIN');
+      expect(confirm(p.a, true).error).toMatch(/opponent has to confirm/);
+      expect(confirm(p.b, true).error).toMatch(/your own matches/);
+      expect(confirm(p.c, true, 'S1-2').error).toMatch(/no result/);
+
+      const out = confirm(p.c, false);
+      expect(out.error).toBeUndefined();
+      expect(out.tournament.results['S1-1']).toMatchObject({ status: 'disputed', reportedBy: 'a', winner: 'p1' });
+      const entry = out.tournament.log.at(-1);
+      expect(entry.summary).toBe('Match 1: 007 disputed the result: the organizer needs to settle it');
+      expect(entry.changes[0].before.status).toBe('reported'); // the organizer can undo it from the log
+      expect(confirm(p.c, true).error).toMatch(/disputed/);
+
+      // the organizer settles it by saving a result without a status
+      const t = out.tournament;
+      const settled = { ...t.results['S1-1'] };
+      delete settled.status;
+      const saved = g.post({ action: 'save', orgKey: ORG, tournament: { ...t, results: { 'S1-1': settled } } }).tournament;
+      expect(saved.results['S1-1'].status).toBeUndefined();
+      expect(saved.results['S1-1'].reportedBy).toBe('a');
+      expect(confirm(p.c, true).error).toMatch(/already settled/);
+
+      // a confirmed report
+      g.post({ action: 'report', id: 'o1', matchId: 'S1-2', pin: p.b, result: { winner: 'p2', p1: 'b', p2: 'a' } });
+      expect(confirm(p.a, true, 'S1-2').tournament.results['S1-2'].status).toBe('confirmed');
+      // and it survives an organizer save
+      const again = g.get({ action: 'get', id: 'o1' }).tournament;
+      expect(g.post({ action: 'save', orgKey: ORG, tournament: again }).tournament.results['S1-2']).toMatchObject({ status: 'confirmed', reportedBy: 'b' });
+    });
+
     it('no limit set: nobody is waitlisted', () => {
       const g = fakeGoogle();
       create(g);

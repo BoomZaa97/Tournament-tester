@@ -17,9 +17,11 @@
     me?: { playerId: string; pin: string };
     onsave: (input: ResultInput | null, decisions: Record<string, Decision>) => Promise<boolean>;
     onreport?: (input: ResultInput, pin: string) => Promise<boolean>;
+    /** The opponent confirms (ok) or disputes a result a player reported. */
+    onconfirm?: (ok: boolean, pin: string) => Promise<boolean>;
     onclose: () => void;
   }
-  let { m, tstate, title, names, numbers, scoring, canEdit, canReport = false, me, onsave, onreport, onclose }: Props = $props();
+  let { m, tstate, title, names, numbers, scoring, canEdit, canReport = false, me, onsave, onreport, onconfirm, onclose }: Props = $props();
 
   const allowDraw = matchAllowsDraws(m.template);
   /** A conflicted match whose players aren't decided any more can only be cleared. */
@@ -32,6 +34,24 @@
   const pinOk = $derived(/^\d{6}$/.test(pin.trim()));
   const n1 = names.get(m.p1 as string) ?? '?';
   const n2 = names.get(m.p2 as string) ?? '?';
+
+  // A player reported this; the other player confirms or disputes it.
+  const reportedBy = existing?.reportedBy;
+  const opponent = reportedBy ? (reportedBy === existing!.p1 ? existing!.p2 : existing!.p1) : undefined;
+  const confirmMode = !canEdit && canReport && !!onconfirm && m.status === 'done' && existing?.status === 'reported';
+  /** This device is the reporter's: nothing to confirm here. */
+  const iReported = !!me && me.playerId === reportedBy;
+  const iAmOpponent = !!me && me.playerId === opponent;
+
+  async function confirmResult(ok: boolean) {
+    if (!pinOk || !onconfirm) return;
+    busy = true;
+    try {
+      if (await onconfirm(ok, pin.trim())) onclose();
+    } finally {
+      busy = false;
+    }
+  }
 
   let s1 = $state<number | undefined>(existing?.score1);
   let s2 = $state<number | undefined>(existing?.score2);
@@ -136,11 +156,43 @@
       {#if existing}
         <p>{existing.winner === 'draw' ? 'Draw' : `${existing.winner === 'p1' ? n1 : n2} won`}{existing.forfeit ? ' by forfeit' : ''}
           {#if existing.score1 !== undefined}· {existing.score1}–{existing.score2}{/if}</p>
+        {#if existing.status === 'reported'}
+          <p class="small muted">Reported by {who(reportedBy ?? null)}. Waiting for {who(opponent ?? null)} to confirm it.</p>
+        {:else if existing.status === 'disputed'}
+          <p class="small warnline"><b>{who(opponent ?? null)} disputed this result.</b> The organizer will settle it.</p>
+        {:else if existing.status === 'confirmed'}
+          <p class="small muted">Reported by {who(reportedBy ?? null)}, confirmed by {who(opponent ?? null)}.</p>
+        {/if}
       {:else}
         <p class="muted">Not played yet.</p>
       {/if}
     </div>
+    {#if confirmMode && !iReported}
+      <div class="confirmbox">
+        {#if iAmOpponent}
+          <p class="small reporter"><b>{who(opponent ?? null)}</b>, is this result right?</p>
+        {:else}
+          <label class="field pinfield">
+            <span>Are you {who(opponent ?? null)}? Enter your PIN to confirm or dispute this result</span>
+            <input bind:value={pin} inputmode="numeric" autocomplete="off" maxlength="6" placeholder="6-digit PIN" />
+          </label>
+        {/if}
+        <footer>
+          <button class="danger" onclick={() => confirmResult(false)} disabled={busy || !pinOk}>Dispute</button>
+          <span class="spacer"></span>
+          <button class="primary big" onclick={() => confirmResult(true)} disabled={busy || !pinOk}>Confirm</button>
+        </footer>
+      </div>
+    {/if}
   {:else if step === 'form'}
+    {#if canEdit && existing?.status === 'disputed'}
+      <p class="notice small">
+        <b>{who(opponent ?? null)} disputed this result</b> (reported by {who(reportedBy ?? null)}). Check with both players, then
+        save the right result. Anything you save counts as confirmed.
+      </p>
+    {:else if canEdit && existing?.status === 'reported'}
+      <p class="small muted">Reported by {who(reportedBy ?? null)}, not confirmed by {who(opponent ?? null)} yet. Saving it here counts as confirmed.</p>
+    {/if}
     {#if reportMode}
       {#if myMatch}
         <p class="small reporter">Reporting as <b>{names.get(me!.playerId)}</b>.</p>
@@ -299,7 +351,11 @@
   .confirm ul { list-style: none; padding: 0; margin: 0 0 10px; display: grid; gap: 8px; }
   .confirm li { border: 1px solid var(--warn); background: var(--warn-soft); border-radius: var(--radius); padding: 10px; display: grid; gap: 8px; }
   .seg { gap: 4px; }
+  .readonly { display: grid; gap: 6px; }
   .readonly p { font-size: 18px; margin: 0; }
+  .readonly p.small { font-size: 14px; }
+  .confirmbox { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
+  .confirmbox .reporter { margin: 0; }
 
   @media (max-width: 600px) {
     .sheet {

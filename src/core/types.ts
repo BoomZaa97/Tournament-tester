@@ -80,6 +80,13 @@ export interface MatchResult {
    */
   p1: EntrantId;
   p2: EntrantId;
+  /**
+   * A result a player reported with their PIN: 'reported' until the opponent confirms or disputes it.
+   * Unset = entered by the organizer (counts as confirmed). The bracket engine ignores it.
+   */
+  status?: 'reported' | 'confirmed' | 'disputed';
+  /** Who reported it (a player id), when a player did. */
+  reportedBy?: EntrantId;
 }
 
 /** Admin override: force a specific entrant into a match slot. */

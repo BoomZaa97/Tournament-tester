@@ -52,6 +52,7 @@
   role={clickable ? undefined : 'group'}
   class="card st-{m.status}"
   class:walkover={m.walkover}
+  class:disputed={m.status === 'done' && m.result?.status === 'disputed'}
   class:clickable
   class:conditional={!!m.template.onlyIf}
   onclick={clickable ? () => onselect?.(m.template.id) : undefined}
@@ -82,6 +83,8 @@
     <span class="flag warn">Check</span>
   {:else if m.walkover}
     <span class="flag">Walkover</span>
+  {:else if m.status === 'done' && m.result?.status === 'disputed'}
+    <span class="flag warn">Disputed</span>
   {:else if m.template.onlyIf && m.status === 'waiting'}
     <span class="flag">If needed</span>
   {/if}
@@ -106,7 +109,7 @@
   .clickable:hover { border-color: var(--ink); }
   .clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .st-ready { border-left: 4px solid var(--accent); }
-  .st-conflict { border-color: var(--warn); border-left: 4px solid var(--warn); }
+  .st-conflict, .disputed { border-color: var(--warn); border-left: 4px solid var(--warn); }
   .st-skipped, .st-bye { opacity: 0.5; border-style: dashed; }
   .walkover { opacity: 0.8; }
   .conditional.st-waiting { border-style: dashed; }

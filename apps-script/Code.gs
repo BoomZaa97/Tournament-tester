@@ -25,7 +25,10 @@ var TABLES = {
     'code', 'maxPlayers', 'checkIn',
   ],
   Entrants: ['tournamentId', 'seed', 'playerId', 'name', 'pin', 'checkedIn'],
-  Results: ['tournamentId', 'matchId', 'p1Name', 'p2Name', 'winner', 'score1', 'score2', 'forfeit', 'at', 'p1Id', 'p2Id', 'games'],
+  Results: [
+    'tournamentId', 'matchId', 'p1Name', 'p2Name', 'winner', 'score1', 'score2', 'forfeit', 'at', 'p1Id', 'p2Id', 'games',
+    'status', 'reportedBy',
+  ],
   Log: ['tournamentId', 'time', 'summary', 'undone', 'id', 'changes', 'restore'],
   // People who signed up after the player limit was reached, in order (oldest first).
   Waitlist: ['tournamentId', 'playerId', 'name', 'pin', 'at', 'checkedIn'],
@@ -70,6 +73,7 @@ function doPost(e) {
       if (body.action === 'pins') return { pins: pinsFor(body.id, body, isAdmin) };
       if (body.action === 'checkin') return checkIn(body, isAdmin);
       if (body.action === 'drop') return dropOut(body.id, body.pin);
+      if (body.action === 'confirm') return confirmResult(body.id, body.matchId, body.pin, body.ok !== false, body.matchNo);
       throw new Error('Unknown action: ' + body.action);
     } finally {
       lock.releaseLock();
@@ -193,17 +197,7 @@ function assemble(t, data) {
 
   var results = {};
   data.Results.filter(mine).forEach(function (r) {
-    var res = {
-      winner: parseWinner(r),
-      p1: r.p1Id,
-      p2: r.p2Id,
-    };
-    if (r.score1 !== '') res.score1 = num(r.score1);
-    if (r.score2 !== '') res.score2 = num(r.score2);
-    if (truthy(r.forfeit)) res.forfeit = true;
-    if (r.games) res.games = json(r.games, undefined);
-    if (r.at) res.at = r.at;
-    results[r.matchId] = res;
+    results[r.matchId] = toResult(r);
   });
 
   var log = data.Log.filter(mine).map(function (l) {
@@ -233,6 +227,24 @@ function assemble(t, data) {
     updatedAt: t.updatedAt,
     version: num(t.version),
   };
+}
+
+/** A Results row as the app's result object. */
+function toResult(r) {
+  var res = {
+    winner: parseWinner(r),
+    p1: r.p1Id,
+    p2: r.p2Id,
+  };
+  if (r.score1 !== '' && r.score1 !== undefined) res.score1 = num(r.score1);
+  if (r.score2 !== '' && r.score2 !== undefined) res.score2 = num(r.score2);
+  if (truthy(r.forfeit)) res.forfeit = true;
+  if (r.games) res.games = json(r.games, undefined);
+  if (r.at) res.at = r.at;
+  // Reported by a player: 'reported' until the opponent confirms or disputes it. Empty = entered by the organizer.
+  if (r.status === 'reported' || r.status === 'confirmed' || r.status === 'disputed') res.status = r.status;
+  if (r.reportedBy) res.reportedBy = r.reportedBy;
+  return res;
 }
 
 /** Accept p1 / p2 / draw, or a player's name typed by hand. */
@@ -364,6 +376,8 @@ function saveTournament(doc, players, body, isAdmin) {
         p1Id: r.p1,
         p2Id: r.p2,
         games: r.games ? JSON.stringify(r.games) : '',
+        status: r.status || '',
+        reportedBy: r.reportedBy || '',
       };
     }),
   );
@@ -731,6 +745,9 @@ function report(id, matchId, rawPin, result, matchNo) {
     clean.score1 = s1 || 0;
     clean.score2 = s2 || 0;
   }
+  // the opponent confirms or disputes it (see confirmResult)
+  clean.status = 'reported';
+  clean.reportedBy = me.playerId;
   var n1 = byId[result.p1].name;
   var n2 = byId[result.p2].name;
   data.Results.push({
@@ -746,11 +763,45 @@ function report(id, matchId, rawPin, result, matchNo) {
     p1Id: clean.p1,
     p2Id: clean.p2,
     games: '',
+    status: clean.status,
+    reportedBy: clean.reportedBy,
   });
   var label = Number(matchNo) > 0 ? 'Match ' + Math.round(Number(matchNo)) + ': ' : '';
   var middle = clean.score1 !== undefined ? ' ' + clean.score1 + '–' + clean.score2 + ' ' : ' vs ';
   var summary = label + n1 + middle + n2 + (clean.winner === 'draw' ? ' (draw)' : '') + ' (reported by ' + me.name + ')';
   data.Log.push(logRow(id, summary, [{ matchId: matchId, after: clean }]));
+  bump(t);
+  writeTable('Tournaments', data.Tournaments);
+  writeTable('Results', data.Results);
+  writeTable('Log', data.Log);
+  return { tournament: assemble(t, data), playerId: me.playerId };
+}
+
+/**
+ * The opponent of whoever reported a result confirms it (ok) or disputes it, with their PIN.
+ * Disputed results are flagged for the organizer, who settles them by saving the right result.
+ */
+function confirmResult(id, matchId, rawPin, ok, matchNo) {
+  var data = loadTables();
+  var t = findTournament(data.Tournaments, id);
+  if (!t) throw new Error('Tournament not found');
+  var me = byPin(id, rawPin, data, false);
+  if (!me) throw new Error('Wrong PIN');
+  var row = data.Results.filter(function (r) {
+    return r.tournamentId === id && r.matchId === matchId;
+  })[0];
+  if (!row) throw new Error('This match has no result to confirm');
+  if (row.p1Id !== me.playerId && row.p2Id !== me.playerId) throw new Error('You can only confirm your own matches');
+  if (row.status !== 'reported') {
+    throw new Error(row.status === 'disputed' ? 'This result is disputed: the organizer will settle it' : 'This result is already settled');
+  }
+  if (row.reportedBy === me.playerId) throw new Error('Your opponent has to confirm the result you reported');
+
+  var before = toResult(row);
+  row.status = ok ? 'confirmed' : 'disputed';
+  var label = Number(matchNo) > 0 ? 'Match ' + Math.round(Number(matchNo)) + ': ' : '';
+  var summary = label + me.name + (ok ? ' confirmed the result' : ' disputed the result: the organizer needs to settle it');
+  data.Log.push(logRow(id, summary, [{ matchId: matchId, before: before, after: toResult(row) }]));
   bump(t);
   writeTable('Tournaments', data.Tournaments);
   writeTable('Results', data.Results);

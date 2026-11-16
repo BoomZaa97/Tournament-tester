@@ -73,6 +73,7 @@
   const numbers = $derived(matchNumbers(resolved));
   const status = $derived(doc ? statusOf(doc) : 'setup');
   const conflicts = $derived([...resolved.values()].filter((m) => m.status === 'conflict').length);
+  const disputed = $derived([...resolved.values()].filter((m) => m.status === 'done' && m.result?.status === 'disputed'));
   const champion = $derived.by(() => {
     if (!tstate || !doc || status !== 'finished') return null;
     // only a clear winner, not a tie for first
@@ -126,6 +127,23 @@
       const { winner, score1, score2 } = input;
       doc = await app.store.report(id, matchId, pin, { winner, score1, score2, p1: m.p1, p2: m.p2 }, numbers.get(matchId));
       app.notify('Result reported');
+      return true;
+    } catch (e) {
+      app.notify(errorText(e), 'error');
+      if (e instanceof VersionConflictError) await load();
+      return false;
+    } finally {
+      saving = false;
+    }
+  }
+
+  /** The opponent confirms or disputes a reported result (shared mode). The sheet checks the PIN. */
+  async function confirmReport(matchId: string, ok: boolean, pin: string) {
+    if (!app.store.confirm) return false;
+    saving = true;
+    try {
+      doc = await app.store.confirm(id, matchId, pin, ok, numbers.get(matchId));
+      app.notify(ok ? 'Result confirmed' : 'Result disputed: the organizer will settle it');
       return true;
     } catch (e) {
       app.notify(errorText(e), 'error');
@@ -319,6 +337,14 @@
       </p>
     {/if}
 
+    {#if disputed.length}
+      <p class="notice">
+        {disputed.length} result{disputed.length === 1 ? ' is' : 's are'} disputed:
+        {disputed.map((m) => `match ${numbers.get(m.template.id)}`).join(', ')}.
+        {canEdit ? 'Check with the players, then open it from the Matches tab and save the right result.' : 'The organizer will settle it.'}
+      </p>
+    {/if}
+
     <SignUp {doc} {names} finished={status === 'finished'} onjoined={(d) => (doc = d)} />
     {#if doc.checkIn && app.store.checkin && status === 'setup' && Object.keys(doc.results).length === 0 && doc.entrants.length}
       <CheckIn {doc} {names} {canEdit} onchange={(d) => (doc = d)} onnoshows={removeNoShows} />
@@ -379,6 +405,7 @@
         me={myPin(id)}
         onsave={(input, decisions) => saveResult(openMatch!, input, decisions)}
         onreport={(input, pin) => reportResult(openMatch!, input, pin)}
+        onconfirm={(ok, pin) => confirmReport(openMatch!, ok, pin)}
         onclose={() => (openMatch = null)}
       />
     {/key}
