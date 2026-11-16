@@ -90,7 +90,12 @@ npm run dev        # local dev server
 npm test           # all tests (must pass; CI runs them before deploying)
 npm run typecheck  # svelte-check, must be 0 errors 0 warnings
 npm run build
+npm run sheet:fake   # Code.gs on an in-memory sheet at http://localhost:5180/exec (admin key: test-admin)
 ```
+
+End-to-end tests of shared features: run `sheet:fake` + `dev`, then in the site set
+`localStorage["tt.settings.v1"] = {"source":"sheets","sheetsUrl":"http://localhost:5180/exec","adminKey":""}`.
+Never create test data in the real Sheet. Put any `.claude/launch.json` you need for previews back out before committing.
 
 Push to `main` = deploy. Check UI changes in a real browser (Playwright, desktop + iPhone size, light + dark).
 
