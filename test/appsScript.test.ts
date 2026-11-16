@@ -96,6 +96,24 @@ const doc = {
 };
 
 describe('Google Sheets backend (Code.gs)', () => {
+  it('saves and reads back a swiss tournament with frozen rounds', () => {
+    const g = fakeGoogle();
+    const swiss = {
+      ...doc,
+      id: 's1',
+      format: 'swiss',
+      options: { swissRounds: 3, swissPairings: [[[1, 3], [2, 0]], null, [[2, 1], [3, 0]]] },
+      results: { 'S1-1': { winner: 'draw', p1: 'a', p2: 'c', at: '2026-11-16T10:00:00.000Z' } },
+      log: [],
+    };
+    const saved = g.post({ key: 'secret', action: 'save', tournament: swiss, players: swiss.entrants });
+    expect(saved.error).toBeUndefined();
+    const back = g.get({ action: 'get', id: 's1' }).tournament;
+    expect(back.format).toBe('swiss');
+    expect(back.options).toEqual(swiss.options);
+    expect(back.results).toEqual(swiss.results);
+  });
+
   it('saves and reads back a tournament unchanged', () => {
     const g = fakeGoogle();
     const saved = g.post({ key: 'secret', action: 'save', tournament: doc, players: doc.entrants });

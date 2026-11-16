@@ -15,8 +15,12 @@
       const st = new SheetsStore(s.sheetsUrl.trim(), s.adminKey.trim());
       const data = await st.loadAll();
       let msg = `Connected. ${data.tournaments.length} tournament(s) in the sheet.`;
-      if (s.adminKey.trim()) msg += (await st.checkKey()) ? ' Admin key accepted.' : ' Admin key is WRONG — you can only view.';
-      else msg += ' No admin key: view only.';
+      if (!s.adminKey.trim()) msg += ' No admin key: view only.';
+      else if (await st.checkKey()) {
+        // A key that works is what people want kept; don't make them find the Save button too.
+        save();
+        msg += ' Admin key accepted and saved. You can create and edit tournaments now.';
+      } else msg += ' Admin key is WRONG — you can only view. Nothing was saved.';
       testResult = msg;
     } catch (e) {
       testResult = `Couldn't connect: ${errorText(e)}`;
@@ -110,7 +114,7 @@
           <input bind:value={s.adminKey} type="password" autocomplete="off" />
         </label>
         <div class="row">
-          <button onclick={test} disabled={!s.sheetsUrl.trim() || testing}>{testing ? 'Testing…' : 'Test connection'}</button>
+          <button onclick={test} disabled={!s.sheetsUrl.trim() || testing}>{testing ? 'Testing…' : 'Test and save'}</button>
           {#if testResult}<span class="small">{testResult}</span>{/if}
         </div>
         <p class="small muted">

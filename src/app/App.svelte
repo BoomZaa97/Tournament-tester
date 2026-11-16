@@ -23,7 +23,7 @@
     </nav>
   </div>
   {#if !app.store.canEdit}
-    <div class="viewbar">View only</div>
+    <a class="viewbar" href="#/settings">View only · Admin? Add your key in Settings to create and edit</a>
   {/if}
 </header>
 
@@ -115,6 +115,8 @@
     border-bottom-color: var(--accent);
   }
   .viewbar {
+    display: block;
+    text-decoration: none;
     background: var(--ink);
     color: var(--paper);
     text-align: center;
