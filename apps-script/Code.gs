@@ -20,10 +20,12 @@
 
 var TABLES = {
   Players: ['id', 'name'],
-  Tournaments: ['id', 'name', 'game', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash', 'code'],
+  Tournaments: ['id', 'name', 'game', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash', 'code', 'maxPlayers'],
   Entrants: ['tournamentId', 'seed', 'playerId', 'name', 'pin'],
   Results: ['tournamentId', 'matchId', 'p1Name', 'p2Name', 'winner', 'score1', 'score2', 'forfeit', 'at', 'p1Id', 'p2Id', 'games'],
   Log: ['tournamentId', 'time', 'summary', 'undone', 'id', 'changes', 'restore'],
+  // People who signed up after the player limit was reached, in order (oldest first).
+  Waitlist: ['tournamentId', 'playerId', 'name', 'pin', 'at'],
 };
 
 var CELL_LIMIT = 45000; // Google Sheets allows 50,000 characters per cell
@@ -170,6 +172,10 @@ function assemble(t, data) {
     .map(function (e) {
       return { id: e.playerId, name: e.name };
     });
+  // Waitlisted people are NOT entrants: they are not in the bracket until the organizer moves them up.
+  var waitlist = waitlistOf(t.id, data).map(function (w) {
+    return { id: w.playerId, name: w.name };
+  });
 
   var results = {};
   data.Results.filter(mine).forEach(function (r) {
@@ -199,6 +205,8 @@ function assemble(t, data) {
     game: t.game,
     signup: truthy(t.signup),
     code: t.code || '',
+    maxPlayers: num(t.maxPlayers),
+    waitlist: waitlist,
     format: t.format,
     options: json(t.options, {}),
     scoring: json(t.scoring, {}),
@@ -276,6 +284,7 @@ function saveTournament(doc, players, body, isAdmin) {
     signup: saved.signup ? 'yes' : '',
     orgKeyHash: orgKeyHash,
     code: code,
+    maxPlayers: num(saved.maxPlayers) > 0 ? Math.round(num(saved.maxPlayers)) : '',
   };
   var tournaments = data.Tournaments.filter(function (r) {
     return r.id !== doc.id;
@@ -291,6 +300,18 @@ function saveTournament(doc, players, body, isAdmin) {
   });
   var usedPins = Object.keys(oldPins).map(function (k) {
     return oldPins[k];
+  });
+  // Someone moved up from the waitlist keeps the PIN they got when they signed up.
+  var inBracket = {};
+  saved.entrants.forEach(function (e) {
+    inBracket[e.id] = true;
+  });
+  var waitlist = data.Waitlist.filter(function (w) {
+    if (w.tournamentId !== doc.id) return true;
+    if (w.pin) usedPins.push(w.pin);
+    if (!inBracket[w.playerId]) return true;
+    if (w.pin && !oldPins[w.playerId]) oldPins[w.playerId] = w.pin;
+    return false;
   });
   var entrants = data.Entrants.filter(others).concat(
     saved.entrants.map(function (e, i) {
@@ -345,7 +366,9 @@ function saveTournament(doc, players, body, isAdmin) {
   writeTable('Entrants', entrants);
   writeTable('Results', results);
   writeTable('Log', log);
-  return saved;
+  writeTable('Waitlist', waitlist);
+  // Send back what is stored now (code, waitlist, ...), exactly as a reload would see it.
+  return assemble(tRow, { Entrants: entrants, Results: results, Log: log, Waitlist: waitlist });
 }
 
 function deleteTournament(id, body, isAdmin) {
@@ -361,6 +384,7 @@ function deleteTournament(id, body, isAdmin) {
   writeTable('Entrants', data.Entrants.filter(others));
   writeTable('Results', data.Results.filter(others));
   writeTable('Log', data.Log.filter(others));
+  writeTable('Waitlist', data.Waitlist.filter(others));
   return { ok: true };
 }
 
@@ -378,12 +402,16 @@ function renamePlayer(id, name) {
   data.Entrants.forEach(function (e) {
     if (e.playerId === id) e.name = name;
   });
+  data.Waitlist.forEach(function (w) {
+    if (w.playerId === id) w.name = name;
+  });
   data.Results.forEach(function (r) {
     if (r.p1Id === id) r.p1Name = name;
     if (r.p2Id === id) r.p2Name = name;
   });
   writeTable('Players', data.Players);
   writeTable('Entrants', data.Entrants);
+  writeTable('Waitlist', data.Waitlist);
   writeTable('Results', data.Results);
   return { ok: true };
 }
@@ -462,11 +490,13 @@ function signUp(id, rawName) {
   var mine = data.Entrants.filter(function (e) {
     return e.tournamentId === id;
   });
+  var waiting = waitlistOf(id, data);
+  var everyone = mine.concat(waiting);
   var lower = name.toLowerCase();
   var player = data.Players.filter(function (p) {
     return String(p.name).trim().toLowerCase() === lower;
   })[0];
-  var taken = mine.some(function (e) {
+  var taken = everyone.some(function (e) {
     return String(e.name).trim().toLowerCase() === lower || (player && e.playerId === player.id);
   });
   if (taken) throw new Error('Someone called "' + name + '" is already signed up');
@@ -475,21 +505,47 @@ function signUp(id, rawName) {
     data.Players.push(player);
   }
   var pin = newPin(
-    mine.map(function (e) {
+    everyone.map(function (e) {
       return e.pin;
     }),
   );
-  var seed = mine.reduce(function (m, e) {
-    return Math.max(m, num(e.seed));
-  }, 0);
-  data.Entrants.push({ tournamentId: id, seed: seed + 1, playerId: player.id, name: player.name, pin: pin });
-  data.Log.push(logRow(id, player.name + ' signed up'));
+  // Full (or people are already waiting, who go first): join the waitlist instead of the bracket.
+  var cap = num(t.maxPlayers);
+  var waitlisted = cap > 0 && (mine.length >= cap || waiting.length > 0);
+  if (waitlisted) {
+    data.Waitlist.push({ tournamentId: id, playerId: player.id, name: player.name, pin: pin, at: new Date().toISOString() });
+    data.Log.push(logRow(id, player.name + ' joined the waitlist'));
+  } else {
+    var seed = mine.reduce(function (m, e) {
+      return Math.max(m, num(e.seed));
+    }, 0);
+    data.Entrants.push({ tournamentId: id, seed: seed + 1, playerId: player.id, name: player.name, pin: pin });
+    data.Log.push(logRow(id, player.name + ' signed up'));
+  }
   bump(t);
   writeTable('Players', data.Players);
   writeTable('Tournaments', data.Tournaments);
-  writeTable('Entrants', data.Entrants);
+  if (waitlisted) writeTable('Waitlist', data.Waitlist);
+  else writeTable('Entrants', data.Entrants);
   writeTable('Log', data.Log);
-  return { playerId: player.id, pin: pin, tournament: assemble(t, data) };
+  return { playerId: player.id, pin: pin, waitlisted: waitlisted, tournament: assemble(t, data) };
+}
+
+/** A tournament's waitlist, oldest first. */
+function waitlistOf(id, data) {
+  return (data.Waitlist || [])
+    .map(function (w, i) {
+      return { w: w, i: i };
+    })
+    .filter(function (x) {
+      return x.w.tournamentId === id;
+    })
+    .sort(function (a, b) {
+      return String(a.w.at).localeCompare(String(b.w.at)) || a.i - b.i;
+    })
+    .map(function (x) {
+      return x.w;
+    });
 }
 
 /**
@@ -589,6 +645,9 @@ function pinsFor(id, body, isAdmin) {
       changed = true;
     }
     out[e.playerId] = e.pin;
+  });
+  waitlistOf(id, data).forEach(function (w) {
+    if (w.pin) out[w.playerId] = w.pin;
   });
   if (changed) writeTable('Entrants', data.Entrants);
   return out;

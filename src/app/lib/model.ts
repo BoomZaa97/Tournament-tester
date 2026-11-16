@@ -1,6 +1,6 @@
 import {
   BYE, createTournament, defaultTiebreakers, eliminationPlacements, finalsSize, hasPointsStage, isComplete, lockSwissRounds,
-  overallPlacements, roundRobinStandings,
+  overallPlacements, restructure, roundRobinStandings,
 } from '../../core';
 import type {
   Change, EntrantId, Format, FormatOptions, MatchResult, MatchTemplate, ResolvedMatch, Source, Tiebreaker, TournamentState,
@@ -56,6 +56,13 @@ export interface TournamentDoc {
    * an older version that doesn't know about codes yet.
    */
   code?: string;
+  /** Most players allowed through self sign-up (unset/0 = no limit). Later sign-ups go on the waitlist. */
+  maxPlayers?: number;
+  /**
+   * People who signed up once the limit was reached, oldest first. NOT entrants (not in the bracket)
+   * until the organizer moves them up. Kept by the Google script; ignored when saving.
+   */
+  waitlist?: Player[];
   log: LogEntry[];
   createdAt: string;
   updatedAt: string;
@@ -140,6 +147,26 @@ export function scriptOutdated(doc: Pick<TournamentDoc, 'code'>, kind: 'local' |
 }
 
 export const UPDATE_SCRIPT = 'The site owner needs to update the Google script for this.';
+
+/** The setup before a change, so the change can be undone from the log. */
+export function restorePoint(doc: TournamentDoc): NonNullable<LogEntry['restore']> {
+  const { name, game, format, options, scoring, entrants, results } = doc;
+  return { name, game, format, options, scoring, entrants, results };
+}
+
+/**
+ * A new entrant list (people added, removed or moved up from the waitlist), with the bracket
+ * rebuilt around it the same way the Edit tab does it (results and frozen rounds carried by player).
+ */
+export function withEntrants(doc: TournamentDoc, entrants: Player[]): Pick<TournamentDoc, 'entrants' | 'options' | 'results'> {
+  if (doc.entrants.length < 2 || entrants.length < 2) return { entrants, options: doc.options, results: doc.results };
+  const out = restructure(toState(doc), { entrants: entrants.map((e) => e.id) });
+  return { entrants, options: out.state.options ?? doc.options, results: out.state.results };
+}
+
+export function logEntry(summary: string, extra: Partial<LogEntry> = {}): LogEntry {
+  return { id: newId(), time: new Date().toISOString(), summary, changes: [], ...extra };
+}
 
 export function newId(): string {
   return Date.now().toString(36).slice(-5) + Math.random().toString(36).slice(2, 7);

@@ -29,7 +29,7 @@ export interface Store {
   /** The tournament with this join code. Throws if there is none. */
   findByCode(code: string): Promise<{ id: string; name: string }>;
   /** Shared (Google Sheet) mode only: players join and report their own scores. */
-  signup?(id: string, name: string): Promise<{ playerId: string; pin: string; tournament: TournamentDoc }>;
+  signup?(id: string, name: string): Promise<{ playerId: string; pin: string; waitlisted?: boolean; tournament: TournamentDoc }>;
   report?(id: string, matchId: string, pin: string, result: ReportedResult, matchNo?: number): Promise<TournamentDoc>;
   /** Organizer/admin only: every entrant's PIN, by player id. */
   pins?(id: string): Promise<Record<string, string>>;
@@ -234,7 +234,7 @@ export class SheetsStore implements Store {
   }
 
   async signup(id: string, name: string) {
-    const r = await this.call<{ playerId: string; pin: string; tournament: TournamentDoc }>('POST', { action: 'signup', id, name });
+    const r = await this.call<{ playerId: string; pin: string; waitlisted?: boolean; tournament: TournamentDoc }>('POST', { action: 'signup', id, name });
     rememberPin(id, r.playerId, r.pin);
     return r;
   }

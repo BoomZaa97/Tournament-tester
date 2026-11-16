@@ -1,15 +1,26 @@
 <script lang="ts">
   import { app, errorText } from '../lib/app.svelte';
   import { helperLink } from '../lib/store';
-  import { UPDATE_SCRIPT } from '../lib/model';
+  import { scriptOutdated, UPDATE_SCRIPT } from '../lib/model';
   import type { TournamentDoc } from '../lib/model';
 
   interface Props {
     doc: TournamentDoc;
     names: Map<string, string>;
     onsignup: (open: boolean) => Promise<boolean>;
+    onmax: (max: number) => Promise<boolean>;
   }
-  let { doc, names, onsignup }: Props = $props();
+  let { doc, names, onsignup, onmax }: Props = $props();
+
+  const outdated = $derived(scriptOutdated(doc, app.store.kind));
+  let max = $state<number | undefined>(doc.maxPlayers || undefined);
+  const maxChanged = $derived((max || 0) !== (doc.maxPlayers || 0));
+
+  async function saveMax() {
+    busy = true;
+    await onmax(Math.max(0, Math.round(max || 0)));
+    busy = false;
+  }
 
   const viewLink = `${location.href.split('#')[0]}#/t/${doc.id}`;
   const helper = helperLink(doc.id);
@@ -85,6 +96,19 @@
   </div>
 
   <div class="item">
+    <div class="label">Player limit</div>
+    {#if outdated}
+      <p class="small muted">{UPDATE_SCRIPT}</p>
+    {:else}
+      <p class="small muted">Sign-ups after this go on a waitlist. Empty = no limit. People you add by hand don't count against it.</p>
+      <form class="row" onsubmit={(e) => { e.preventDefault(); saveMax(); }}>
+        <input class="max" type="number" min="2" inputmode="numeric" placeholder="No limit" bind:value={max} aria-label="Most players" />
+        <button class="small" type="submit" disabled={busy || !maxChanged}>Save</button>
+      </form>
+    {/if}
+  </div>
+
+  <div class="item">
     <div class="label">Player PINs</div>
     <p class="small muted">Each player reports their own scores with their PIN. Give people you added by hand their PIN.</p>
     {#if pins}
@@ -92,6 +116,9 @@
         <tbody>
           {#each doc.entrants as e (e.id)}
             <tr><td>{names.get(e.id) ?? e.name}</td><td class="num pin">{pins[e.id] ?? '–'}</td></tr>
+          {/each}
+          {#each doc.waitlist ?? [] as w (w.id)}
+            <tr><td>{w.name} <span class="small muted">(waitlist)</span></td><td class="num pin">{pins[w.id] ?? '–'}</td></tr>
           {/each}
         </tbody>
       </table>
@@ -122,6 +149,7 @@
     border-radius: var(--radius);
   }
   .pins { max-width: 360px; }
+  .max { width: 120px; }
   .pins td { padding: 6px 8px; }
   .pin { font: 700 17px var(--font-cond); letter-spacing: 0.12em; }
 </style>

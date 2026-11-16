@@ -11,10 +11,11 @@
   import SharePanel from '../components/SharePanel.svelte';
   import SignUp from '../components/SignUp.svelte';
   import Standings from '../components/Standings.svelte';
+  import Waitlist from '../components/Waitlist.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import {
-    describeResult, finalPlaces, FORMAT_LABEL, hasFinals, isTableFormat, matchNumbers, nameMap, newId, pointsStageName, roundName,
-    STATUS_LABEL, statusOf, toState,
+    describeResult, finalPlaces, FORMAT_LABEL, hasFinals, isTableFormat, logEntry, matchNumbers, nameMap, newId, pointsStageName,
+    restorePoint, roundName, STATUS_LABEL, statusOf, toState, withEntrants,
   } from '../lib/model';
   import type { LogEntry, Player, TournamentDoc } from '../lib/model';
   import { myPin, rememberOrgKey, VersionConflictError } from '../lib/store';
@@ -49,7 +50,8 @@
       const [d, all] = await Promise.all([app.store.get(id), app.store.loadAll()]);
       players = all.players;
       if (!d) missing = true;
-      else if (!doc || d.version !== doc.version) doc = d;
+      // check-ins change updatedAt but not the version (they don't touch the bracket)
+      else if (!doc || d.version !== doc.version || d.updatedAt !== doc.updatedAt) doc = d;
       error = '';
     } catch (e) {
       error = errorText(e);
@@ -137,6 +139,24 @@
     const entry: LogEntry = { id: newId(), time: new Date().toISOString(), summary: open ? 'Sign-up opened' : 'Sign-up closed', changes: [] };
     const ok = await persist({ ...doc, signup: open, log: [...doc.log, entry] });
     if (ok) app.notify(open ? 'Sign-up is open' : 'Sign-up is closed');
+    return ok;
+  }
+
+  /** Organizer sets the most players self sign-up lets in (0 = no limit). */
+  async function setMaxPlayers(max: number) {
+    if (!doc) return false;
+    const summary = max ? `Player limit set to ${max}` : 'Player limit removed';
+    const ok = await persist({ ...doc, maxPlayers: max || undefined, log: [...doc.log, logEntry(summary)] });
+    if (ok) app.notify(summary);
+    return ok;
+  }
+
+  /** Organizer moves someone up from the waitlist: they become the last seed. Undoable from the log. */
+  async function promote(p: Player) {
+    if (!doc) return false;
+    const entry = logEntry(`${p.name} moved up from the waitlist`, { restore: restorePoint(doc) });
+    const ok = await persist({ ...doc, ...withEntrants(doc, [...doc.entrants, p]), log: [...doc.log, entry] });
+    if (ok) app.notify(`${p.name} is in`);
     return ok;
   }
 
@@ -232,7 +252,11 @@
     <div class="titlebar">
       <div>
         <div class="label">
-          {[doc.game, FORMAT_LABEL[doc.format], `${doc.entrants.length} ${doc.entrants.length === 1 ? 'entrant' : 'entrants'}`].filter(Boolean).join(' · ')}
+          {[
+            doc.game,
+            FORMAT_LABEL[doc.format],
+            `${doc.entrants.length}${doc.maxPlayers ? ` / ${doc.maxPlayers}` : ''} ${doc.entrants.length === 1 && !doc.maxPlayers ? 'entrant' : 'entrants'}`,
+          ].filter(Boolean).join(' · ')}
         </div>
         <h1>{doc.name}</h1>
         <div class="row meta">
@@ -256,6 +280,7 @@
     {/if}
 
     <SignUp {doc} {names} onjoined={(d) => (doc = d)} />
+    <Waitlist {doc} {canEdit} onpromote={promote} />
 
     <nav class="tabs no-print">
       {#each tabs as [key, label] (key)}
@@ -265,7 +290,7 @@
 
     <div class="body">
       {#if tab === 'edit' && canEdit}
-        {#if app.store.kind === 'sheets'}<SharePanel {doc} {names} onsignup={setSignup} />{/if}
+        {#if app.store.kind === 'sheets'}<SharePanel {doc} {names} onsignup={setSignup} onmax={setMaxPlayers} />{/if}
         {#key doc.version}
           <EditTournament {doc} known={players} {names} onapply={applyEditTournament} ondelete={remove} />
         {/key}

@@ -245,6 +245,53 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.post({ action: 'signup', id: 'o1', name: 'Eve' }).error).toMatch(/already started/);
     });
 
+    it('sign-ups beyond the player limit go on a waitlist, in order, with their own PIN', () => {
+      const g = fakeGoogle();
+      g.post({ action: 'save', orgKey: ORG, tournament: { ...swiss, maxPlayers: 4 } });
+      expect(g.post({ action: 'signup', id: 'o1', name: 'Dana' }).waitlisted).toBe(false);
+      const eve = g.post({ action: 'signup', id: 'o1', name: 'Eve' });
+      expect(eve.waitlisted).toBe(true);
+      expect(eve.pin).toMatch(/^\d{6}$/);
+      expect(eve.tournament.entrants).toHaveLength(4); // not in the bracket
+      expect(eve.tournament.waitlist).toEqual([{ id: eve.playerId, name: 'Eve' }]);
+      expect(eve.tournament.maxPlayers).toBe(4);
+      expect(eve.tournament.log.at(-1).summary).toBe('Eve joined the waitlist');
+      const fay = g.post({ action: 'signup', id: 'o1', name: 'Fay' });
+      expect(g.post({ action: 'signup', id: 'o1', name: 'eve' }).error).toMatch(/already signed up/);
+      expect(fay.tournament.waitlist.map((w: { name: string }) => w.name)).toEqual(['Eve', 'Fay']);
+
+      // PINs: the organizer sees them, viewers never do; no two people share one
+      const p = pins(g);
+      expect(p[eve.playerId]).toBe(eve.pin);
+      expect(new Set(Object.values(p)).size).toBe(6);
+      expect(JSON.stringify(g.get({ action: 'all' }))).not.toContain(eve.pin);
+
+      // a spot opens (limit raised): people already waiting still go first
+      let t = g.get({ action: 'get', id: 'o1' }).tournament;
+      t = g.post({ action: 'save', orgKey: ORG, tournament: { ...t, maxPlayers: 8 } }).tournament;
+      expect(g.post({ action: 'signup', id: 'o1', name: 'Gus' }).waitlisted).toBe(true);
+
+      // the organizer moves Eve up: she keeps her PIN and leaves the waitlist
+      t = g.get({ action: 'get', id: 'o1' }).tournament;
+      const moved = g.post({ action: 'save', orgKey: ORG, tournament: { ...t, entrants: [...t.entrants, { id: eve.playerId, name: 'Eve' }] } });
+      expect(moved.tournament.entrants.map((e: { name: string }) => e.name)).toEqual(['Alice', '=Bob', '007', 'Dana', 'Eve']);
+      expect(moved.tournament.waitlist.map((w: { name: string }) => w.name)).toEqual(['Fay', 'Gus']);
+      expect(pins(g)[eve.playerId]).toBe(eve.pin);
+      // seeds stay 1..n: the waitlist never shows up among the entrants
+      const seeds = g.sheets.get('Entrants')!.slice(1).map((r) => r[1]);
+      expect(seeds).toEqual(['1', '2', '3', '4', '5']);
+
+      g.post({ action: 'delete', id: 'o1', orgKey: ORG });
+      expect(g.sheets.get('Waitlist')!.length).toBeLessThanOrEqual(1);
+    });
+
+    it('no limit set: nobody is waitlisted', () => {
+      const g = fakeGoogle();
+      create(g);
+      for (const n of ['D', 'E', 'F', 'G']) expect(g.post({ action: 'signup', id: 'o1', name: n }).waitlisted).toBe(false);
+      expect(g.get({ action: 'get', id: 'o1' }).tournament.waitlist).toEqual([]);
+    });
+
     it('a player reports their own unplayed match with their PIN', () => {
       const g = fakeGoogle();
       create(g);
