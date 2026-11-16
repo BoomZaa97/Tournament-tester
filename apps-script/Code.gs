@@ -20,12 +20,15 @@
 
 var TABLES = {
   Players: ['id', 'name'],
-  Tournaments: ['id', 'name', 'game', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash', 'code', 'maxPlayers'],
-  Entrants: ['tournamentId', 'seed', 'playerId', 'name', 'pin'],
+  Tournaments: [
+    'id', 'name', 'game', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash',
+    'code', 'maxPlayers', 'checkIn',
+  ],
+  Entrants: ['tournamentId', 'seed', 'playerId', 'name', 'pin', 'checkedIn'],
   Results: ['tournamentId', 'matchId', 'p1Name', 'p2Name', 'winner', 'score1', 'score2', 'forfeit', 'at', 'p1Id', 'p2Id', 'games'],
   Log: ['tournamentId', 'time', 'summary', 'undone', 'id', 'changes', 'restore'],
   // People who signed up after the player limit was reached, in order (oldest first).
-  Waitlist: ['tournamentId', 'playerId', 'name', 'pin', 'at'],
+  Waitlist: ['tournamentId', 'playerId', 'name', 'pin', 'at', 'checkedIn'],
 };
 
 var CELL_LIMIT = 45000; // Google Sheets allows 50,000 characters per cell
@@ -65,6 +68,7 @@ function doPost(e) {
       if (body.action === 'signup') return signUp(body.id, body.name);
       if (body.action === 'report') return report(body.id, body.matchId, body.pin, body.result, body.matchNo);
       if (body.action === 'pins') return { pins: pinsFor(body.id, body, isAdmin) };
+      if (body.action === 'checkin') return checkIn(body, isAdmin);
       throw new Error('Unknown action: ' + body.action);
     } finally {
       lock.releaseLock();
@@ -176,6 +180,15 @@ function assemble(t, data) {
   var waitlist = waitlistOf(t.id, data).map(function (w) {
     return { id: w.playerId, name: w.name };
   });
+  // Who tapped "I'm here" (entrants and waitlisted people), by player id.
+  var checkedIn = data.Entrants.filter(mine)
+    .concat(waitlistOf(t.id, data))
+    .filter(function (e) {
+      return !!e.checkedIn;
+    })
+    .map(function (e) {
+      return e.playerId;
+    });
 
   var results = {};
   data.Results.filter(mine).forEach(function (r) {
@@ -207,6 +220,8 @@ function assemble(t, data) {
     code: t.code || '',
     maxPlayers: num(t.maxPlayers),
     waitlist: waitlist,
+    checkIn: truthy(t.checkIn),
+    checkedIn: checkedIn,
     format: t.format,
     options: json(t.options, {}),
     scoring: json(t.scoring, {}),
@@ -285,18 +300,21 @@ function saveTournament(doc, players, body, isAdmin) {
     orgKeyHash: orgKeyHash,
     code: code,
     maxPlayers: num(saved.maxPlayers) > 0 ? Math.round(num(saved.maxPlayers)) : '',
+    checkIn: saved.checkIn ? 'yes' : '',
   };
   var tournaments = data.Tournaments.filter(function (r) {
     return r.id !== doc.id;
   });
   tournaments.push(tRow);
 
-  // keep each player's PIN across saves; new entrants get one
+  // keep each player's PIN (and check-in) across saves; new entrants get a PIN
   var oldPins = {};
+  var arrived = {};
   data.Entrants.filter(function (r) {
     return r.tournamentId === doc.id;
   }).forEach(function (r) {
     if (r.pin) oldPins[r.playerId] = r.pin;
+    if (r.checkedIn) arrived[r.playerId] = r.checkedIn;
   });
   var usedPins = Object.keys(oldPins).map(function (k) {
     return oldPins[k];
@@ -311,13 +329,21 @@ function saveTournament(doc, players, body, isAdmin) {
     if (w.pin) usedPins.push(w.pin);
     if (!inBracket[w.playerId]) return true;
     if (w.pin && !oldPins[w.playerId]) oldPins[w.playerId] = w.pin;
+    if (w.checkedIn && !arrived[w.playerId]) arrived[w.playerId] = w.checkedIn;
     return false;
   });
   var entrants = data.Entrants.filter(others).concat(
     saved.entrants.map(function (e, i) {
       var pin = oldPins[e.id] || newPin(usedPins);
       usedPins.push(pin);
-      return { tournamentId: doc.id, seed: i + 1, playerId: e.id, name: names[e.id] || e.name, pin: pin };
+      return {
+        tournamentId: doc.id,
+        seed: i + 1,
+        playerId: e.id,
+        name: names[e.id] || e.name,
+        pin: pin,
+        checkedIn: arrived[e.id] || '',
+      };
     }),
   );
 
@@ -529,6 +555,55 @@ function signUp(id, rawName) {
   else writeTable('Entrants', data.Entrants);
   writeTable('Log', data.Log);
   return { playerId: player.id, pin: pin, waitlisted: waitlisted, tournament: assemble(t, data) };
+}
+
+/** The entrant (or, with `waitlistToo`, waitlisted person) with this PIN, or null. */
+function byPin(id, rawPin, data, waitlistToo) {
+  var pin = String(rawPin || '').trim();
+  if (!/^\d{6}$/.test(pin)) return null;
+  var rows = data.Entrants.filter(function (e) {
+    return e.tournamentId === id;
+  });
+  if (waitlistToo) rows = rows.concat(waitlistOf(id, data));
+  return (
+    rows.filter(function (e) {
+      return String(e.pin) === pin;
+    })[0] || null
+  );
+}
+
+/**
+ * "I'm here": a player (with their PIN) or the organizer (by player id) marks someone as
+ * arrived, or not, before the first result. It doesn't change the bracket, so the version
+ * stays the same (an organizer busy editing isn't interrupted); only updatedAt moves.
+ */
+function checkIn(body, isAdmin) {
+  var data = loadTables();
+  var t = findTournament(data.Tournaments, body.id);
+  if (!t) throw new Error('Tournament not found');
+  var organizer = isAdmin || isOrganizer(body, t);
+  var started = data.Results.some(function (r) {
+    return r.tournamentId === body.id;
+  });
+  if (started) throw new Error('This tournament has already started');
+  var who;
+  if (body.pin) {
+    if (!truthy(t.checkIn) && !organizer) throw new Error("Check-in isn't open for this tournament");
+    who = byPin(body.id, body.pin, data, true);
+    if (!who) throw new Error('Wrong PIN');
+  } else {
+    if (!organizer) throw new Error(NOT_ORGANIZER);
+    who = data.Entrants.concat(data.Waitlist).filter(function (e) {
+      return e.tournamentId === body.id && e.playerId === body.playerId;
+    })[0];
+    if (!who) throw new Error('That player is not in this tournament');
+  }
+  who.checkedIn = body.here === false ? '' : new Date().toISOString();
+  t.updatedAt = new Date().toISOString();
+  writeTable('Tournaments', data.Tournaments);
+  writeTable('Entrants', data.Entrants);
+  writeTable('Waitlist', data.Waitlist);
+  return { playerId: who.playerId, tournament: assemble(t, data) };
 }
 
 /** A tournament's waitlist, oldest first. */

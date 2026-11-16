@@ -31,6 +31,8 @@ export interface Store {
   /** Shared (Google Sheet) mode only: players join and report their own scores. */
   signup?(id: string, name: string): Promise<{ playerId: string; pin: string; waitlisted?: boolean; tournament: TournamentDoc }>;
   report?(id: string, matchId: string, pin: string, result: ReportedResult, matchNo?: number): Promise<TournamentDoc>;
+  /** Mark someone as arrived (or not): a player with their PIN, or the organizer by player id. */
+  checkin?(id: string, who: { pin: string } | { playerId: string }, here: boolean): Promise<TournamentDoc>;
   /** Organizer/admin only: every entrant's PIN, by player id. */
   pins?(id: string): Promise<Record<string, string>>;
 }
@@ -244,6 +246,14 @@ export class SheetsStore implements Store {
     // So they don't have to type it again, unless this device already belongs to another player
     // (a borrowed phone keeps its owner).
     if (!myPin(id)) rememberPin(id, r.playerId, pin);
+    return r.tournament;
+  }
+
+  async checkin(id: string, who: { pin: string } | { playerId: string }, here: boolean) {
+    const r = await this.call<{ tournament: TournamentDoc; playerId: string }>('POST', {
+      action: 'checkin', id, here, ...who, orgKey: orgKeyFor(id) ?? '',
+    });
+    if ('pin' in who && !myPin(id)) rememberPin(id, r.playerId, who.pin);
     return r.tournament;
   }
 

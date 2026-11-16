@@ -63,6 +63,10 @@ export interface TournamentDoc {
    * until the organizer moves them up. Kept by the Google script; ignored when saving.
    */
   waitlist?: Player[];
+  /** Players tap "I'm here" before the first result (the organizer turns this on). */
+  checkIn?: boolean;
+  /** Who has checked in (player ids, entrants and waitlist). Kept by the Google script; ignored when saving. */
+  checkedIn?: string[];
   log: LogEntry[];
   createdAt: string;
   updatedAt: string;

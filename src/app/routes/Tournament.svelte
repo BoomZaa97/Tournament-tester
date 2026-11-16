@@ -12,6 +12,7 @@
   import SignUp from '../components/SignUp.svelte';
   import Standings from '../components/Standings.svelte';
   import Waitlist from '../components/Waitlist.svelte';
+  import CheckIn from '../components/CheckIn.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import {
     describeResult, finalPlaces, FORMAT_LABEL, hasFinals, isTableFormat, logEntry, matchNumbers, nameMap, newId, pointsStageName,
@@ -160,6 +161,27 @@
     return ok;
   }
 
+  async function setCheckIn(on: boolean) {
+    if (!doc) return false;
+    const summary = on ? 'Check-in opened' : 'Check-in closed';
+    const ok = await persist({ ...doc, checkIn: on, log: [...doc.log, logEntry(summary)] });
+    if (ok) app.notify(summary);
+    return ok;
+  }
+
+  /** Organizer, before round 1: everyone who hasn't checked in leaves the bracket. Undoable from the log. */
+  async function removeNoShows() {
+    if (!doc) return false;
+    const here = new Set(doc.checkedIn ?? []);
+    const gone = doc.entrants.filter((e) => !here.has(e.id));
+    if (!gone.length) return true;
+    const summary = `Removed ${gone.length} no-show${gone.length === 1 ? '' : 's'}: ${gone.map((e) => names.get(e.id) ?? e.name).join(', ')}`;
+    const entry = logEntry(summary, { restore: restorePoint(doc) });
+    const ok = await persist({ ...doc, ...withEntrants(doc, doc.entrants.filter((e) => here.has(e.id))), log: [...doc.log, entry] });
+    if (ok) app.notify(`${gone.length} removed`);
+    return ok;
+  }
+
   /** Organizer confirms who goes to the finals (or clears them to pick again). Undoable from the log. */
   async function setFinalists(qualified: number[] | null) {
     if (!doc?.options.finals) return false;
@@ -280,6 +302,9 @@
     {/if}
 
     <SignUp {doc} {names} onjoined={(d) => (doc = d)} />
+    {#if doc.checkIn && app.store.checkin && status === 'setup' && Object.keys(doc.results).length === 0 && doc.entrants.length}
+      <CheckIn {doc} {names} {canEdit} onchange={(d) => (doc = d)} onnoshows={removeNoShows} />
+    {/if}
     <Waitlist {doc} {canEdit} onpromote={promote} />
 
     <nav class="tabs no-print">
@@ -290,7 +315,7 @@
 
     <div class="body">
       {#if tab === 'edit' && canEdit}
-        {#if app.store.kind === 'sheets'}<SharePanel {doc} {names} onsignup={setSignup} onmax={setMaxPlayers} />{/if}
+        {#if app.store.kind === 'sheets'}<SharePanel {doc} {names} onsignup={setSignup} onmax={setMaxPlayers} oncheckin={setCheckIn} />{/if}
         {#key doc.version}
           <EditTournament {doc} known={players} {names} onapply={applyEditTournament} ondelete={remove} />
         {/key}

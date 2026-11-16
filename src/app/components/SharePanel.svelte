@@ -9,8 +9,15 @@
     names: Map<string, string>;
     onsignup: (open: boolean) => Promise<boolean>;
     onmax: (max: number) => Promise<boolean>;
+    oncheckin: (on: boolean) => Promise<boolean>;
   }
-  let { doc, names, onsignup, onmax }: Props = $props();
+  let { doc, names, onsignup, onmax, oncheckin }: Props = $props();
+
+  async function toggleCheckIn(on: boolean) {
+    busy = true;
+    await oncheckin(on);
+    busy = false;
+  }
 
   const outdated = $derived(scriptOutdated(doc, app.store.kind));
   let max = $state<number | undefined>(doc.maxPlayers || undefined);
@@ -106,6 +113,16 @@
         <button class="small" type="submit" disabled={busy || !maxChanged}>Save</button>
       </form>
     {/if}
+  </div>
+
+  <div class="item">
+    <label class="check">
+      <input type="checkbox" checked={!!doc.checkIn} disabled={busy || started || outdated} onchange={(e) => toggleCheckIn(e.currentTarget.checked)} />
+      Check-in before the start
+    </label>
+    <p class="small muted">
+      {#if outdated}{UPDATE_SCRIPT}{:else}Players tap "I'm here" on the tournament page with their PIN. You see who came and can remove the no-shows in one click.{/if}
+    </p>
   </div>
 
   <div class="item">

@@ -285,6 +285,46 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.sheets.get('Waitlist')!.length).toBeLessThanOrEqual(1);
     });
 
+    it('check-in: players with their PIN, the organizer for anyone; kept across saves; not after the start', () => {
+      const g = fakeGoogle();
+      g.post({ action: 'save', orgKey: ORG, tournament: { ...swiss, maxPlayers: 3 } });
+      const p = pins(g);
+      const checkin = (body: object) => g.post({ action: 'checkin', id: 'o1', ...body });
+      expect(checkin({ pin: p.a }).error).toMatch(/isn't open/);
+
+      let t = g.get({ action: 'get', id: 'o1' }).tournament;
+      t = g.post({ action: 'save', orgKey: ORG, tournament: { ...t, checkIn: true } }).tournament;
+      expect(t.checkIn).toBe(true);
+      expect(t.checkedIn).toEqual([]);
+
+      expect(checkin({ pin: '123' }).error).toBe('Wrong PIN');
+      const ok = checkin({ pin: p.a });
+      expect(ok.playerId).toBe('a');
+      expect(ok.tournament.checkedIn).toEqual(['a']);
+      // doesn't touch the bracket: same version, so an organizer's open edit still saves
+      expect(ok.tournament.version).toBe(t.version);
+
+      // waitlisted people can check in too
+      const wl = g.post({ action: 'signup', id: 'o1', name: 'Zed' });
+      expect(wl.waitlisted).toBe(true);
+      expect(checkin({ pin: wl.pin }).tournament.checkedIn).toEqual(['a', wl.playerId]);
+      expect(checkin({ pin: wl.pin, here: false }).tournament.checkedIn).toEqual(['a']);
+
+      // the organizer marks anyone (no PIN needed); others can't
+      expect(checkin({ playerId: 'c', orgKey: 'wrong-wrong-wrong-wrong' }).error).toMatch(/organizer/);
+      expect(checkin({ playerId: 'c', orgKey: ORG }).tournament.checkedIn).toEqual(['a', 'c']);
+      expect(checkin({ playerId: 'zzz', orgKey: ORG }).error).toMatch(/not in this tournament/);
+
+      // an organizer save (here: removing the no-show "b") keeps check-ins by player
+      t = g.get({ action: 'get', id: 'o1' }).tournament;
+      t = g.post({ action: 'save', orgKey: ORG, tournament: { ...t, entrants: t.entrants.filter((e: { id: string }) => e.id !== 'b') } }).tournament;
+      expect(t.checkedIn).toEqual(['a', 'c']);
+      expect(JSON.stringify(g.get({ action: 'all' }))).not.toContain(p.a);
+
+      g.post({ action: 'save', orgKey: ORG, tournament: { ...t, results: { 'S1-1': { winner: 'p1', p1: 'a', p2: 'c' } } } });
+      expect(checkin({ pin: p.a, here: false }).error).toMatch(/already started/);
+    });
+
     it('no limit set: nobody is waitlisted', () => {
       const g = fakeGoogle();
       create(g);

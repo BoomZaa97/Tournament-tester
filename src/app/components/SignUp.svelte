@@ -13,7 +13,11 @@
   let name = $state('');
   let busy = $state(false);
   let error = $state('');
-  let mine = $state(myPin(doc.id));
+  // re-read when the doc changes: signing up, checking in or reporting remembers the PIN on this device
+  const mine = $derived.by(() => {
+    void doc.updatedAt;
+    return myPin(doc.id);
+  });
 
   const open = $derived(!!doc.signup && !!app.store.signup && Object.keys(doc.results).length === 0);
   const joined = $derived(!!mine && names.has(mine.playerId));
@@ -27,7 +31,6 @@
     error = '';
     try {
       const r = await app.store.signup(doc.id, name.trim());
-      mine = { playerId: r.playerId, pin: r.pin };
       app.notify(r.waitlisted ? "You're on the waitlist" : "You're in");
       onjoined(r.tournament);
     } catch (e) {

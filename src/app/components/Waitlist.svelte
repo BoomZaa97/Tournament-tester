@@ -35,6 +35,7 @@
         <li>
           <span class="n">{i + 1}</span>
           <span class="name">{p.name}</span>
+          {#if doc.checkIn && doc.checkedIn?.includes(p.id)}<span class="small here">Here</span>{/if}
           {#if canEdit && !started}
             <button class="small" class:primary={i === 0 && spots > 0} disabled={busy} onclick={() => promote(p)}>Move up</button>
           {/if}
@@ -54,4 +55,5 @@
   .n { font: 700 16px var(--font-cond); color: var(--muted); width: 22px; text-align: right; }
   .name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
   .note { margin: 0; }
+  .here { font-weight: 600; color: var(--accent); }
 </style>
