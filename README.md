@@ -1,30 +1,52 @@
-# Tournament Manager
+# Project: Tournament Tester
 
-Free, low-maintenance tournament brackets for any game, with results you can edit at any time and a full match history.
+Free tournament brackets for any game, where any result can be edited later without breaking the bracket. Every match is kept in a history, so each player gets a profile with their record and head-to-head results.
 
-## How it works
+- **Formats:** single elimination (optional 3rd place match), double elimination (optional grand final reset), round robin (once or twice, with custom points and tiebreakers)
+- **Bracket maker:** type or paste names, drag seeds around with the arrows or shuffle them, and watch the bracket draw itself live
+- **Edit anything, anytime:**
+  - Change an old result and every later match updates. Matches that were already played get flagged so you can choose to reset (replay) or keep the score.
+  - Add a late entrant, remove someone, put in a sub, reseed, or change the format partway through.
+  - Every change goes in the log and can be undone.
+- **Match history:** player pages show W–L record, win rate, titles, head-to-head, and every match across all tournaments
+- **Works on phones:** big buttons for entering scores, and it can be added to your home screen
+- **Costs nothing:** a static site on GitHub Pages plus a Google Sheet you own. No server to run.
 
-- **Static site** (GitHub Pages): all bracket logic runs in the browser.
-- **Google Sheet + Apps Script**: stores the data. It's free, it sits in your own Drive, and you can fix any cell by hand.
-
-## Status
-
-- [x] Phase 1: bracket engine (`src/core`)
-  - Single elimination (byes, optional 3rd place match)
-  - Double elimination (grand final with optional reset)
-  - Round robin (single or double, configurable points and tiebreakers)
-  - Edit any result: downstream matches update, already played ones are flagged as conflicts (reset / keep), with undo
-  - Edit the tournament itself mid-event: late entrants, removals, reseeding, option or format changes, sub replacements
-- [ ] Phase 2: app UI + Google Sheets storage
-- [ ] Phase 3: Swiss, groups -> playoffs
-- [ ] Phase 4: player profiles, head-to-head, stats
-
-## Design rule
-
-Only the **bracket structure** and the **match results** are stored. Who plays in each match is always
-recalculated from those (`resolve()`), so an old result can be corrected without breaking the bracket.
+## Run it locally
 
 ```bash
 npm install
-npm test
+npm run dev
 ```
+
+## Share it with people
+
+1. Push to GitHub. In the repo, go to **Settings → Pages → Source: GitHub Actions**. Every push to `main` then deploys automatically.
+2. Connect a Google Sheet so other people can see your tournaments: [docs/google-sheets-setup.md](docs/google-sheets-setup.md)
+
+Without a sheet, everything is saved only in your browser.
+
+## How it works
+
+| Folder | What |
+|---|---|
+| `src/core/` | The bracket engine. Plain TypeScript, no UI, fully tested. |
+| `src/app/` | The website (Svelte). |
+| `apps-script/Code.gs` | The Google Sheets backend. You paste it into your sheet. |
+| `test/` | Tests: engine, editing rules, Sheets backend. |
+
+The design rule is that only the **match results** are stored. The bracket itself, meaning who plays whom in each match, is always worked out again from those results (`resolve()` in `src/core/resolve.ts`). That's why an old result can be corrected safely.
+
+```bash
+npm test          # run tests
+npm run typecheck # check types
+npm run build     # build the site into dist/
+```
+
+## Roadmap
+
+- [x] Bracket engine + editing rules
+- [x] Web app: bracket maker, score entry, change log and undo, player history, Google Sheets
+- [ ] Swiss format, group stage → playoffs
+- [ ] Players report their own scores, Discord announcements
+- [ ] Import from Challonge

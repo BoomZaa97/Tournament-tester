@@ -66,6 +66,8 @@ export interface MatchResult {
   /** Per-game scores for best-of-N, e.g. [[2,1],[0,2],[2,0]]. Optional. */
   games?: [number, number][];
   forfeit?: boolean;
+  /** When the result was reported (ISO time). */
+  at?: string;
   /**
    * Who actually played when this result was entered. If the bracket later
    * resolves different players into this match (because an earlier result was

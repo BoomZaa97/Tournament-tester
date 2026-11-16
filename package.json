@@ -3,14 +3,22 @@
   "version": "1.0.0",
   "description": "Free tournament brackets with editable results and match history",
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p ."
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json"
   },
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.1.1",
+    "@types/node": "^22.20.5",
+    "svelte": "^5.57.3",
+    "svelte-check": "^4.7.8",
     "typescript": "^5.6.3",
+    "vite": "^6.4.6",
     "vitest": "^2.1.8"
   },
   "private": true,
