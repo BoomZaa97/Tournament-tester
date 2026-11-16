@@ -273,6 +273,18 @@ describe('Google Sheets backend (Code.gs)', () => {
       const p2 = g.post({ action: 'pins', id: 'o2', orgKey: ORG }).pins;
       expect(g.post({ action: 'report', id: 'o2', matchId: 'W1-2', pin: p2.b, result: { winner: 'draw', p1: 'b', p2: 'c' } }).error).toMatch(/winner/);
     });
+
+    it('groups allow draws; finals never do', () => {
+      const g = fakeGoogle();
+      const gr = { ...swiss, id: 'o3', format: 'groups', options: { groupCount: 1, finals: { format: 'single_elim', advance: 2 } } };
+      g.post({ action: 'save', orgKey: ORG, tournament: gr });
+      const p = g.post({ action: 'pins', id: 'o3', orgKey: ORG }).pins;
+      const draw = (matchId: string) => g.post({ action: 'report', id: 'o3', matchId, pin: p.a, result: { winner: 'draw', p1: 'a', p2: 'b' } });
+      expect(draw('F-W1-1').error).toMatch(/winner/);
+      expect(draw('A-RR1-1').error).toBeUndefined();
+      // the finals settings survive the round trip
+      expect(g.get({ action: 'get', id: 'o3' }).tournament.options.finals).toEqual({ format: 'single_elim', advance: 2 });
+    });
   });
 
   it('renaming a player updates every tab', () => {

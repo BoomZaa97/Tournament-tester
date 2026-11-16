@@ -457,7 +457,8 @@ function report(id, matchId, rawPin, result, matchNo) {
     byId[e.playerId] = e;
   });
   if (!byId[result.p1] || !byId[result.p2] || result.p1 === result.p2) throw new Error('Those players are not in this match');
-  var draws = t.format === 'round_robin' || t.format === 'swiss';
+  // Draws only in points stages, never in a knockout (incl. finals, whose ids start with "F-").
+  var draws = ['round_robin', 'swiss', 'groups'].indexOf(t.format) >= 0 && String(matchId).indexOf('F-') !== 0;
   if (['p1', 'p2'].indexOf(result.winner) < 0 && !(draws && result.winner === 'draw')) throw new Error('Pick a winner');
   if (!/^[A-Za-z0-9-]{1,20}$/.test(String(matchId))) throw new Error('Unknown match');
   var played = data.Results.some(function (r) {

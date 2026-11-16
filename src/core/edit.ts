@@ -1,5 +1,5 @@
 import { BYE } from './types';
-import type { EntrantId, FormatOptions, MatchResult, Slot, SwissPair, TournamentState, Winner } from './types';
+import type { EntrantId, FormatOptions, MatchResult, MatchTemplate, Slot, SwissPair, TournamentState, Winner } from './types';
 import { resolve } from './resolve';
 
 export type ResultInput = Omit<MatchResult, 'p1' | 'p2'>;
@@ -41,9 +41,10 @@ export interface EditOutcome {
 const isEntrant = (s: Slot): s is EntrantId => s !== null && s !== BYE;
 
 function validate(state: TournamentState, matchId: string, input: ResultInput) {
-  if (input.winner === 'draw' && !allowsDraws(state.structure.format)) throw new Error('Draws are not allowed in elimination brackets');
+  const template = state.structure.matches.find((m) => m.id === matchId);
+  if (!template) throw new Error(`Unknown match ${matchId}`);
+  if (input.winner === 'draw' && !matchAllowsDraws(template)) throw new Error('Draws are not allowed in knockout matches');
   if (!['p1', 'p2', 'draw'].includes(input.winner)) throw new Error(`Invalid winner: ${input.winner}`);
-  if (!state.structure.matches.some((m) => m.id === matchId)) throw new Error(`Unknown match ${matchId}`);
 }
 
 /**
@@ -133,7 +134,12 @@ function settle(state: TournamentState, results: Record<string, MatchResult>, de
 
 /** Draws only make sense where points are counted. */
 export function allowsDraws(format: TournamentState['structure']['format']): boolean {
-  return format === 'round_robin' || format === 'swiss';
+  return format === 'round_robin' || format === 'swiss' || format === 'groups';
+}
+
+/** Per match: points-stage matches can be drawn, knockout matches (incl. finals) can't. */
+export function matchAllowsDraws(t: Pick<MatchTemplate, 'side'>): boolean {
+  return t.side === 'RR' || t.side === 'SW';
 }
 
 /**
@@ -147,10 +153,10 @@ export function lockSwissRounds(state: TournamentState, results: Record<string, 
   const resolved = [...resolve({ ...state, results }).values()];
   const seedOf = (s: Slot) => (s && s !== BYE ? state.entrants.indexOf(s) + 1 : 0);
   const old = state.options?.swissPairings ?? [];
-  const rounds = Math.max(0, ...state.structure.matches.map((m) => m.round));
+  const rounds = Math.max(0, ...state.structure.matches.filter((m) => m.side === 'SW').map((m) => m.round));
   const next: (SwissPair[] | null)[] = [];
   for (let r = 1; r <= rounds; r++) {
-    const ms = resolved.filter((m) => m.template.round === r);
+    const ms = resolved.filter((m) => m.template.side === 'SW' && m.template.round === r);
     if (!ms.some((m) => results[m.template.id])) next.push(null);
     else if (old[r - 1]) next.push(old[r - 1]);
     else if (ms.some((m) => m.p1 === null || m.p2 === null)) next.push(null); // not paired yet: nothing to freeze

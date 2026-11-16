@@ -4,7 +4,8 @@
 
 Free tournament brackets for any game, where any result can be edited later without breaking the bracket. Every match is kept in a history, so each player gets a profile with their record and head-to-head results.
 
-- **Formats:** single elimination (optional 3rd place match), double elimination (optional grand final reset), round robin (once or twice, with custom points and tiebreakers), Swiss (pairs players on the same score, no rematches, byes handled)
+- **Formats:** single elimination (optional 3rd place match), double elimination (optional grand final reset), round robin (once or twice, with custom points and tiebreakers), Swiss (pairs players on the same score, no rematches, byes handled), groups (round-robin groups like the World Cup)
+- **Qualify for the finals:** after Swiss, round robin or groups, the top players (in total or per group) go on to a single or double elimination final. The site suggests who qualified and flags ties at the cut line; the organizer confirms or swaps players, then starts the finals.
 - **Bracket maker:** type or paste names, drag seeds around with the arrows or shuffle them, and watch the bracket draw itself live
 - **Edit anything, anytime:**
   - Change an old result and every later match updates. Matches that were already played get flagged so you can choose to reset (replay) or keep the score.
@@ -51,7 +52,7 @@ npm run build     # build the site into dist/
 - [x] Bracket engine + editing rules
 - [x] Web app: bracket maker, score entry, change log and undo, player history, Google Sheets
 - [x] Swiss format
-- [ ] Group stage → playoffs
+- [x] Group stage / Swiss / round robin → finals (top cut)
 - [x] Organizers, helpers, player sign-up, players report their own scores (PIN)
 - [ ] Discord announcements
 - [ ] Import from Challonge

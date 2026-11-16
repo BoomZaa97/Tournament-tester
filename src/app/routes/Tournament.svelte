@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { applyEdit, eliminationPlacements, resolve, undo } from '../../core';
+  import { applyEdit, resolve, undo } from '../../core';
   import type { Decision, ResolvedMatch, ResultInput } from '../../core';
   import Bracket from '../components/Bracket.svelte';
   import EditTournament from '../components/EditTournament.svelte';
+  import FinalsPanel from '../components/FinalsPanel.svelte';
   import LogView from '../components/LogView.svelte';
   import MatchList from '../components/MatchList.svelte';
   import MatchSheet from '../components/MatchSheet.svelte';
@@ -12,7 +13,8 @@
   import Standings from '../components/Standings.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import {
-    describeResult, FORMAT_LABEL, isTableFormat, matchNumbers, nameMap, newId, roundName, STATUS_LABEL, statusOf, tableStandings, toState,
+    describeResult, finalPlaces, FORMAT_LABEL, hasFinals, isTableFormat, matchNumbers, nameMap, newId, pointsStageName, roundName,
+    STATUS_LABEL, statusOf, toState,
   } from '../lib/model';
   import type { LogEntry, Player, TournamentDoc } from '../lib/model';
   import { myPin, rememberOrgKey, VersionConflictError } from '../lib/store';
@@ -69,13 +71,9 @@
   const conflicts = $derived([...resolved.values()].filter((m) => m.status === 'conflict').length);
   const champion = $derived.by(() => {
     if (!tstate || !doc || status !== 'finished') return null;
-    if (isTableFormat(doc.format)) {
-      // only a clear winner, not a tie for first
-      const top = tableStandings(doc, tstate).filter((r) => r.rank === 1);
-      return top.length === 1 ? names.get(top[0].entrant) : null;
-    }
-    const first = eliminationPlacements(tstate).find((p) => p.place === 1);
-    return first ? names.get(first.entrant) : null;
+    // only a clear winner, not a tie for first
+    const firsts = [...finalPlaces(doc, tstate)].filter(([, place]) => place === 1);
+    return firsts.length === 1 ? names.get(firsts[0][0]) : null;
   });
 
   const titleOf = (m: ResolvedMatch) => (tstate && doc ? roundName(m.template, tstate.structure.matches, doc.format) : '');
@@ -142,6 +140,24 @@
     return ok;
   }
 
+  /** Organizer confirms who goes to the finals (or clears them to pick again). Undoable from the log. */
+  async function setFinalists(qualified: number[] | null) {
+    if (!doc?.options.finals) return false;
+    const { qualified: _old, ...finals } = doc.options.finals;
+    const next = { ...doc, options: { ...doc.options, finals: qualified ? { ...finals, qualified } : finals } };
+    const { name, game, format, options, scoring, entrants, results } = doc;
+    const summary = qualified
+      ? `Finals started: ${qualified.map((s) => names.get(doc!.entrants[s - 1].id)).join(', ')}`
+      : 'Finalists cleared';
+    const entry: LogEntry = {
+      id: newId(), time: new Date().toISOString(), summary, changes: [],
+      restore: { name, game, format, options, scoring, entrants, results },
+    };
+    const ok = await persist({ ...next, log: [...doc.log, entry] });
+    if (ok) app.notify(qualified ? 'Finals started' : 'Pick the finalists again');
+    return ok;
+  }
+
   async function undoEntry(entry: LogEntry) {
     if (!doc || !tstate) return;
     const later = doc.log.slice(doc.log.findIndex((e) => e.id === entry.id) + 1).filter((e) => !e.undone);
@@ -196,7 +212,8 @@
   }
 
   const tabs = $derived([
-    ['bracket', doc && isTableFormat(doc.format) ? 'Rounds' : 'Bracket'],
+    ['bracket', doc && isTableFormat(doc.format) ? pointsStageName(doc.format) : 'Bracket'],
+    ...(doc && hasFinals(doc) ? [['finals', 'Finals']] : []),
     ['matches', 'Matches'],
     ['standings', 'Standings'],
     ['log', 'Log'],
@@ -261,6 +278,11 @@
         <MatchList {resolved} {names} {numbers} {titleOf} onselect={(m) => (openMatch = m)} />
       {:else if tab === 'standings'}
         <Standings {doc} {tstate} {names} />
+      {:else if tab === 'finals' && hasFinals(doc)}
+        {#key doc.version}
+          <FinalsPanel {doc} {tstate} {names} {canEdit} onset={setFinalists} />
+        {/key}
+        <Bracket format={doc.format} stage="finals" {resolved} {names} {seeds} {numbers} onselect={(m) => (openMatch = m)} />
       {:else}
         {#if canEdit && status === 'setup'}
           <p class="small muted hint no-print">Tap a match to enter its result.</p>

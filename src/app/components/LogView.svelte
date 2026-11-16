@@ -24,7 +24,7 @@
         <div class="head">
           <span class="when">{time(e.time)}</span>
           <span class="what">{e.summary}</span>
-          {#if canEdit && !e.undone && e.changes.length}
+          {#if canEdit && !e.undone && (e.changes.length || e.restore)}
             <button class="small" onclick={() => onundo(e)}>Undo</button>
           {/if}
           {#if e.undone}<span class="label">Undone</span>{/if}

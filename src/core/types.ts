@@ -19,7 +19,9 @@ export type Source =
   | { type: 'loser'; match: string }
   | { type: 'empty' } // always a bye
   /** Swiss: filled by the pairing for that round, worked out from the earlier rounds. */
-  | { type: 'swiss'; round: number; index: number; slot: 1 | 2 };
+  | { type: 'swiss'; round: number; index: number; slot: 1 | 2 }
+  /** Finals: the k-th finalist, once the organizer has confirmed who qualified (`options.finals.qualified`). */
+  | { type: 'qualified'; seed: number };
 
 export type BracketSide =
   | 'W' // winners bracket (or the only bracket in single elim)
@@ -52,7 +54,7 @@ export interface MatchTemplate {
   group?: string;
 }
 
-export type Format = 'single_elim' | 'double_elim' | 'round_robin' | 'swiss';
+export type Format = 'single_elim' | 'double_elim' | 'round_robin' | 'swiss' | 'groups';
 
 export interface Structure {
   format: Format;
@@ -104,6 +106,25 @@ export interface FormatOptions {
    * restructure; never set by hand.
    */
   swissPairings?: (SwissPair[] | null)[];
+  /** Groups: how many round-robin groups. Default: about 4 players per group. */
+  groupCount?: number;
+  /** Swiss, round robin and groups: the best players go on to a knockout final. */
+  finals?: FinalsOptions;
+}
+
+/**
+ * A knockout final after a points stage (a "top cut"). Its matches have ids starting with `F-`.
+ * The finalists are only known once the organizer confirms them (`qualified`), so
+ * the structure still only depends on format, entrant count and options.
+ */
+export interface FinalsOptions {
+  format: 'single_elim' | 'double_elim';
+  /** How many go through: in total, or from EACH group in the groups format. */
+  advance: number;
+  thirdPlaceMatch?: boolean;
+  grandFinal?: 'reset' | 'single';
+  /** Confirmed finalists, as entrant seeds (1-based) in finals seed order. Unset = finals not started. */
+  qualified?: number[];
 }
 
 /** Two seeds (1-based) paired in a swiss round. A second seed of 0 means a bye. */

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BYE, allowsDraws, applyEdit, winnerFromScores } from '../../core';
+  import { BYE, applyEdit, matchAllowsDraws, winnerFromScores } from '../../core';
   import type { Decision, ResolvedMatch, ResultInput, TournamentState, Winner } from '../../core';
   import type { Scoring } from '../lib/model';
 
@@ -21,7 +21,7 @@
   }
   let { m, tstate, title, names, numbers, scoring, canEdit, canReport = false, me, onsave, onreport, onclose }: Props = $props();
 
-  const allowDraw = allowsDraws(tstate.structure.format);
+  const allowDraw = matchAllowsDraws(m.template);
   /** A conflicted match whose players aren't decided any more can only be cleared. */
   const playable = m.p1 !== null && m.p1 !== BYE && m.p2 !== null && m.p2 !== BYE;
   const existing = m.result;

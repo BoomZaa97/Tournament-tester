@@ -1,5 +1,6 @@
 import { createTournament } from './create';
-import { lockSwissRounds } from './edit';
+import { allowsDraws, lockSwissRounds } from './edit';
+import { finalsSize } from './formats/finals';
 import { resolve } from './resolve';
 import type { EntrantId, Format, FormatOptions, MatchResult, SwissPair, TournamentState } from './types';
 
@@ -41,18 +42,26 @@ export function restructure(state: TournamentState, input: RestructureInput): Re
     const pairings = carrySwissPairings(state, entrants);
     if (pairings.length) options.swissPairings = pairings;
   }
+  if (options.finals?.qualified) {
+    // Finalists stay the same people. If one was removed, the organizer picks again.
+    const newSeed = new Map(entrants.map((e, i) => [e, i + 1]));
+    const moved = options.finals.qualified.map((s) => newSeed.get(state.entrants[s - 1]) ?? 0);
+    const { qualified: _, ...rest } = options.finals;
+    options.finals =
+      moved.every((s) => s > 0) && moved.length === finalsSize(format, entrants.length, options) ? { ...rest, qualified: moved } : rest;
+  }
   let next = createTournament(format, entrants, options);
 
   const oldResolved = resolve(state);
   const keyOf = (a: string, b: string, side: string, round: number) =>
-    [[a, b].sort().join('|'), side, format === 'round_robin' ? '' : round].join('#');
+    [[a, b].sort().join('|'), side, side === 'RR' ? '' : round].join('#');
 
   // Pool of old results waiting to be placed.
   const pool = new Map<string, { matchId: string; result: MatchResult }[]>();
   for (const m of oldResolved.values()) {
     if (m.status !== 'done') continue;
     const r = m.result!;
-    if (r.winner === 'draw' && format !== 'round_robin') continue; // can't carry into a bracket
+    if (r.winner === 'draw' && !allowsDraws(format)) continue; // can't carry into a bracket
     const k = keyOf(r.p1, r.p2, m.template.side, m.template.round);
     pool.set(k, [...(pool.get(k) ?? []), { matchId: m.template.id, result: r }]);
   }

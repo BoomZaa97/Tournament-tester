@@ -1,6 +1,8 @@
 import { BYE } from './types';
 import type { EntrantId, Format, ResolvedMatch, TournamentState } from './types';
 import { resolve } from './resolve';
+import { groupMembers } from './formats/groups';
+import { finalsSize } from './formats/finals';
 
 export interface Placement {
   entrant: EntrantId;
@@ -13,7 +15,7 @@ export interface Placement {
  * Each entrant ends at a "level" (how deep they got). Place = 1 + number of
  * entrants who got deeper or are still alive.
  */
-export function eliminationPlacements(state: TournamentState): Placement[] {
+export function eliminationPlacements(state: TournamentState, among: EntrantId[] = state.entrants): Placement[] {
   const resolved = resolve(state);
   const level = new Map<EntrantId, number>();
 
@@ -32,11 +34,11 @@ export function eliminationPlacements(state: TournamentState): Placement[] {
     if (winLevel !== undefined && m.winner && m.winner !== BYE) level.set(m.winner, winLevel);
   }
 
-  return state.entrants
+  return among
     .map((e) => {
       const lv = level.get(e);
       if (lv === undefined) return { entrant: e, place: null };
-      const above = state.entrants.filter((o) => o !== e && (level.get(o) ?? Infinity) > lv).length;
+      const above = among.filter((o) => o !== e && (level.get(o) ?? Infinity) > lv).length;
       return { entrant: e, place: above + 1 };
     })
     .sort((a, b) => (a.place ?? 0) - (b.place ?? 0));
@@ -80,11 +82,29 @@ export function swissStandings(state: TournamentState, opts: RoundRobinOptions =
   return roundRobinStandings(state, opts);
 }
 
-/** Points table for round robin and swiss. */
+/** Matches of the points stage (not the finals). */
+const isPointsMatch = (m: ResolvedMatch) => m.template.side === 'RR' || m.template.side === 'SW';
+
+/** Points table for round robin, swiss and groups (all groups together). Finals don't count. */
 export function roundRobinStandings(state: TournamentState, opts: RoundRobinOptions = {}): StandingRow[] {
+  const resolved = [...resolve(state).values()].filter(isPointsMatch);
+  return pointsTable(resolved, state.entrants, opts, state.structure.format);
+}
+
+/** One points table per group (groups format), by group label. */
+export function groupStandings(state: TournamentState, opts: RoundRobinOptions = {}): Map<string, StandingRow[]> {
+  const resolved = [...resolve(state).values()].filter(isPointsMatch);
+  const out = new Map<string, StandingRow[]>();
+  for (const [label, seeds] of groupMembers(state.entrants.length, state.options)) {
+    const members = seeds.map((s) => state.entrants[s - 1]);
+    out.set(label, pointsTable(resolved.filter((m) => m.template.group === label), members, opts, 'groups'));
+  }
+  return out;
+}
+
+function pointsTable(resolved: ResolvedMatch[], entrants: EntrantId[], opts: RoundRobinOptions, format: Format): StandingRow[] {
   const points = opts.points ?? { win: 3, draw: 1, loss: 0 };
-  const tiebreakers = opts.tiebreakers ?? defaultTiebreakers(state.structure.format);
-  const resolved = [...resolve(state).values()];
+  const tiebreakers = opts.tiebreakers ?? defaultTiebreakers(format);
   const done = resolved.filter((m) => m.status === 'done');
   const byes = resolved.filter((m) => m.status === 'bye' && m.template.side === 'SW' && m.winner && m.winner !== BYE);
 
@@ -113,7 +133,7 @@ export function roundRobinStandings(state: TournamentState, opts: RoundRobinOpti
     return rows;
   };
 
-  const all = tally(state.entrants, done);
+  const all = tally(entrants, done);
   for (const m of byes) {
     const row = all.get(m.winner!);
     if (!row) continue;
@@ -139,7 +159,7 @@ export function roundRobinStandings(state: TournamentState, opts: RoundRobinOpti
     return splitBy(group, key).flatMap((g) => breakTie(g, rest));
   };
 
-  const ordered = splitBy(state.entrants, (e) => all.get(e)!.points).flatMap((g) => breakTie(g, tiebreakers));
+  const ordered = splitBy(entrants, (e) => all.get(e)!.points).flatMap((g) => breakTie(g, tiebreakers));
   const out: StandingRow[] = [];
   let rank = 1;
   for (const g of ordered) {
@@ -147,6 +167,68 @@ export function roundRobinStandings(state: TournamentState, opts: RoundRobinOpti
     rank += g.length;
   }
   return out;
+}
+
+export interface FinalistSuggestion {
+  /** Who would go through, in finals seed order. */
+  finalists: EntrantId[];
+  /** The last one in and the first one out are tied: the organizer should decide. */
+  tieAtCut: boolean;
+}
+
+/**
+ * Who goes on to the finals, from the points stage standings.
+ * Swiss / round robin: the top N. Groups: the top N of each group, seeded by place
+ * and then group (A1, B1, A2, B2, ...), so group winners don't meet early.
+ */
+export function suggestFinalists(state: TournamentState, opts: RoundRobinOptions = {}): FinalistSuggestion {
+  const format = state.structure.format;
+  const size = finalsSize(format, state.entrants.length, state.options);
+  const tables = format === 'groups' ? [...groupStandings(state, opts).values()] : [roundRobinStandings(state, opts)];
+  const finalists: EntrantId[] = [];
+  const taken = tables.map(() => 0);
+  for (let place = 0; finalists.length < size; place++) {
+    let any = false;
+    tables.forEach((t, i) => {
+      if (finalists.length < size && t[place]) {
+        finalists.push(t[place].entrant);
+        taken[i]++;
+        any = true;
+      }
+    });
+    if (!any) break;
+  }
+  const tieAtCut = tables.some((t, i) => taken[i] > 0 && !!t[taken[i]] && t[taken[i]].rank === t[taken[i] - 1].rank);
+  return { finalists, tieAtCut };
+}
+
+/**
+ * Final placings for a tournament with finals: finalists by how far they got in the
+ * finals (null while still in), then everyone else by the points stage (in groups:
+ * by their place in the group). Null for everyone until the finals are confirmed.
+ */
+export function overallPlacements(state: TournamentState, opts: RoundRobinOptions = {}): Placement[] {
+  const qualified = state.options?.finals?.qualified;
+  if (!qualified) return state.entrants.map((entrant) => ({ entrant, place: null }));
+  const finalists = qualified.map((s) => state.entrants[s - 1]).filter(Boolean);
+  const inFinals = new Set(finalists);
+  const top = eliminationPlacements(state, finalists);
+
+  // Points-stage position of everyone else: rank in the table, or place in their group.
+  const position = new Map<EntrantId, number>();
+  if (state.structure.format === 'groups') {
+    for (const table of groupStandings(state, opts).values()) table.forEach((r) => position.set(r.entrant, r.rank));
+  } else {
+    for (const r of roundRobinStandings(state, opts)) position.set(r.entrant, r.rank);
+  }
+  const rest = state.entrants.filter((e) => !inFinals.has(e));
+  const others = rest
+    .map((e) => ({
+      entrant: e,
+      place: finalists.length + 1 + rest.filter((o) => position.get(o)! < position.get(e)!).length,
+    }))
+    .sort((a, b) => a.place - b.place);
+  return [...top, ...others];
 }
 
 /** Group by key, highest key first. Keeps seed order inside a group. */

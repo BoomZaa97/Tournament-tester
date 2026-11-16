@@ -38,6 +38,12 @@ export function resolve(state: TournamentState): Map<string, ResolvedMatch> {
         if (!pairing) return null;
         return pairing[src.index - 1]?.[src.slot - 1] ?? BYE;
       }
+      case 'qualified': {
+        const qualified = state.options?.finals?.qualified;
+        if (!qualified) return null; // finals not started yet
+        const seed = qualified[src.seed - 1];
+        return (seed && state.entrants[seed - 1]) || BYE;
+      }
     }
   };
 

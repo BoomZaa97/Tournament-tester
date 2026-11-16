@@ -6,4 +6,6 @@ export * from './restructure';
 export * from './standings';
 export { singleElimination, doubleElimination, bracketOrder } from './formats/elimination';
 export { roundRobin } from './formats/roundRobin';
+export { groups, groupMembers, groupCount, defaultGroupCount, maxGroups, GROUP_LABELS } from './formats/groups';
+export { finalsSize, withFinals, isFinalsMatch, hasPointsStage, FINALS_PREFIX } from './formats/finals';
 export { swiss, pairSwiss, swissRecord, swissRoundCount, swissDefaultRounds, swissMaxRounds } from './formats/swiss';

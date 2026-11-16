@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BYE } from '../../core';
+  import { BYE, isFinalsMatch } from '../../core';
   import type { Format, ResolvedMatch } from '../../core';
   import { describeSource, isByeMatch, roundName } from '../lib/model';
   import MatchCard from './MatchCard.svelte';
@@ -10,42 +10,52 @@
     names: Map<string, string>;
     seeds: Map<string, number>;
     numbers: Map<string, number>;
+    /** Points stage (rounds / groups) or the knockout finals after it. Plain brackets: 'points'. */
+    stage?: 'points' | 'finals';
     onselect?: (id: string) => void;
   }
-  let { format, resolved, names, seeds, numbers, onselect }: Props = $props();
+  let { format, resolved, names, seeds, numbers, stage = 'points', onselect }: Props = $props();
 
   let hover = $state<string | null>(null);
 
   interface Section {
     key: string;
     title: string;
+    /** Rounds of a points table (no connector lines). */
+    table: boolean;
     columns: { title: string; matches: ResolvedMatch[]; note?: string }[];
   }
 
   const sections = $derived.by<Section[]>(() => {
-    const all = [...resolved.values()];
+    const all = [...resolved.values()].filter((m) => isFinalsMatch(m.template) === (stage === 'finals'));
     const templates = all.map((m) => m.template);
-    const build = (key: string, title: string, side: string): Section => {
-      const ms = all.filter((m) => m.template.side === side);
+    const build = (key: string, title: string, side: string, group?: string): Section => {
+      const ms = all.filter((m) => m.template.side === side && (!group || m.template.group === group));
       const rounds = [...new Set(ms.map((m) => m.template.round))].sort((a, b) => a - b);
       return {
         key,
         title,
+        table: side === 'RR' || side === 'SW',
         columns: rounds
           .map((r) => {
             const col = ms.filter((m) => m.template.round === r).sort((a, b) => a.template.index - b.template.index);
             // swiss: a round is paired only once the round before it is finished
             const unpaired = side === 'SW' && col.every((m) => m.p1 === null);
             const note = unpaired ? `Paired when round ${r - 1} is finished` : undefined;
-            return { title: roundName(col[0].template, templates, format), matches: col, note };
+            const title = roundName(col[0].template, templates, format).replace(/^Group \w+ · /, '');
+            return { title, matches: col, note };
           })
           // a column made only of byes (e.g. Losers Round 1 with 6 players) is noise
           .filter((c) => c.matches.some((m) => !isByeMatch(m))),
       };
     };
-    if (format === 'round_robin') return [build('RR', '', 'RR')];
-    if (format === 'swiss') return [build('SW', '', 'SW')];
-    if (format === 'single_elim') {
+    if (stage === 'points' && format === 'groups') {
+      const labels = [...new Set(all.map((m) => m.template.group!))];
+      return labels.map((g) => build(`G-${g}`, `Group ${g}`, 'RR', g));
+    }
+    if (stage === 'points' && format === 'round_robin') return [build('RR', '', 'RR')];
+    if (stage === 'points' && format === 'swiss') return [build('SW', '', 'SW')];
+    if (!all.some((m) => m.template.side === 'GF')) {
       const s = [build('W', '', 'W')];
       if (all.some((m) => m.template.side === '3P')) s.push(build('3P', '3rd place match', '3P'));
       return s;
@@ -62,7 +72,7 @@
     const out: typeof lines = {};
     for (const s of sections) {
       const box = containers[s.key];
-      if (!box || s.key === 'RR' || s.key === 'SW') continue;
+      if (!box || s.table) continue;
       const origin = box.getBoundingClientRect();
       const pos = new Map<string, DOMRect>();
       box.querySelectorAll<HTMLElement>('[data-mid]').forEach((el) => {
@@ -112,7 +122,7 @@
 {#each sections as s (s.key)}
   <section class="section">
     {#if s.title}<h3 class="title">{s.title}</h3>{/if}
-    <div class="scroller" bind:this={containers[s.key]} class:rr={s.key === 'RR' || s.key === 'SW'}>
+    <div class="scroller" bind:this={containers[s.key]} class:rr={s.table}>
       <svg class="lines" aria-hidden="true">
         {#each lines[s.key] ?? [] as l}
           <path d={l.d} class:on={l.on} />

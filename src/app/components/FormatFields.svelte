@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { swissDefaultRounds, swissMaxRounds, swissRoundCount } from '../../core';
-  import type { Format, FormatOptions, Tiebreaker } from '../../core';
+  import {
+    defaultGroupCount, finalsSize, groupCount, maxGroups, swissDefaultRounds, swissMaxRounds, swissRoundCount,
+  } from '../../core';
+  import type { FinalsOptions, Format, FormatOptions, Tiebreaker } from '../../core';
   import { tiebreakersFor } from '../lib/model';
   import type { Scoring } from '../lib/model';
 
@@ -18,6 +20,7 @@
     { id: 'double_elim', name: 'Double elimination', blurb: 'Out after two losses. Losers bracket included.' },
     { id: 'round_robin', name: 'Round robin', blurb: 'Everyone plays everyone. Best record wins.' },
     { id: 'swiss', name: 'Swiss', blurb: 'A set number of rounds. Each round you play someone on the same score. No one is knocked out.' },
+    { id: 'groups', name: 'Groups', blurb: 'Players are split into small groups. Everyone plays everyone in their group, like the World Cup.' },
   ];
 
   const TB_LABEL: Record<Tiebreaker, string> = {
@@ -36,6 +39,23 @@
     else delete next.swissRounds;
     options = next;
   }
+  function setGroups(v: number) {
+    const next = { ...options };
+    if (Number.isFinite(v) && v > 0) next.groupCount = Math.round(v);
+    else delete next.groupCount;
+    options = next;
+  }
+
+  // ---- finals (top cut) after a points stage
+  function setFinals(f: FinalsOptions | undefined) {
+    const next = { ...options };
+    if (f) next.finals = f;
+    else delete next.finals;
+    options = next;
+  }
+  const patchFinals = (p: Partial<FinalsOptions>) => setFinals({ ...options.finals!, ...p });
+  const finalists = $derived(finalsSize(format, n, options));
+
   const points = $derived(scoring.points ?? { win: 3, draw: 1, loss: 0 });
 
   function setPoints(k: 'win' | 'draw' | 'loss', v: number) {
@@ -94,11 +114,86 @@
         Each round is paired when the one before it is finished.
       </p>
     {:else}
+      {#if format === 'groups'}
+        <label class="field rounds">
+          <span>Groups</span>
+          <input
+            type="number"
+            inputmode="numeric"
+            min="1"
+            max={maxGroups(n)}
+            placeholder={String(defaultGroupCount(n))}
+            value={options.groupCount ?? ''}
+            oninput={(e) => setGroups(e.currentTarget.valueAsNumber)}
+          />
+        </label>
+        <p class="small muted hint">
+          {#if entrantCount >= 2}
+            {groupCount(n, options)} groups of about {Math.round(n / groupCount(n, options))}. Leave blank for groups of about 4.
+          {:else}
+            Leave blank for groups of about 4.
+          {/if}
+          Seeds are spread so each group gets a fair mix.
+        </p>
+      {/if}
       <label class="check">
         <input type="checkbox" checked={!!options.doubleRound} onchange={(e) => (options = { ...options, doubleRound: e.currentTarget.checked })} />
-        Play everyone twice
+        Play everyone {format === 'groups' ? 'in their group ' : ''}twice
       </label>
     {/if}
+    <div class="finals">
+      <label class="check">
+        <input
+          type="checkbox"
+          checked={!!options.finals}
+          onchange={(e) => setFinals(e.currentTarget.checked ? { format: 'single_elim', advance: format === 'groups' ? 2 : 4 } : undefined)}
+        />
+        Top players go on to a knockout final
+      </label>
+      {#if options.finals}
+        <div class="finalsopts">
+          <label class="field rounds">
+            <span>{format === 'groups' ? 'From each group' : 'How many'}</span>
+            <input
+              type="number"
+              inputmode="numeric"
+              min="1"
+              value={options.finals.advance}
+              oninput={(e) => {
+                const v = e.currentTarget.valueAsNumber;
+                if (Number.isFinite(v) && v >= 1) patchFinals({ advance: Math.round(v) });
+              }}
+            />
+          </label>
+          <label class="field">
+            <span>Finals format</span>
+            <select value={options.finals.format} onchange={(e) => patchFinals({ format: e.currentTarget.value as FinalsOptions['format'] })}>
+              <option value="single_elim">Single elimination</option>
+              <option value="double_elim">Double elimination</option>
+            </select>
+          </label>
+        </div>
+        {#if options.finals.format === 'single_elim'}
+          <label class="check">
+            <input type="checkbox" checked={!!options.finals.thirdPlaceMatch} onchange={(e) => patchFinals({ thirdPlaceMatch: e.currentTarget.checked })} />
+            Play a 3rd place match
+          </label>
+        {:else}
+          <label class="check">
+            <input
+              type="checkbox"
+              checked={(options.finals.grandFinal ?? 'reset') === 'reset'}
+              onchange={(e) => patchFinals({ grandFinal: e.currentTarget.checked ? 'reset' : 'single' })}
+            />
+            Grand final reset
+          </label>
+        {/if}
+        <p class="small muted hint">
+          {#if entrantCount >= 2}{finalists} players go to the finals.{/if}
+          When the {format === 'groups' ? 'groups are' : 'rounds are'} finished, you check who qualified (and settle any ties), then start the finals.
+        </p>
+      {/if}
+    </div>
     <div class="pts">
       <span class="label">Points</span>
       {#each [['win', 'Win'], ['draw', 'Draw'], ['loss', 'Loss']] as [k, label]}
@@ -148,6 +243,9 @@
   .pt { display: grid; gap: 2px; width: 72px; }
   .tbs { list-style: none; padding: 0; margin: 4px 0 0; }
   .rounds { max-width: 120px; }
+  .finals { display: grid; gap: 10px; padding: 12px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .finalsopts { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+  .finalsopts .rounds { width: 120px; }
   .hint { margin: -6px 0 0; }
   .tbs li { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding: 2px 0; max-width: 320px; }
 </style>

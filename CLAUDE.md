@@ -6,7 +6,7 @@ Made because Challonge made fixing wrong results hard.
 ## Owner's goals (from the planning chat)
 
 - Universal: any game, solo or teams, any scoring (incl. lower-score-wins).
-- All formats eventually: single elim, double elim, round robin, Swiss (done), groups → playoffs (to do).
+- All formats eventually: single elim, double elim, round robin, Swiss, groups, and finals after any points stage (all done).
 - Owner + others can view; owner (and helpers with the admin key) edit.
 - Works on phones and desktop. Low maintenance, no paid server.
 - Design must NOT look AI-generated: plain "printed bracket sheet" look. Paper background, ink text,
@@ -94,9 +94,22 @@ npm run build
 
 Push to `main` = deploy. Check UI changes in a real browser (Playwright, desktop + iPhone size, light + dark).
 
+### Groups and finals (`formats/groups.ts`, `formats/finals.ts`)
+
+- Groups: snake seeding into `groupCount` round-robin groups (default ~4 per group, ≥2 each); ids `A-RR1-1`,
+  side `RR` with `template.group`. Tables per group: `groupStandings`.
+- Finals ("top cut") after any points stage (swiss / round robin / groups): `options.finals = {format, advance,
+  thirdPlaceMatch?, grandFinal?, qualified?}`. `advance` is per group for groups. The finals bracket is a normal
+  single/double elim with ids prefixed `F-` and `{type:'qualified', seed:k}` sources; `resolve()` leaves them
+  null until `qualified` (entrant seeds in finals seed order) is set by the organizer (FinalsPanel → logged with
+  `restore`, undoable). Frozen like Swiss rounds: editing stage 1 later doesn't move finalists (the panel warns).
+- `suggestFinalists` (top N; groups: by place then group, A1 B1 A2 B2) + `tieAtCut`. `overallPlacements` =
+  finalists by finals result, then the rest by stage-1 position. Points tables never count finals matches.
+- Draws per match: `matchAllowsDraws(template)` (sides RR/SW only). Code.gs `report` mirrors this (`F-` ids never).
+- `restructure` carries `qualified` by player; if a finalist is removed the finals go back to unconfirmed.
+
 ## Next up (agreed roadmap)
 
-1. Groups → playoffs (two stages; playoffs seeded from group standings).
-2. Maybe for Swiss: drop a player from future rounds without deleting their past results; top-cut playoff.
-3. Maybe: rate-limit PIN guesses; let players confirm/dispute an opponent's report.
-4. Later: Discord announcements, import from Challonge, Elo.
+1. Maybe for Swiss: drop a player from future rounds without deleting their past results.
+2. Maybe: rate-limit PIN guesses; let players confirm/dispute an opponent's report.
+3. Later: Discord announcements, import from Challonge, Elo.

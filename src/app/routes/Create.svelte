@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createTournament, resolve } from '../../core';
+  import { createTournament, FINALS_PREFIX, resolve } from '../../core';
   import type { Format, FormatOptions } from '../../core';
   import Bracket from '../components/Bracket.svelte';
   import EntrantEditor from '../components/EntrantEditor.svelte';
@@ -120,6 +120,10 @@
         </div>
         {#if preview}
           <Bracket {format} resolved={preview.resolved} names={preview.names} seeds={preview.seeds} numbers={preview.numbers} />
+          {#if options.finals && [...preview.resolved.keys()].some((k) => k.startsWith(FINALS_PREFIX))}
+            <h3 class="finalshead">Finals</h3>
+            <Bracket {format} stage="finals" resolved={preview.resolved} names={preview.names} seeds={preview.seeds} numbers={preview.numbers} />
+          {/if}
         {:else}
           <div class="empty">Add two or more entrants and the bracket appears here.</div>
         {/if}
@@ -134,6 +138,7 @@
   .grid { display: grid; grid-template-columns: minmax(0, 360px) minmax(0, 1fr); gap: 32px; align-items: start; }
   .side { display: grid; gap: 14px; }
   .preview { min-width: 0; position: sticky; top: 76px; }
+  .finalshead { margin: 24px 0 4px; }
   .ph { justify-content: space-between; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 2px solid var(--ink); }
   .intro { margin: -12px 0 18px; max-width: 640px; }
   .submit { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 6px; }

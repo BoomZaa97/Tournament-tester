@@ -1,4 +1,7 @@
-import { BYE, createTournament, defaultTiebreakers, isComplete, lockSwissRounds, roundRobinStandings } from '../../core';
+import {
+  BYE, createTournament, defaultTiebreakers, eliminationPlacements, finalsSize, hasPointsStage, isComplete, lockSwissRounds,
+  overallPlacements, roundRobinStandings,
+} from '../../core';
 import type {
   Change, EntrantId, Format, FormatOptions, MatchResult, MatchTemplate, ResolvedMatch, Source, Tiebreaker, TournamentState,
 } from '../../core';
@@ -59,11 +62,35 @@ export const FORMAT_LABEL: Record<Format, string> = {
   double_elim: 'Double elimination',
   round_robin: 'Round robin',
   swiss: 'Swiss',
+  groups: 'Groups',
 };
 
 /** Formats ranked by a points table (round robin, swiss) rather than a bracket. */
 export function isTableFormat(format: Format): boolean {
-  return format === 'round_robin' || format === 'swiss';
+  return hasPointsStage(format);
+}
+
+/** This tournament ends with a knockout final after its points stage. */
+export function hasFinals(doc: Pick<TournamentDoc, 'format' | 'entrants' | 'options'>): boolean {
+  return finalsSize(doc.format, doc.entrants.length, doc.options) > 0;
+}
+
+/** Name of the points stage tab / section. */
+export function pointsStageName(format: Format): string {
+  return format === 'groups' ? 'Groups' : 'Rounds';
+}
+
+/**
+ * Everyone's final place (null = not decided yet), from the finals if there are any,
+ * else the points table (only once finished) or the bracket.
+ */
+export function finalPlaces(doc: TournamentDoc, tstate: TournamentState): Map<EntrantId, number | null> {
+  if (hasFinals(doc)) return new Map(overallPlacements(tstate, standingOptions(doc)).map((p) => [p.entrant, p.place]));
+  if (isTableFormat(doc.format)) {
+    const finished = statusOf(doc) === 'finished';
+    return new Map(tableStandings(doc, tstate).map((r) => [r.entrant, finished ? r.rank : null]));
+  }
+  return new Map(eliminationPlacements(tstate).map((p) => [p.entrant, p.place]));
 }
 
 /** The admin's tiebreaker order, fitted to the format (Buchholz only means something in swiss). */
@@ -75,7 +102,12 @@ export function tiebreakersFor(format: Format, scoring: Scoring): Tiebreaker[] {
 
 /** Points table for round robin / swiss, using the tournament's own scoring. */
 export function tableStandings(doc: Pick<TournamentDoc, 'format' | 'scoring'>, tstate: TournamentState) {
-  return roundRobinStandings(tstate, { points: doc.scoring.points, tiebreakers: tiebreakersFor(doc.format, doc.scoring) });
+  return roundRobinStandings(tstate, standingOptions(doc));
+}
+
+/** Points and tiebreakers for this tournament's tables. */
+export function standingOptions(doc: Pick<TournamentDoc, 'format' | 'scoring'>) {
+  return { points: doc.scoring.points, tiebreakers: tiebreakersFor(doc.format, doc.scoring) };
 }
 
 export function newId(): string {
@@ -102,6 +134,7 @@ export function roundName(t: MatchTemplate, all: MatchTemplate[], format: Format
   const lastOf = (side: string) => Math.max(...all.filter((m) => m.side === side).map((m) => m.round));
   switch (t.side) {
     case 'RR':
+      return t.group ? `Group ${t.group} · Round ${t.round}` : `Round ${t.round}`;
     case 'SW':
       return `Round ${t.round}`;
     case '3P':
@@ -112,7 +145,7 @@ export function roundName(t: MatchTemplate, all: MatchTemplate[], format: Format
       return t.round === lastOf('L') ? 'Losers Final' : `Losers Round ${t.round}`;
     case 'W': {
       const fromEnd = lastOf('W') - t.round;
-      if (format === 'double_elim') {
+      if (format === 'double_elim' || all.some((m) => m.side === 'GF')) {
         return fromEnd === 0 ? 'Winners Final' : fromEnd === 1 ? 'Winners Semis' : `Winners Round ${t.round}`;
       }
       return ['Final', 'Semifinals', 'Quarterfinals'][fromEnd] ?? `Round ${t.round}`;
@@ -134,6 +167,7 @@ export function matchNumbers(resolved: Map<string, ResolvedMatch>): Map<string, 
 
 /** "Winner of 5" / "Loser of 2", looking through bye matches to the real source. */
 export function describeSource(src: Source, resolved: Map<string, ResolvedMatch>, numbers: Map<string, number>): string {
+  if (src.type === 'qualified') return `Finalist ${src.seed}`;
   if (src.type !== 'winner' && src.type !== 'loser') return 'TBD';
   const from = resolved.get(src.match);
   if (from && isByeMatch(from) && src.type === 'winner') {
