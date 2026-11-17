@@ -524,6 +524,29 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.fetched).toHaveLength(n);
     });
 
+    it('Challonge: fetched with the given key, links of every shape, clear errors, nothing stored', () => {
+      const g = fakeGoogle();
+      const KEY = 'abcdefghij0123456789';
+      g.onFetch((url) => (url.includes('/nope.json') ? { code: 404, body: '' } : { code: 200, body: JSON.stringify({ tournament: { name: 'From Challonge', tournament_type: 'swiss' } }) }));
+      expect(g.post({ action: 'challonge', ref: 'https://challonge.com/abc123', apiKey: KEY })).toEqual({ challonge: { name: 'From Challonge', tournament_type: 'swiss' } });
+      expect(g.fetched[0].url).toBe(`https://api.challonge.com/v1/tournaments/abc123.json?include_participants=1&include_matches=1&api_key=${KEY}`);
+      g.post({ action: 'challonge', ref: 'https://myclub.challonge.com/th/weekly_5/standings', apiKey: KEY });
+      expect(g.fetched[1].url).toContain('/tournaments/myclub-weekly_5.json');
+      g.post({ action: 'challonge', ref: 'www.challonge.com/en/xyz', apiKey: KEY });
+      expect(g.fetched[2].url).toContain('/tournaments/xyz.json');
+      g.post({ action: 'challonge', ref: 'plain_id', apiKey: KEY });
+      expect(g.fetched[3].url).toContain('/tournaments/plain_id.json');
+
+      expect(g.post({ action: 'challonge', ref: 'https://challonge.com/nope', apiKey: KEY }).error).toMatch(/no tournament/);
+      expect(g.post({ action: 'challonge', ref: 'not a link!', apiKey: KEY }).error).toMatch(/Paste the Challonge link/);
+      expect(g.post({ action: 'challonge', ref: 'abc', apiKey: 'x' }).error).toMatch(/API key/);
+      g.onFetch(() => ({ code: 401, body: '' }));
+      expect(g.post({ action: 'challonge', ref: 'abc', apiKey: KEY }).error).toMatch(/didn't accept that API key/);
+      expect(g.fetched).toHaveLength(6);
+      // the key is never written anywhere in the sheet
+      expect(JSON.stringify(g.sheets.dump())).not.toContain(KEY);
+    });
+
     it('Discord: a confirmed player result is posted, a disputed one is not', () => {
       const g = fakeGoogle();
       const two = { ...open, id: 'c1', format: 'single_elim', entrants: open.entrants.slice(0, 2), signup: false };

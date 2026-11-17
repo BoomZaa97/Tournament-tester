@@ -159,6 +159,19 @@ Push to `main` = deploy. Check UI changes in a real browser (Playwright, desktop
 - Draws per match: `matchAllowsDraws(template)` (sides RR/SW only). Code.gs `report` mirrors this (`F-` ids never).
 - `restructure` carries `qualified` by player; if a finalist is removed the finals go back to unconfirmed.
 
+### Import from Challonge
+
+- Browsers can't call Challonge's API (no CORS), so Code.gs `challonge` action (before the lock, reads no sheet) fetches
+  `api.challonge.com/v1/tournaments/<id>.json?include_participants=1&include_matches=1&api_key=…` with the organizer's own
+  key; the key is passed through only (never stored/logged). `challongeId` accepts plain ids, localized paths and
+  `org.challonge.com/x` (→ `org-x`). Fake Google answers via `onFetch`; `sheet:fake` serves a demo 8-player bracket
+  (key `bad-key-0000` → 401, link `/missing` → 404).
+- `lib/challonge.ts` `fromChallonge(t, known)`: entrants by Challonge seed (duplicate names get " (2)"; known names reuse ids),
+  format map (single/double elim, round robin incl. double round, Swiss; others = players only + note). Elim/RR results
+  by replaying `resolve()` and taking the next unused Challonge match between the same two players (id order); Swiss keeps
+  Challonge's pairings as frozen `swissPairings` (results `S{r}-{i}` in Challonge order). Unplaceable matches → `skipped`.
+  Scores: one set = the score, several sets = sets won. `components/ChallongeImport.svelte` on the Create page (sheets mode).
+
 ### Venue features (join codes, waitlist, check-in, drop-outs, confirmations)
 
 - Old-script compatibility: `SheetsStore.call` turns "Unknown action" into `UPDATE_SCRIPT` ("The site owner needs to update
@@ -199,4 +212,4 @@ Push to `main` = deploy. Check UI changes in a real browser (Playwright, desktop
 
 ## Next up (agreed roadmap)
 
-1. Import from Challonge.
+Everything agreed is done. Ask the owner what's next.

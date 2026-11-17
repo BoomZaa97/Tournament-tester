@@ -2,6 +2,7 @@
   import { createTournament, FINALS_PREFIX, resolve } from '../../core';
   import type { Format, FormatOptions } from '../../core';
   import Bracket from '../components/Bracket.svelte';
+  import ChallongeImport from '../components/ChallongeImport.svelte';
   import EntrantEditor from '../components/EntrantEditor.svelte';
   import FormatFields from '../components/FormatFields.svelte';
   import TierPicker from '../components/TierPicker.svelte';
@@ -87,6 +88,7 @@
       You'll be the organizer: this device can edit the tournament. You can give helpers a link to edit it too.
     </p>
   {/if}
+  {#if app.store.challonge}<ChallongeImport {known} />{/if}
     <div class="grid">
       <form class="side" onsubmit={(e) => { e.preventDefault(); create(); }}>
         <label class="field">

@@ -88,6 +88,9 @@ function doPost(e) {
       return { admin: isAdmin, organizer: !!row && isOrganizer(body, row) };
     }
 
+    // reads nothing from the sheet: no need to wait for the lock
+    if (body.action === 'challonge') return fetchChallonge(body);
+
     var lock = LockService.getScriptLock();
     lock.waitLock(20000);
     try {
@@ -690,6 +693,47 @@ function postDiscord(url, lines) {
   } catch (e) {
     return false;
   }
+}
+
+/**
+ * Import from Challonge: the site can't call Challonge from the browser (Challonge doesn't allow
+ * it), so this script fetches the tournament with the organizer's own Challonge API key
+ * (challonge.com → Settings → Developer API). The key is only passed through: never stored or logged.
+ * The site turns Challonge's data into a tournament and saves it like any new one.
+ */
+function challongeId(ref) {
+  ref = String(ref || '').trim();
+  var m = ref.match(/^(?:https?:\/\/)?(?:www\.)?(?:([\w-]+)\.)?challonge\.com\/(?:[a-z]{2}(?:_[A-Za-z]{2})?\/)?([\w-]+)/i);
+  if (m) return m[1] && m[1].toLowerCase() !== 'www' ? m[1] + '-' + m[2] : m[2];
+  if (/^[\w-]{1,80}$/.test(ref)) return ref;
+  throw new Error('Paste the Challonge link, like https://challonge.com/abc123');
+}
+
+function fetchChallonge(body) {
+  var id = challongeId(body.ref);
+  var key = String(body.apiKey || '').trim();
+  if (!/^[\w-]{10,80}$/.test(key)) throw new Error('Paste your Challonge API key (challonge.com → Settings → Developer API).');
+  var url =
+    'https://api.challonge.com/v1/tournaments/' + encodeURIComponent(id) +
+    '.json?include_participants=1&include_matches=1&api_key=' + encodeURIComponent(key);
+  var res;
+  try {
+    res = UrlFetchApp.fetch(url, { method: 'get', muteHttpExceptions: true });
+  } catch (e) {
+    throw new Error("Couldn't reach Challonge. Try again in a minute.");
+  }
+  var code = res.getResponseCode();
+  if (code === 401) throw new Error("Challonge didn't accept that API key.");
+  if (code === 404) throw new Error('Challonge has no tournament at that link (or your key can’t see it).');
+  if (code < 200 || code >= 300) throw new Error('Challonge answered with an error (' + code + '). Try again later.');
+  var json;
+  try {
+    json = JSON.parse(res.getContentText());
+  } catch (e) {
+    throw new Error('Challonge sent something unexpected.');
+  }
+  if (!json || !json.tournament) throw new Error('Challonge sent something unexpected.');
+  return { challonge: json.tournament };
 }
 
 function bump(t) {

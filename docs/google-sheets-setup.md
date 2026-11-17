@@ -68,7 +68,11 @@ If you already made tournaments in your browser before connecting, use **Setting
 ## Updating the script later
 
 If `Code.gs` changes: paste the new version, then **Deploy → Manage deployments → ✏️ edit → Version: New version → Deploy**.
-The URL stays the same. New columns are added to the tabs by themselves on the next save:
+The URL stays the same. Since the Discord announcements and the Challonge import, the script talks to other websites,
+so Google asks once for a new permission ("Connect to an external service"): choose your account → Advanced → Go to the
+project (unsafe) → Allow. It only ever contacts discord.com (your webhook) and api.challonge.com (imports).
+
+New columns are added to the tabs by themselves on the next save:
 
 | Tab | Column | What |
 |---|---|---|

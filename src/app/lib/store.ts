@@ -3,6 +3,7 @@ import { DeviceCache } from './cache';
 import type { CachedDoc } from './cache';
 import { cleanCode, makeCode, UPDATE_SCRIPT } from './model';
 import type { Player, TournamentDoc } from './model';
+import type { ChTournament } from './challonge';
 
 export class VersionConflictError extends Error {
   constructor() {
@@ -72,6 +73,8 @@ export interface Store {
   confirm?(id: string, matchId: string, pin: string, ok: boolean, matchNo?: number, announce?: string[]): Promise<TournamentDoc>;
   /** Organizer: connect the tournament to a Discord channel (webhook link), or disconnect (''). Returns whether it's connected. */
   discord?(id: string, url: string): Promise<boolean>;
+  /** A Challonge tournament as Challonge's API returns it (fetched by the Google script; the key is never stored). */
+  challonge?(ref: string, apiKey: string): Promise<ChTournament>;
   /** A player drops out of a running tournament with their PIN. */
   drop?(id: string, pin: string): Promise<TournamentDoc>;
   /** Organizer/admin only: every entrant's PIN, by player id. */
@@ -569,6 +572,11 @@ export class SheetsStore implements Store {
   async discord(id: string, url: string) {
     const r = await this.call<{ discord: boolean }>('POST', { action: 'discord', id, url, orgKey: orgKeyFor(id) ?? '' });
     return r.discord;
+  }
+
+  async challonge(ref: string, apiKey: string) {
+    const r = await this.call<{ challonge: ChTournament }>('POST', { action: 'challonge', ref, apiKey });
+    return r.challonge;
   }
 
   async drop(id: string, pin: string) {

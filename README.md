@@ -21,6 +21,7 @@ Free tournament brackets for any game, where any result can be edited later with
   - **Drop out:** a player (with their PIN) or the organizer can drop someone mid-event. They keep their results; their remaining matches are walkovers.
   - **Confirm scores:** after a player reports a score, their opponent confirms or disputes it. Disputes are flagged for the organizer.
   - **Discord announcements:** paste a channel's webhook link (Edit tab → Discord announcements) and the start, every settled result, the finals and the champion are posted there.
+- **Import from Challonge:** New tournament → Import from Challonge. Paste the tournament's link and your Challonge API key (challonge.com → Settings → Developer API; used once, never saved). Players and results come over (single/double elimination, round robin, Swiss); anything that doesn't fit is listed so you can enter it by hand.
 - **Match history:** player pages show W–L record, win rate, titles, head-to-head, and every match across all tournaments
 - **Works on phones:** big buttons for entering scores, and it can be added to your home screen
 - **Costs nothing:** a static site on GitHub Pages plus a Google Sheet you own. No server to run.
@@ -69,4 +70,4 @@ npm run build     # build the site into dist/
 - [x] Rankings (rating + points, majors / semi-majors), player profiles, verified names
 - [x] Removed players keep their PIN if they're added back
 - [x] Discord announcements
-- [ ] Import from Challonge
+- [x] Import from Challonge
