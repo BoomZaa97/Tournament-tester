@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { TournamentDoc } from '../lib/model';
+  import Verified from './Verified.svelte';
 
   interface Props {
     doc: TournamentDoc;
@@ -30,7 +31,7 @@
     {#each doc.entrants as e, i (e.id)}
       {@const dropped = out.has(i + 1)}
       <li class:dropped>
-        <span class="name">{names.get(e.id) ?? e.name}</span>
+        <span class="name">{names.get(e.id) ?? e.name}<Verified id={e.id} /></span>
         {#if dropped}<span class="small tag">Dropped</span>{/if}
         <button class="small" class:danger={!dropped} disabled={busy} onclick={() => toggle(e.id, !dropped)}>
           {dropped ? 'Bring back' : 'Drop'}

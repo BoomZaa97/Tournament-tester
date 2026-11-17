@@ -3,6 +3,7 @@
   import type { Format, ResolvedMatch, StandingRow } from '../../core';
   import { describeSource, isByeMatch, roundName } from '../lib/model';
   import MatchCard from './MatchCard.svelte';
+  import Verified from './Verified.svelte';
 
   interface Props {
     format: Format;
@@ -145,7 +146,7 @@
           onpointerleave={() => (hover = null)}
         >
           <td class="num rank">{r.rank}</td>
-          <td class="nm"><a href="#/p/{r.entrant}">{names.get(r.entrant)}</a></td>
+          <td class="nm"><a href="#/p/{r.entrant}">{names.get(r.entrant)}</a><Verified id={r.entrant} /></td>
           <td class="num">{r.wins}</td>
           {#if draws}<td class="num">{r.draws}</td>{/if}
           <td class="num">{r.losses}</td>

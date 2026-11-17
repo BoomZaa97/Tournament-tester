@@ -27,7 +27,7 @@ export interface LogEntry {
   summary: string;
   changes: Change[];
   /** For tournament edits (entrants/format): the previous setup, so it can be undone. */
-  restore?: Pick<TournamentDoc, 'name' | 'game' | 'format' | 'options' | 'scoring' | 'entrants' | 'results'> & { category?: string };
+  restore?: Pick<TournamentDoc, 'name' | 'game' | 'format' | 'options' | 'scoring' | 'entrants' | 'results'> & { category?: string; tier?: Tier };
   undone?: boolean;
 }
 
@@ -39,6 +39,16 @@ export interface Scoring {
   tiebreakers?: Tiebreaker[];
 }
 
+/** Event size. Majors and semi-majors are worth more ranking points. */
+export type Tier = 'major' | 'semi' | 'small';
+export const TIERS: Tier[] = ['major', 'semi', 'small'];
+export const TIER_LABEL: Record<Tier, string> = { major: 'Major', semi: 'Semi-major', small: 'Small event' };
+/** Placement points are multiplied by this. */
+export const TIER_WEIGHT: Record<Tier, number> = { major: 2, semi: 1.5, small: 1 };
+export function tierOf(t: { tier?: string }): Tier {
+  return t.tier === 'major' || t.tier === 'semi' ? t.tier : 'small';
+}
+
 /** Everything we store about one tournament. The bracket itself is never stored. */
 export interface TournamentDoc {
   id: string;
@@ -46,6 +56,8 @@ export interface TournamentDoc {
   game: string;
   /** Optional division inside the game (Open, U18, Doubles…): rankings can be split by it. */
   category?: string;
+  /** How big the event is: majors and semi-majors give more ranking points. Unset = small. */
+  tier?: Tier;
   format: Format;
   options: FormatOptions;
   scoring: Scoring;
@@ -159,7 +171,7 @@ export const UPDATE_SCRIPT = 'The site owner needs to update the Google script f
 /** The setup before a change, so the change can be undone from the log. */
 export function restorePoint(doc: TournamentDoc): NonNullable<LogEntry['restore']> {
   const { name, game, category, format, options, scoring, entrants, results } = doc;
-  return { name, game, category: category ?? '', format, options, scoring, entrants, results };
+  return { name, game, category: category ?? '', tier: tierOf(doc), format, options, scoring, entrants, results };
 }
 
 /**

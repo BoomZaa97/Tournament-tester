@@ -4,14 +4,16 @@
   import Bracket from '../components/Bracket.svelte';
   import EntrantEditor from '../components/EntrantEditor.svelte';
   import FormatFields from '../components/FormatFields.svelte';
+  import TierPicker from '../components/TierPicker.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import { emptyDoc, isByeMatch, matchNumbers } from '../lib/model';
-  import type { Player, Row, Scoring } from '../lib/model';
+  import type { Player, Row, Scoring, Tier } from '../lib/model';
   import { rowsToPlayers } from '../lib/players';
 
   let name = $state('');
   let game = $state('');
   let category = $state('');
+  let tier = $state<Tier>('small');
   let format = $state<Format>('single_elim');
   let options = $state<FormatOptions>({});
   let scoring = $state<Scoring>({});
@@ -26,6 +28,7 @@
 
   app.store.loadAll().then((d) => {
     known = d.players;
+    app.noteVerified(d.players);
     games = [...new Set(d.tournaments.map((t) => t.game).filter(Boolean))];
     categories = [...new Set(d.tournaments.map((t) => t.category ?? '').filter(Boolean))];
   });
@@ -63,7 +66,7 @@
     saving = true;
     try {
       const { entrants, created } = rowsToPlayers(rows, known);
-      const doc = { ...emptyDoc(), name: name.trim(), game: game.trim(), category: category.trim() || undefined, format, options, scoring, entrants, signup: shared && signup };
+      const doc = { ...emptyDoc(), name: name.trim(), game: game.trim(), category: category.trim() || undefined, tier, format, options, scoring, entrants, signup: shared && signup };
       const saved = await app.store.save(doc, created);
       app.notify(shared ? 'Tournament created. You are its organizer on this device.' : 'Tournament created');
       app.go(`t/${saved.id}`);
@@ -100,6 +103,7 @@
           <input bind:value={category} placeholder="None" list="known-categories" maxlength="40" />
           <datalist id="known-categories">{#each categories as c}<option value={c}></option>{/each}</datalist>
         </label>
+        <TierPicker bind:tier />
 
         <FormatFields bind:format bind:options bind:scoring entrantCount={names.length} />
 

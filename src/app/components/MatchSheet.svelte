@@ -2,6 +2,7 @@
   import { BYE, applyEdit, matchAllowsDraws, winnerFromScores } from '../../core';
   import type { Decision, ResolvedMatch, ResultInput, TournamentState, Winner } from '../../core';
   import type { Scoring } from '../lib/model';
+  import Verified from './Verified.svelte';
 
   interface Props {
     m: ResolvedMatch;
@@ -207,7 +208,7 @@
       {#each [[1, n1, 'p1'], [2, n2, 'p2']] as [i, name, side] (side)}
         <div class="side" class:win={winner === side}>
           <button class="pick" onclick={() => { winner = side as Winner; winnerTouched = true; }} aria-pressed={winner === side}>
-            <span class="pname">{name}</span>
+            <span class="pname">{name}<Verified id={(side === 'p1' ? m.p1 : m.p2) as string} /></span>
             <span class="tag">{winner === side ? 'Winner' : 'Set winner'}</span>
           </button>
           {#if !forfeit}

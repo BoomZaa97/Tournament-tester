@@ -1,13 +1,14 @@
 import { resolve } from '../../core';
 import type { EntrantId } from '../../core';
-import { finalPlaces, matchNumbers, statusOf, toState } from './model';
-import type { Player, TournamentDoc } from './model';
+import { finalPlaces, matchNumbers, statusOf, TIER_WEIGHT, tierOf, toState } from './model';
+import type { Player, Tier, TournamentDoc } from './model';
 
 /**
  * Rankings, worked out from the tournaments themselves (nothing extra is stored):
  *  - rating: Elo over every played match, in the order they were played. Everyone starts at 1500;
  *    beating a stronger player gains more. Forfeits, byes and walkovers don't count.
  *  - points: placement points from finished tournaments, added up like a season or circuit.
+ *    Majors count double, semi-majors one and a half times.
  */
 
 export const START_RATING = 1500;
@@ -25,6 +26,11 @@ export function placementPoints(place: number): number {
   return 10;
 }
 
+/** Placement points in an event of this size. */
+export function eventPoints(place: number, tier: Tier): number {
+  return Math.round(placementPoints(place) * TIER_WEIGHT[tier]);
+}
+
 /** Bigger steps while a rating is new, smaller once it has settled. */
 const kFactor = (rated: number) => (rated < 10 ? 40 : 24);
 
@@ -35,6 +41,8 @@ export interface RankFilter {
   category?: string;
   /** Only tournaments made in this year. */
   year?: number;
+  /** '' or unset = every event size. */
+  tier?: Tier | '';
 }
 
 export function filterTournaments(tournaments: TournamentDoc[], f: RankFilter): TournamentDoc[] {
@@ -42,6 +50,7 @@ export function filterTournaments(tournaments: TournamentDoc[], f: RankFilter): 
     (t) =>
       (!f.game || t.game === f.game) &&
       (!f.category || (t.category ?? '') === f.category) &&
+      (!f.tier || tierOf(t) === f.tier) &&
       (!f.year || new Date(t.createdAt).getFullYear() === f.year),
   );
 }
@@ -73,6 +82,9 @@ export interface RankRow {
   medals: [number, number, number];
   /** Best final place (finished tournaments), null if none yet. */
   best: number | null;
+  /** Wins of majors and semi-majors. */
+  majorTitles: number;
+  semiTitles: number;
 }
 
 interface Played {
@@ -94,7 +106,7 @@ export function rankings(tournaments: TournamentDoc[], players: Player[]): Map<s
     if (!r) {
       r = {
         player: known.get(id) ?? { id, name: fallback }, rating: START_RATING, rated: 0, peak: START_RATING, change: 0, history: [],
-        points: 0, events: 0, wins: 0, losses: 0, draws: 0, titles: 0, medals: [0, 0, 0], best: null,
+        points: 0, events: 0, wins: 0, losses: 0, draws: 0, titles: 0, medals: [0, 0, 0], best: null, majorTitles: 0, semiTitles: 0,
       };
       out.set(id, r);
     }
@@ -120,12 +132,17 @@ export function rankings(tournaments: TournamentDoc[], players: Player[]): Map<s
       played.push({ t, at: r.at ?? t.createdAt, order: numbers.get(m.template.id) ?? 0, a: r.p1, b: r.p2, s: r.winner === 'draw' ? 0.5 : r.winner === 'p1' ? 1 : 0 });
     }
     if (statusOf(t) !== 'finished') continue;
+    const tier = tierOf(t);
     for (const [id, place] of finalPlaces(t, state)) {
       if (place === null) continue;
       const r = row(id);
-      r.points += placementPoints(place);
+      r.points += eventPoints(place, tier);
       if (place <= 3) r.medals[place - 1]++;
-      if (place === 1) r.titles++;
+      if (place === 1) {
+        r.titles++;
+        if (tier === 'major') r.majorTitles++;
+        if (tier === 'semi') r.semiTitles++;
+      }
       r.best = r.best === null ? place : Math.min(r.best, place);
     }
   }

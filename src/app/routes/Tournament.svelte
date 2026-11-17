@@ -5,6 +5,8 @@
   import Bracket from '../components/Bracket.svelte';
   import EditTournament from '../components/EditTournament.svelte';
   import FinalsPanel from '../components/FinalsPanel.svelte';
+  import Verified from '../components/Verified.svelte';
+  import TierTag from '../components/TierTag.svelte';
   import LogView from '../components/LogView.svelte';
   import MatchList from '../components/MatchList.svelte';
   import MatchSheet from '../components/MatchSheet.svelte';
@@ -17,7 +19,7 @@
   import { app, errorText } from '../lib/app.svelte';
   import {
     championOf, describeResult, FORMAT_LABEL, hasFinals, isTableFormat, logEntry, matchNumbers, nameMap, newId, pointsStageName,
-    progressOf, restorePoint, roundName, standingOptions, STATUS_LABEL, statusOf, toState, withEntrants,
+    progressOf, restorePoint, roundName, standingOptions, STATUS_LABEL, statusOf, tierOf, toState, withEntrants,
   } from '../lib/model';
   import type { LogEntry, Player, TournamentDoc } from '../lib/model';
   import { createSaveQueue } from '../lib/saveQueue';
@@ -57,6 +59,7 @@
     return myPin(id);
   });
   let players = $state<Player[]>(cached?.players ?? []);
+  app.noteVerified(players);
   let missing = $state(false);
   let error = $state('');
   // #/t/<id>/matches/<matchId> opens that match (links from the sign-up page)
@@ -70,6 +73,7 @@
     const byId = new Map(players.map((p) => [p.id, p]));
     for (const p of list) byId.set(p.id, p);
     players = [...byId.values()];
+    app.noteVerified(list);
   };
 
   async function load() {
@@ -146,8 +150,7 @@
   const champion = $derived.by(() => {
     if (!tstate || !doc || status !== 'finished') return null;
     // only a clear winner, not a tie for first
-    const id = championOf(doc, tstate);
-    return id ? names.get(id) : null;
+    return championOf(doc, tstate);
   });
   const progress = $derived(progressOf(resolved));
   /** Groups format: each group's table, shown next to its rounds. */
@@ -308,12 +311,14 @@
     const { qualified: _old, ...finals } = doc.options.finals;
     const next = { ...doc, options: { ...doc.options, finals: qualified ? { ...finals, qualified } : finals } };
     const { name, game, format, options, scoring, entrants, results } = doc;
+    const category = doc.category ?? '';
+    const tier = tierOf(doc);
     const summary = qualified
       ? `Finals started: ${qualified.map((s) => names.get(doc!.entrants[s - 1].id)).join(', ')}`
       : 'Finalists cleared';
     const entry: LogEntry = {
       id: newId(), time: new Date().toISOString(), summary, changes: [],
-      restore: { name, game, format, options, scoring, entrants, results },
+      restore: { name, game, category, tier, format, options, scoring, entrants, results },
     };
     const ok = await persist({ ...next, log: [...doc.log, entry] });
     if (ok) app.notify(qualified ? 'Finals started' : 'Pick the finalists again');
@@ -393,6 +398,7 @@
   <div class="wrap page">
     <div class="titlebar">
       <div class="label">
+        <TierTag tier={doc.tier} />
         {[
           doc.game,
           doc.category,
@@ -415,7 +421,7 @@
         </span>
       {/if}
       {#if doc.code && app.store.kind === 'sheets'}<span class="small muted">Code <b class="jcode">{doc.code}</b></span>{/if}
-      {#if champion}<span class="champ"><span class="label">Champion</span> <b>{champion}</b></span>{/if}
+      {#if champion}<span class="champ"><span class="label">Champion</span> <a class="champname" href="#/p/{champion}"><b>{names.get(champion)}</b></a><Verified id={champion} /></span>{/if}
       {#if saving || pendingSaves}
         <span class="live small saving">Saving…</span>
       {:else if app.store.kind === 'sheets'}
@@ -532,6 +538,9 @@
   .bar > span { display: block; height: 100%; background: var(--accent); }
   .champ { display: inline-flex; align-items: baseline; gap: 8px; font-size: 17px; }
   .champ .label { color: var(--accent); }
+  .champ .champname { color: inherit; text-decoration: none; }
+  .champ .champname:hover { text-decoration: underline; }
+  .champ :global(.vf) { margin-left: -4px; }
   .saving { color: var(--ink-2); }
   @media (max-width: 520px) {
     .print { display: none; }

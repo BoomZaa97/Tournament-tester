@@ -1,6 +1,7 @@
 <script lang="ts">
   import { BYE } from '../../core';
   import type { ResolvedMatch, Slot, Source } from '../../core';
+  import Verified from './Verified.svelte';
 
   interface Props {
     m: ResolvedMatch;
@@ -72,7 +73,7 @@
         role="presentation"
       >
         <span class="seed">{row.seed ?? ''}</span>
-        <span class="name">{row.name}</span>
+        <span class="name"><span class="nt">{row.name}</span><Verified id={row.id} /></span>
         <span class="score">{score(row.side)}</span>
       </span>
     {/each}
@@ -133,7 +134,8 @@
   }
   .slot + .slot { border-top: 1px solid var(--line); }
   .seed { font-size: 11px; color: var(--muted); text-align: center; }
-  .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 6px; }
+  .name { display: flex; align-items: center; min-width: 0; padding-right: 6px; }
+  .nt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .score {
     min-width: 30px;
     height: 100%;

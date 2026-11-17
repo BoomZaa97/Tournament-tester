@@ -1,6 +1,8 @@
 <script lang="ts">
   import { newId } from '../lib/model';
   import type { Player, Row } from '../lib/model';
+  import Verified from './Verified.svelte';
+  import { nameKey } from '../lib/players';
 
   interface Props {
     rows: Row[];
@@ -20,6 +22,11 @@
     }
     return new Set([...seen].filter(([, n]) => n > 1).map(([k]) => k));
   });
+
+  /** Name (any case) → known player, for the verified mark. */
+  const byName = $derived(new Map(known.map((p) => [nameKey(p.name), p])));
+  const idOf = (name: string) => byName.get(nameKey(name))?.id;
+  const anyVerified = $derived(rows.some((r) => known.some((p) => p.account && p.id === idOf(r.name))));
 
   function add(names: string[]) {
     const clean = names.map((n) => n.trim()).filter(Boolean);
@@ -86,12 +93,14 @@
         <li class:dupe={dupes.has(row.name.trim().toLowerCase())}>
           <span class="seed">{i + 1}</span>
           <input bind:value={row.name} aria-label="Seed {i + 1} name" list="known-players" />
+          <span class="mark"><Verified id={idOf(row.name)} /></span>
           <button type="button" class="ghost small" onclick={() => move(i, -1)} disabled={i === 0} aria-label="Move up">↑</button>
           <button type="button" class="ghost small" onclick={() => move(i, 1)} disabled={i === rows.length - 1} aria-label="Move down">↓</button>
           <button type="button" class="ghost small danger" onclick={() => (rows = rows.filter((r) => r.key !== row.key))} aria-label="Remove">✕</button>
         </li>
       {/each}
     </ol>
+    {#if anyVerified}<p class="small muted note"><Verified id={known.find((p) => p.account)?.id} /> Verified player: the name belongs to their own account, so it is always the same person.</p>{/if}
     {#if dupes.size}<p class="small warn">Two entrants have the same name. Rename one so their history stays separate.</p>{/if}
   {/if}
 </div>
@@ -115,5 +124,9 @@
   .seed { width: 28px; flex: 0 0 28px; text-align: center; font: 700 16px var(--font-cond); color: var(--muted); }
   .dupe .seed { color: var(--warn); }
   .warn { color: var(--warn); margin: 0; }
+  .mark { width: 18px; flex: 0 0 18px; display: inline-flex; justify-content: center; }
+  .mark :global(.vf) { margin: 0; }
+  .note { margin: 0; }
+  .note :global(.vf) { margin: 0 4px 0 0; }
   .list button { min-width: 32px; padding: 0 6px; }
 </style>

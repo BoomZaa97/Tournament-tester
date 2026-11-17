@@ -1,5 +1,7 @@
+import { SvelteSet } from 'svelte/reactivity';
 import { getSettings, LOGGED_OUT, makeStore, myAccount } from './store';
 import type { Account, Settings, Store } from './store';
+import type { Player } from './model';
 
 /** Hash routes work on GitHub Pages with no server config: #/t/abc123 */
 function parse(hash: string): string[] {
@@ -15,6 +17,8 @@ class AppState {
   account = $state<Account | null>(myAccount());
   /** Goes up whenever the account brought PINs or keys onto this device, so pages re-read them. */
   accountSync = $state(0);
+  /** Ids of verified players (they have an account), from every player list the pages were sent. */
+  verified = new SvelteSet<string>();
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor() {
@@ -49,6 +53,11 @@ class AppState {
       if (errorText(e) === LOGGED_OUT) this.notify(LOGGED_OUT, 'error');
     }
     this.refreshAccount();
+  }
+
+  /** Note who is verified from a player list the sheet sent (accounts are never removed, so only add). */
+  noteVerified(players: Player[]) {
+    for (const p of players) if (p.account) this.verified.add(p.id);
   }
 
   notify(text: string, kind: 'ok' | 'error' = 'ok') {

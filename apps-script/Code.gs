@@ -36,7 +36,7 @@
 var TABLES = {
   Players: ['id', 'name'],
   Tournaments: [
-    'id', 'name', 'game', 'category', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash',
+    'id', 'name', 'game', 'category', 'tier', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash',
     'code', 'maxPlayers', 'checkIn',
   ],
   Entrants: ['tournamentId', 'tournament', 'seed', 'playerId', 'name', 'pin', 'checkedIn'],
@@ -167,9 +167,12 @@ function readTournament(id, since) {
   data.Entrants.concat(data.Waitlist).forEach(function (e) {
     ids[e.playerId] = true;
   });
-  var players = data.Players.filter(function (p) {
-    return ids[p.id];
-  }).map(toPlayer);
+  var players = readPlayers(
+    data.Players.filter(function (p) {
+      return ids[p.id];
+    }),
+    data.Accounts
+  );
   return { tournament: assemble(t, data), players: players };
 }
 
@@ -276,6 +279,7 @@ function assemble(t, data, lite) {
     name: t.name,
     game: t.game,
     category: t.category || '',
+    tier: tierOf(t.tier),
     signup: truthy(t.signup),
     code: t.code || '',
     maxPlayers: num(t.maxPlayers),
@@ -350,15 +354,18 @@ function saveTournament(doc, players, body, isAdmin) {
     byId[p.id] = p;
   });
   var playersChanged = false;
+  var verified = verifiedNames(data);
   (players || []).forEach(function (p) {
     // the player list is shared by every tournament: only the site admin renames people
     if (byId[p.id] && (!isAdmin || byId[p.id].name === p.name)) return;
+    notVerifiedName(p.id, p.name, verified);
     if (byId[p.id]) byId[p.id].name = p.name;
     else data.Players.push((byId[p.id] = { id: p.id, name: p.name }));
     playersChanged = true;
   });
   saved.entrants.forEach(function (e) {
     if (byId[e.id]) return;
+    notVerifiedName(e.id, e.name, verified);
     data.Players.push((byId[e.id] = { id: e.id, name: e.name }));
     playersChanged = true;
   });
@@ -372,6 +379,7 @@ function saveTournament(doc, players, body, isAdmin) {
     name: saved.name,
     game: saved.game,
     category: String(saved.category || '').replace(/\s+/g, ' ').trim().slice(0, 40),
+    tier: tierOf(saved.tier),
     format: saved.format,
     options: JSON.stringify(saved.options || {}),
     scoring: JSON.stringify(saved.scoring || {}),
@@ -497,9 +505,39 @@ function deleteTournament(id, body, isAdmin) {
   return { ok: true };
 }
 
+/** Event size: 'major', 'semi' or 'small' (anything else, or empty, is small). */
+function tierOf(raw) {
+  var t = String(raw || '').trim().toLowerCase();
+  return t === 'major' || t === 'semi' ? t : 'small';
+}
+
+/** Verified names: names of players who have an account, by `nameKey`, → that player's id. */
+function verifiedNames(data) {
+  var out = {};
+  (data.Accounts || []).forEach(function (a) {
+    var p = findById(data.Players, a.playerId);
+    if (p) out[nameKey(p.name)] = p.id;
+  });
+  return out;
+}
+
+/** Names compare without case or extra spaces: "Pha", " pha " and "PHA" are one name. */
+function nameKey(name) {
+  return String(name || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** A verified name belongs to its account's player only. */
+function notVerifiedName(id, name, verified) {
+  var owner = verified[nameKey(name)];
+  if (owner && owner !== id) {
+    throw new Error('"' + String(name).trim() + '" is a verified player. Pick them from the player list, or use another name.');
+  }
+}
+
 function renamePlayer(id, name) {
   if (!name) throw new Error('Name is empty');
   var data = loadTables();
+  notVerifiedName(id, name, verifiedNames(data));
   var found = false;
   data.Players.forEach(function (p) {
     if (p.id === id) {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app, errorText } from '../lib/app.svelte';
-  import { FORMAT_LABEL, STATUS_LABEL, summaryOf } from '../lib/model';
+  import TierTag from '../components/TierTag.svelte';
+  import { FORMAT_LABEL, STATUS_LABEL, summaryOf, tierOf } from '../lib/model';
   import type { TournamentDoc } from '../lib/model';
 
   const newestFirst = (list: TournamentDoc[]) => [...list].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -105,6 +106,7 @@
             <span class="meta">
               {#if t.game}<span>{t.game}</span>{/if}
               {#if t.category}<span>{t.category}</span>{/if}
+              {#if tierOf(t) !== 'small'}<span><TierTag tier={t.tier} /></span>{/if}
               <span>{FORMAT_LABEL[t.format]}</span>
               <span>{t.entrants.length} entrants</span>
               <span>{date(t.createdAt)}</span>

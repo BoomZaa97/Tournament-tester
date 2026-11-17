@@ -421,6 +421,29 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.post({ action: 'signup', id: 'o1', token: token.slice(0, -1) + 'x' }).error).toMatch(/log in again/);
     });
 
+    it('verified names: nobody else can be saved or renamed under an account holder\'s name', () => {
+      const g = fakeGoogle();
+      const { account } = reg(g, { username: 'dana', name: 'Dana' });
+      const dana = { id: account.playerId, name: 'Dana' };
+      // a new player id under the verified name (any case or spacing) is refused
+      const fake = { id: 'imposter', name: '  dANA ' };
+      const bad = g.post({ action: 'save', orgKey: ORG, tournament: { ...open, entrants: [...open.entrants, fake] }, players: [fake] });
+      expect(bad.error).toMatch(/"dANA" is a verified player/);
+      expect(g.get({ action: 'get', id: 'o1' }).tournament).toBeNull();
+      // the real player (same id) is fine
+      const ok = g.post({ action: 'save', orgKey: ORG, tournament: { ...open, entrants: [...open.entrants, dana] }, players: [dana] });
+      expect(ok.error).toBeUndefined();
+      // the tournament page learns who is verified
+      const listed = g.get({ action: 'get', id: 'o1' }).players;
+      expect(listed.find((p: { id: string }) => p.id === dana.id)).toEqual({ ...dana, account: true });
+      expect(listed.find((p: { id: string }) => p.id === open.entrants[0].id).account).toBeUndefined();
+      // even the site admin can't rename someone else onto it, but can rename the player themself
+      const other = open.entrants[0];
+      expect(g.post({ action: 'renamePlayer', key: 'secret', id: other.id, name: 'dana' }).error).toMatch(/verified player/);
+      expect(g.post({ action: 'renamePlayer', key: 'secret', id: dana.id, name: 'Dana K' }).error).toBeUndefined();
+      expect(g.post({ action: 'renamePlayer', key: 'secret', id: other.id, name: 'Dana' }).error).toBeUndefined();
+    });
+
     it('a logged-in device gets its PINs and organizer keys; keys it brings are kept for other devices', () => {
       const g = fakeGoogle();
       const { token } = reg(g, { username: 'olga', name: 'Olga' });
@@ -547,6 +570,19 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.get({ action: 'get', id: 't1' }).tournament.category).toBe('U18 girls');
       expect(g.sheets.get('Tournaments')![0].slice(0, 4)).toEqual(['id', 'name', 'game', 'category']);
       expect(g.get({ action: 'all', lite: '1' }).tournaments[0].category).toBe('U18 girls');
+    });
+
+    it('stores the event size (major, semi, small); anything else is small', () => {
+      const g = fakeGoogle();
+      g.post({ key: 'secret', action: 'save', tournament: { ...doc, tier: 'major' } });
+      expect(g.get({ action: 'get', id: 't1' }).tournament.tier).toBe('major');
+      expect(g.sheets.get('Tournaments')![0].slice(0, 5)).toEqual(['id', 'name', 'game', 'category', 'tier']);
+      g.post({ key: 'secret', action: 'save', tournament: { ...doc, version: 1, tier: 'huge' } });
+      expect(g.get({ action: 'get', id: 't1' }).tournament.tier).toBe('small');
+      // typed by hand in the sheet
+      const col = g.sheets.get('Tournaments')![0].indexOf('tier');
+      g.sheets.set('Tournaments', 1, col, ' Semi ');
+      expect(g.get({ action: 'get', id: 't1' }).tournament.tier).toBe('semi');
     });
 
     it('lets only the player (logged in) or the site admin change a profile, and checks what goes in', () => {
@@ -783,10 +819,11 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.sheets.get('Entrants')![0]).not.toContain('tournament');
 
       vm.runInContext(readFileSync('apps-script/Code.gs', 'utf8'), g.ctx as vm.Context); // the owner pastes the new script
-      // newer scripts add fields (an empty category); everything that was there stays the same
+      // newer scripts add fields (an empty category, a small event); everything that was there stays the same
       const after = [1, 2, 3].map((n) => g.get({ action: 'get', id: 'e' + n }).tournament);
-      expect(after).toEqual(before.map((t) => ({ ...t, category: after[0].category })));
+      expect(after).toEqual(before.map((t) => ({ ...t, category: after[0].category, tier: after[0].tier })));
       expect(after[0].category).toBe('');
+      expect(after[0].tier).toBe('small');
       for (const tab of ['Entrants', 'Results', 'Log']) {
         expect(blocks(g, tab)).toEqual(['e3', 'e2', 'e1']);
         expect(g.sheets.get(tab)![0][1]).toBe('tournament');

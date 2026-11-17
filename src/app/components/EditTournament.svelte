@@ -1,8 +1,10 @@
 <script lang="ts">
   import { replaceEntrant, restructure } from '../../core';
   import type { Format, FormatOptions } from '../../core';
-  import { describeResult, FORMAT_LABEL, newId, toState } from '../lib/model';
-  import type { LogEntry, Player, Row, Scoring, TournamentDoc } from '../lib/model';
+  import { describeResult, FORMAT_LABEL, newId, TIER_LABEL, tierOf, toState } from '../lib/model';
+  import type { LogEntry, Player, Row, Scoring, Tier, TournamentDoc } from '../lib/model';
+  import TierPicker from './TierPicker.svelte';
+  import { nameKey } from '../lib/players';
   import EntrantEditor from './EntrantEditor.svelte';
   import FormatFields from './FormatFields.svelte';
 
@@ -18,6 +20,7 @@
   let name = $state(doc.name);
   let game = $state(doc.game);
   let category = $state(doc.category ?? '');
+  let tier = $state<Tier>(tierOf(doc));
   let format = $state<Format>(doc.format);
   let options = $state<FormatOptions>({ ...doc.options });
   let scoring = $state<Scoring>({ ...doc.scoring });
@@ -26,25 +29,25 @@
 
   const plan = $derived.by(() => {
     const live = rows.filter((r) => r.name.trim());
-    const lower = live.map((r) => r.name.trim().toLowerCase());
+    const lower = live.map((r) => nameKey(r.name));
     if (live.length < 2) return { error: 'A tournament needs at least 2 entrants.' };
     if (new Set(lower).size !== lower.length) return { error: 'Two entrants have the same name.' };
 
-    const byName = new Map(known.map((p) => [p.name.trim().toLowerCase(), p]));
+    const byName = new Map(known.map((p) => [nameKey(p.name), p]));
     const created: Player[] = [];
     const notes: string[] = [];
     const oldIds = new Set(doc.entrants.map((e) => e.id));
     let tstate = toState(doc);
 
     const entrants: Player[] = live.map((r) => {
-      const nm = r.name.trim();
+      const nm = r.name.replace(/\s+/g, ' ').trim();
       const orig = r.origId ? doc.entrants.find((e) => e.id === r.origId) : undefined;
       const origName = r.origId ? (names.get(r.origId) ?? orig?.name) : undefined;
       if (orig && origName === nm) return { id: orig.id, name: nm };
-      let p = byName.get(nm.toLowerCase());
+      let p = byName.get(nameKey(nm));
       if (!p) {
         p = { id: newId(), name: nm };
-        byName.set(nm.toLowerCase(), p);
+        byName.set(nameKey(nm), p);
         created.push(p);
       }
       // Name changed on an existing slot = a sub takes over that slot and its results.
@@ -70,6 +73,7 @@
     if (name.trim() !== doc.name) notes.push('renamed');
     if (game.trim() !== doc.game) notes.push('game changed');
     if (category.trim() !== (doc.category ?? '')) notes.push('category changed');
+    if (tier !== tierOf(doc)) notes.push(`now a ${TIER_LABEL[tier].toLowerCase()}`);
 
     const out = restructure(tstate, { format, entrants: ids, options });
     // options from the rebuilt state: swiss rounds already played are carried over there
@@ -86,7 +90,7 @@
       summary: `Edited tournament: ${plan.notes.join('; ')}`,
       changes: [],
       restore: {
-        name: doc.name, game: doc.game, category: doc.category ?? '', format: doc.format, options: doc.options,
+        name: doc.name, game: doc.game, category: doc.category ?? '', tier: tierOf(doc), format: doc.format, options: doc.options,
         scoring: doc.scoring, entrants: doc.entrants, results: doc.results,
       },
     };
@@ -95,6 +99,7 @@
       name: name.trim(),
       game: game.trim(),
       category: category.trim() || undefined,
+      tier,
       format,
       options: plan.options,
       scoring,
@@ -112,6 +117,7 @@
       <label class="field"><span>Name</span><input bind:value={name} /></label>
       <label class="field"><span>Game</span><input bind:value={game} /></label>
       <label class="field"><span>Category <span class="muted">(optional)</span></span><input bind:value={category} placeholder="None" maxlength="40" /></label>
+      <TierPicker bind:tier />
       <FormatFields bind:format bind:options bind:scoring entrantCount={rows.filter((r) => r.name.trim()).length} />
     </div>
     <div class="col">

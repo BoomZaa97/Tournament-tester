@@ -2,6 +2,7 @@
   import { BYE } from '../../core';
   import type { MatchStatus, ResolvedMatch } from '../../core';
   import { isByeMatch } from '../lib/model';
+  import Verified from './Verified.svelte';
 
   interface Props {
     resolved: Map<string, ResolvedMatch>;
@@ -67,9 +68,9 @@
               <span class="body">
                 <span class="label">{titleOf(m)}</span>
                 <span class="players">
-                  <span class:w={r?.winner === 'p1'} class:l={r && r.winner === 'p2'}>{nm(m.p1)}</span>
+                  <span class:w={r?.winner === 'p1'} class:l={r && r.winner === 'p2'}>{nm(m.p1)}<Verified id={m.p1} /></span>
                   <span class="vs">vs</span>
-                  <span class:w={r?.winner === 'p2'} class:l={r && r.winner === 'p1'}>{nm(m.p2)}</span>
+                  <span class:w={r?.winner === 'p2'} class:l={r && r.winner === 'p1'}>{nm(m.p2)}<Verified id={m.p2} /></span>
                 </span>
               </span>
               <span class="score">{score(m)}</span>

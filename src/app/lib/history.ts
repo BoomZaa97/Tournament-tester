@@ -1,7 +1,8 @@
 import { resolve } from '../../core';
 import type { EntrantId } from '../../core';
-import { finalPlaces, matchNumbers, roundName, statusOf, toState } from './model';
-import type { Player, TournamentDoc } from './model';
+import { finalPlaces, matchNumbers, roundName, statusOf, tierOf, toState } from './model';
+import type { Player, Tier, TournamentDoc } from './model';
+import { eventPoints } from './ranking';
 
 export interface HistoryMatch {
   tournamentId: string;
@@ -23,7 +24,12 @@ export interface PlayerStats {
   wins: number;
   losses: number;
   draws: number;
-  tournaments: { id: string; name: string; game: string; place: number | null; finished: boolean; at: string }[];
+  tournaments: {
+    id: string; name: string; game: string; category: string; tier: Tier; place: number | null; finished: boolean; at: string;
+    /** Ranking points earned (finished tournaments). */
+    points: number;
+    entrants: number;
+  }[];
   titles: number;
 }
 
@@ -51,7 +57,11 @@ export function buildHistory(tournaments: TournamentDoc[], players: Player[]): M
     for (const e of t.entrants) {
       const s = get(e.id, e.name);
       const place = places.get(e.id) ?? null;
-      s.tournaments.push({ id: t.id, name: t.name, game: t.game, place, finished, at: t.createdAt });
+      const tier = tierOf(t);
+      s.tournaments.push({
+        id: t.id, name: t.name, game: t.game, category: t.category ?? '', tier, place, finished, at: t.createdAt,
+        points: finished && place ? eventPoints(place, tier) : 0, entrants: t.entrants.length,
+      });
       if (place === 1 && finished) s.titles++;
     }
 

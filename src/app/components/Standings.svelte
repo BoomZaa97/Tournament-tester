@@ -3,6 +3,7 @@
   import type { StandingRow, TournamentState } from '../../core';
   import { hasFinals, isTableFormat, standingOptions, tableStandings } from '../lib/model';
   import type { TournamentDoc } from '../lib/model';
+  import Verified from './Verified.svelte';
 
   interface Props {
     doc: TournamentDoc;
@@ -52,7 +53,7 @@
         {#each rows as r, i (r.entrant)}
           <tr class:top={r.rank === 1 && r.played > 0} class:cut={i === cut - 1 && i < rows.length - 1}>
             <td class="num rank">{r.rank}</td>
-            <td class="name"><a href="#/p/{r.entrant}">{names.get(r.entrant)}</a>{#if out.has(r.entrant)} <span class="dropped">dropped</span>{/if}</td>
+            <td class="name"><a href="#/p/{r.entrant}">{names.get(r.entrant)}</a><Verified id={r.entrant} />{#if out.has(r.entrant)} <span class="dropped">dropped</span>{/if}</td>
             <td class="num hide-s">{r.played}</td><td class="num">{r.wins}</td>{#if draws}<td class="num">{r.draws}</td>{/if}<td class="num">{r.losses}</td>
             <td class="num hide-s">{r.for}</td><td class="num hide-s">{r.against}</td>
             <td class="num">{r.diff > 0 ? '+' : ''}{r.diff}</td>
@@ -74,7 +75,7 @@
     <div class="label sub">Still in · {alive.length}</div>
     <ul class="alive">
       {#each alive as p (p.entrant)}
-        <li><a href="#/p/{p.entrant}">{names.get(p.entrant)}</a></li>
+        <li><a href="#/p/{p.entrant}">{names.get(p.entrant)}</a><Verified id={p.entrant} /></li>
       {/each}
     </ul>
     {#if alive.length < places.length}<div class="label sub">Out</div>{/if}
@@ -83,7 +84,7 @@
     {#each places.filter((p) => p.place !== null) as p (p.entrant)}
       <li class:gold={p.place === 1}>
         <span class="pl">{ordinal(p.place!)}</span>
-        <a href="#/p/{p.entrant}">{names.get(p.entrant)}</a>
+        <a href="#/p/{p.entrant}">{names.get(p.entrant)}</a><Verified id={p.entrant} />
         {#if out.has(p.entrant)}<span class="dropped">dropped</span>{/if}
       </li>
     {/each}

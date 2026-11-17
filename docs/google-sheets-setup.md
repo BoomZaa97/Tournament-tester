@@ -81,6 +81,7 @@ The URL stays the same. New columns are added to the tabs by themselves on the n
 | Accounts (new tab) | `username`, `playerId`, `passHash`, `salt`, `orgKeys`, `fails`, `lockedUntil` | Player accounts. `orgKeys` holds the organizer keys of the account's tournaments. Delete a row to delete an account (the player and their results stay). |
 | Entrants, Results, Log, Waitlist | `tournament` | The tournament's name, next to its id, so you can tell the rows apart. |
 | Tournaments | `category` | Optional division inside the game (Open, U18, Doubles…). Rankings can be split by it. |
+| Tournaments | `tier` | Event size: `major`, `semi` or `small` (empty = small). Majors give double ranking points, semi-majors 1.5×. |
 | Profiles (new tab) | `id`, `name`, `photo`, `bio`, `links`, `updatedAt` | A player's photo (a small picture stored as text), bio and up to 3 links. `id` is the player's id. Delete a row to clear a profile. |
 
 Players who dropped out are in the Tournaments `options` column (`"dropped": [seed, …]`).

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { resolve } from '../src/core';
 import { emptyDoc, toState } from '../src/app/lib/model';
 import type { TournamentDoc } from '../src/app/lib/model';
-import { filterTournaments, placementPoints, PROVISIONAL, ranked, rankings, START_RATING } from '../src/app/lib/ranking';
+import { eventPoints, filterTournaments, placementPoints, PROVISIONAL, ranked, rankings, START_RATING } from '../src/app/lib/ranking';
 
 let clock = Date.parse('2026-01-01T10:00:00Z');
 const tick = () => new Date((clock += 60_000)).toISOString();
@@ -110,5 +110,18 @@ describe('rankings', () => {
     expect(filterTournaments(ts, { game: 'Chess', category: 'U18' }).map((t) => t.id)).toEqual(['y']);
     expect(filterTournaments(ts, { year: 2026 }).map((t) => t.id)).toEqual(['y', 'z']);
     expect(filterTournaments(ts, {}).length).toBe(3);
+  });
+
+  it('majors count double and semi-majors one and a half times; they can be filtered', () => {
+    const major = played('m', 'single_elim', ['a', 'b', 'c', 'd'], { tier: 'major' });
+    const semi = played('s', 'single_elim', ['b', 'c'], { tier: 'semi' });
+    const small = played('n', 'single_elim', ['c', 'd']);
+    const rows = rankings([major, semi, small], []);
+    expect(rows.get('a')).toMatchObject({ points: 200, titles: 1, majorTitles: 1, semiTitles: 0 });
+    expect(rows.get('b')).toMatchObject({ points: 140 + 150, titles: 1, majorTitles: 0, semiTitles: 1 });
+    expect(rows.get('c')!.points).toBe(eventPoints(3, 'major') + eventPoints(2, 'semi') + eventPoints(1, 'small'));
+    expect(eventPoints(2, 'semi')).toBe(105);
+    expect(filterTournaments([major, semi, small], { tier: 'major' }).map((t) => t.id)).toEqual(['m']);
+    expect(filterTournaments([major, semi, small], { tier: 'small' }).map((t) => t.id)).toEqual(['n']);
   });
 });

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Player, TournamentDoc } from '../lib/model';
+  import Verified from './Verified.svelte';
 
   interface Props {
     doc: TournamentDoc;
@@ -34,7 +35,7 @@
       {#each list as p, i (p.id)}
         <li>
           <span class="n">{i + 1}</span>
-          <span class="name">{p.name}</span>
+          <span class="name">{p.name}<Verified id={p.id} /></span>
           {#if doc.checkIn && doc.checkedIn?.includes(p.id)}<span class="small here">Here</span>{/if}
           {#if canEdit && !started}
             <button class="small" class:primary={i === 0 && spots > 0} disabled={busy} onclick={() => promote(p)}>Move up</button>

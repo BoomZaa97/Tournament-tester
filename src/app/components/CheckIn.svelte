@@ -2,6 +2,7 @@
   import { app, errorText } from '../lib/app.svelte';
   import { myPin } from '../lib/store';
   import type { TournamentDoc } from '../lib/model';
+  import Verified from './Verified.svelte';
 
   interface Props {
     doc: TournamentDoc;
@@ -80,7 +81,7 @@
     {#each doc.entrants as e (e.id)}
       <li class:in={here.has(e.id)}>
         <span class="mark" aria-hidden="true"></span>
-        <span class="name">{names.get(e.id) ?? e.name}</span>
+        <span class="name">{names.get(e.id) ?? e.name}<Verified id={e.id} /></span>
         <span class="small state">{here.has(e.id) ? 'Here' : 'Not yet'}</span>
         {#if canEdit}
           <button class="small" disabled={busy} onclick={() => send({ playerId: e.id }, !here.has(e.id))}>

@@ -1,9 +1,13 @@
 <script lang="ts">
   import RatingChart from '../components/RatingChart.svelte';
+  import TierTag from '../components/TierTag.svelte';
+  import Verified from '../components/Verified.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import { buildHistory, winRate } from '../lib/history';
   import type { PlayerStats } from '../lib/history';
   import { squarePhoto } from '../lib/photo';
+  import { TIER_LABEL, TIERS } from '../lib/model';
+  import type { Tier } from '../lib/model';
   import { PROVISIONAL, ranked, rankings } from '../lib/ranking';
   import type { AllData, Profile } from '../lib/store';
 
@@ -21,6 +25,7 @@
 
   function show(d: AllData) {
     data = d;
+    app.noteVerified(d.players);
     const all = buildHistory(d.tournaments, d.players);
     names = new Map([...all.values()].map((s) => [s.player.id, s.player.name]));
     stats = all.get(id) ?? null;
@@ -95,6 +100,7 @@
         key: `${game}|${category}`,
         label: (game || 'No game set') + (category ? ` · ${category}` : ''),
         me,
+        list,
         of: list.filter((r) => r.rank !== null).length,
         pointsRank: ranked(list, 'points').find((r) => r.player.id === id)?.rank ?? null,
       };
@@ -102,6 +108,37 @@
   });
   let chartKey = $state<string | null>(null);
   const chartCard = $derived(gameCards.find((c) => c.key === chartKey) ?? gameCards.find((c) => c.me.history.length));
+  /** The leaderboard around this player in the chosen game: two above, two below. */
+  const around = $derived.by(() => {
+    const c = chartCard;
+    if (!c || c.me.rank === null) return [];
+    const rankedOnly = c.list.filter((r) => r.rank !== null);
+    const i = rankedOnly.findIndex((r) => r.player.id === id);
+    const from = Math.max(0, Math.min(i - 2, rankedOnly.length - 5));
+    return rankedOnly.slice(from, from + 5);
+  });
+
+  // ---- by event size (major / semi-major / small)
+  let tierFilter = $state<Tier | ''>('');
+  const honours = $derived.by(() => {
+    const ts = stats?.tournaments ?? [];
+    return TIERS.filter((t) => ts.some((x) => x.tier === t)).map((tier) => {
+      const mine = ts.filter((x) => x.tier === tier);
+      const done = mine.filter((x) => x.finished && x.place);
+      const best = done.length ? Math.min(...done.map((x) => x.place!)) : null;
+      return {
+        tier,
+        events: mine.length,
+        medals: [1, 2, 3].map((p) => done.filter((x) => x.place === p).length),
+        best,
+        points: mine.reduce((s, x) => s + x.points, 0),
+      };
+    });
+  });
+  const majorTitles = $derived(honours.find((h) => h.tier === 'major')?.medals[0] ?? 0);
+  const tournamentsShown = $derived((stats?.tournaments ?? []).filter((t) => !tierFilter || t.tier === tierFilter));
+  let allMatches = $state(false);
+  let allH2h = $state(false);
 
   const medals = $derived(
     [1, 2, 3].map((p) => stats?.tournaments.filter((t) => t.finished && t.place === p).length ?? 0),
@@ -200,7 +237,7 @@
         {/if}
       {/if}
     </div>
-    {#if stats.player.account}<p class="small muted acct">Has an account</p>{/if}
+    {#if stats.player.account}<p class="acct"><Verified id={stats.player.id} label /> <span class="small muted">This name belongs to the player's own account. Nobody else can use it.</span></p>{/if}
     {#if profile?.bio}<p class="bio">{profile.bio}</p>{/if}
     {#if profile?.links.length}
       <ul class="links">
@@ -253,7 +290,7 @@
     {/if}
 
     <dl class="stats">
-      <div><dt class="label">Titles</dt><dd>{stats.titles}</dd></div>
+      <div><dt class="label">Titles</dt><dd>{stats.titles}{#if majorTitles}<small class="sub">{majorTitles} major</small>{/if}</dd></div>
       <div>
         <dt class="label" title="1st / 2nd / 3rd places">Medals</dt>
         <dd class="medals"><span>{medals[0]}</span><i>/</i><span>{medals[1]}</span><i>/</i><span>{medals[2]}</span></dd>
@@ -289,18 +326,80 @@
           <h3 class="charthead">Rating{gameCards.length > 1 ? ` · ${chartCard.label}` : ''}</h3>
           <RatingChart points={chartCard.me.history} />
         {/if}
+        {#if around.length > 1}
+          <h3 class="charthead">Leaderboard{gameCards.length > 1 ? ` · ${chartCard!.label}` : ''}</h3>
+          <table class="around">
+            <tbody>
+              {#each around as r (r.player.id)}
+                <tr class:self={r.player.id === id}>
+                  <td class="num rk">{r.rank}</td>
+                  <td class="nm">
+                    {#if r.player.id === id}<b>{r.player.name}</b>{:else}<a href="#/p/{r.player.id}">{r.player.name}</a>{/if}<Verified id={r.player.id} />
+                  </td>
+                  <td class="num">{Math.round(r.rating)}</td>
+                  <td class="num muted hide-xs">{r.points} pts</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+          <a class="small" href="#/players">Full rankings →</a>
+        {/if}
+      </section>
+    {/if}
+
+    {#if honours.length}
+      <section class="honours">
+        <h2>By event size</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Events</th><th class="num">Played</th><th class="num">1st</th><th class="num">2nd</th><th class="num">3rd</th>
+              <th class="num">Best</th><th class="num hide-xs">Points</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each honours as h (h.tier)}
+              <tr>
+                <td>{#if h.tier === 'small'}Small events{:else}<TierTag tier={h.tier} />{/if}</td>
+                <td class="num">{h.events}</td>
+                <td class="num" class:gold={h.medals[0] > 0}>{h.medals[0] || '–'}</td>
+                <td class="num">{h.medals[1] || '–'}</td>
+                <td class="num">{h.medals[2] || '–'}</td>
+                <td class="num">{h.best ? ordinal(h.best) : '–'}</td>
+                <td class="num hide-xs">{h.points}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
       </section>
     {/if}
 
     <div class="cols">
       <section>
-        <h2>Tournaments</h2>
+        <div class="h2row">
+          <h2>Tournaments</h2>
+          {#if honours.length > 1}
+            <div class="chips" role="tablist" aria-label="Event size">
+              <button role="tab" class:on={!tierFilter} aria-selected={!tierFilter} onclick={() => (tierFilter = '')}>All</button>
+              {#each honours as h (h.tier)}
+                <button role="tab" class:on={tierFilter === h.tier} aria-selected={tierFilter === h.tier} onclick={() => (tierFilter = h.tier)}>
+                  {h.tier === 'small' ? 'Small' : TIER_LABEL[h.tier]}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
         <ul class="plain">
-          {#each stats.tournaments as t (t.id)}
+          {#each tournamentsShown as t (t.id)}
             <li>
               <span class="place" class:gold={t.place === 1 && t.finished}>{t.place ? ordinal(t.place) : '–'}</span>
-              <span><a href="#/t/{t.id}">{t.name}</a>{#if t.game}<span class="muted small">&nbsp;· {t.game}</span>{/if}
-                {#if !t.finished}<span class="muted small">&nbsp;· in progress</span>{/if}</span>
+              <span class="tbody">
+                <span><a href="#/t/{t.id}">{t.name}</a> <TierTag tier={t.tier} /></span>
+                <span class="muted small">
+                  {[t.game, t.category, `${t.entrants} entrants`].filter(Boolean).join(' · ')}{#if !t.finished}&nbsp;· in progress{/if}
+                </span>
+              </span>
+              {#if t.points}<span class="pts small">+{t.points}</span>{/if}
             </li>
           {/each}
         </ul>
@@ -310,9 +409,9 @@
           <table>
             <thead><tr><th>Opponent</th><th class="num">W</th><th class="num">L</th>{#if h2h.some((r) => r.d)}<th class="num">D</th>{/if}</tr></thead>
             <tbody>
-              {#each h2h as r (r.opp)}
+              {#each allH2h ? h2h : h2h.slice(0, 8) as r (r.opp)}
                 <tr>
-                  <td><a href="#/p/{r.opp}">{names.get(r.opp) ?? '?'}</a></td>
+                  <td><a href="#/p/{r.opp}">{names.get(r.opp) ?? '?'}</a><Verified id={r.opp} /></td>
                   <td class="num" class:lead={r.w > r.l}>{r.w}</td>
                   <td class="num">{r.l}</td>
                   {#if h2h.some((x) => x.d)}<td class="num">{r.d}</td>{/if}
@@ -320,6 +419,9 @@
               {/each}
             </tbody>
           </table>
+          {#if h2h.length > 8}
+            <button class="small ghost more" onclick={() => (allH2h = !allH2h)}>{allH2h ? 'Show fewer' : `Show all ${h2h.length} opponents`}</button>
+          {/if}
         {:else}
           <p class="muted">No matches played yet.</p>
         {/if}
@@ -338,16 +440,19 @@
         {/if}
         {#if stats.matches.length}
           <ul class="plain matches">
-            {#each stats.matches as m, i (i)}
+            {#each allMatches ? stats.matches : stats.matches.slice(0, 15) as m, i (i)}
               <li>
                 <span class="res r-{m.outcome}">{m.outcome}</span>
                 <span class="mbody">
-                  <span>vs <a href="#/p/{m.opponent}">{names.get(m.opponent) ?? '?'}</a> <b class="sc">{m.score}</b></span>
+                  <span>vs <a href="#/p/{m.opponent}">{names.get(m.opponent) ?? '?'}</a><Verified id={m.opponent} /> <b class="sc">{m.score}</b></span>
                   <span class="small muted"><a href="#/t/{m.tournamentId}">{m.tournamentName}</a> · {m.round}</span>
                 </span>
               </li>
             {/each}
           </ul>
+          {#if stats.matches.length > 15}
+            <button class="small ghost more" onclick={() => (allMatches = !allMatches)}>{allMatches ? 'Show fewer' : `Show all ${stats.matches.length} matches`}</button>
+          {/if}
         {:else}
           <p class="muted">No matches played yet.</p>
         {/if}
@@ -413,6 +518,25 @@
   .mbody { display: grid; }
   .sc { font-family: var(--font-cond); font-size: 17px; margin-left: 4px; }
   .lead { font-weight: 700; }
+  .sub { display: block; margin-top: 3px; font: 600 12px var(--font-cond); letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+  .around { margin-bottom: 6px; }
+  .around .rk { width: 36px; font: 700 16px var(--font-cond); color: var(--muted); }
+  .around .nm { width: 100%; }
+  .around .num { white-space: nowrap; }
+  .around .nm a { font-weight: 600; }
+  .around tr.self td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .around tr.self td:first-child { box-shadow: inset 3px 0 0 var(--accent); color: var(--accent); }
+  .honours { margin-bottom: 32px; }
+  .honours table { margin-top: 8px; }
+  .honours .gold { color: var(--accent); font-weight: 700; }
+  .h2row { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; border-bottom: 2px solid var(--ink); margin-bottom: 0; }
+  .h2row h2 { border-bottom: 0; margin-bottom: 0; }
+  .chips { display: flex; gap: 4px; padding-bottom: 6px; flex-wrap: wrap; }
+  .chips button { min-height: 28px; padding: 0 10px; font: 600 13px var(--font-cond); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); background: transparent; border: 1px solid var(--line-strong); }
+  .chips button.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .tbody { display: grid; min-width: 0; flex: 1; }
+  .pts { font-family: var(--font-cond); font-weight: 700; color: var(--ink-2); white-space: nowrap; }
+  .more { margin-top: 8px; }
   td a { text-decoration: none; }
   @media (max-width: 760px) {
     .cols { grid-template-columns: minmax(0, 1fr); }
@@ -422,4 +546,5 @@
     .head { gap: 12px; }
     .head > .photo { width: 72px; height: 72px; }
   }
+  @media (max-width: 420px) { .hide-xs { display: none; } }
 </style>
