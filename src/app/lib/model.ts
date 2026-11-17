@@ -1,6 +1,6 @@
 import {
   BYE, createTournament, defaultTiebreakers, eliminationPlacements, finalsSize, hasPointsStage, isComplete, lockSwissRounds,
-  overallPlacements, restructure, roundRobinStandings,
+  overallPlacements, resolve, restructure, roundRobinStandings,
 } from '../../core';
 import type {
   Change, EntrantId, Format, FormatOptions, MatchResult, MatchTemplate, ResolvedMatch, Source, Tiebreaker, TournamentState,
@@ -282,6 +282,38 @@ export type Status = 'setup' | 'running' | 'finished';
 export function statusOf(doc: TournamentDoc): Status {
   if (doc.entrants.length < 2 || Object.keys(doc.results).length === 0) return 'setup';
   return isComplete(toState(doc)) ? 'finished' : 'running';
+}
+
+/**
+ * Matches played out of all the matches there will be: byes don't count, and a grand final reset
+ * only once it's needed. Walkovers (a player dropped out) count as played.
+ */
+export function progressOf(resolved: Map<string, ResolvedMatch>): { played: number; total: number } {
+  let played = 0;
+  let total = 0;
+  for (const m of resolved.values()) {
+    if (m.status === 'skipped' || isByeMatch(m) || (m.template.onlyIf && m.status === 'waiting')) continue;
+    total++;
+    if (m.status === 'done' || m.status === 'bye') played++;
+  }
+  return { played, total };
+}
+
+/** The single winner of a finished tournament (null while running, or on a tie for first). */
+export function championOf(doc: TournamentDoc, tstate: TournamentState): EntrantId | null {
+  if (statusOf(doc) !== 'finished') return null;
+  const firsts = [...finalPlaces(doc, tstate)].filter(([, place]) => place === 1);
+  return firsts.length === 1 ? firsts[0][0] : null;
+}
+
+/** What the tournament list shows for each tournament. */
+export function summaryOf(doc: TournamentDoc): { status: Status; played: number; total: number; champion: string | null } {
+  if (doc.entrants.length < 2) return { status: 'setup', played: 0, total: 0, champion: null };
+  const tstate = toState(doc);
+  const { played, total } = progressOf(resolve(tstate));
+  const status = statusOf(doc);
+  const id = status === 'finished' ? championOf(doc, tstate) : null;
+  return { status, played, total, champion: id ? (doc.entrants.find((e) => e.id === id)?.name ?? null) : null };
 }
 
 export const STATUS_LABEL: Record<Status, string> = { setup: 'Not started', running: 'In progress', finished: 'Finished' };

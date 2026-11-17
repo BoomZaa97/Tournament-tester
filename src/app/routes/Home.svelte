@@ -1,6 +1,6 @@
 <script lang="ts">
   import { app, errorText } from '../lib/app.svelte';
-  import { FORMAT_LABEL, STATUS_LABEL, statusOf } from '../lib/model';
+  import { FORMAT_LABEL, STATUS_LABEL, summaryOf } from '../lib/model';
   import type { TournamentDoc } from '../lib/model';
 
   let tournaments = $state<TournamentDoc[] | null>(null);
@@ -15,10 +15,11 @@
   let q = $state('');
   const PAGE = 30;
   let shown = $state(PAGE);
+  // worked out once per load, not on every keystroke in the search box
+  const summaries = $derived((tournaments ?? []).map((t) => ({ t, ...summaryOf(t) })));
   const matches = $derived.by(() => {
     const needle = q.trim().toLowerCase();
-    return (tournaments ?? [])
-      .map((t) => ({ t, status: statusOf(t) }))
+    return summaries
       .filter((r) => filter === 'all' || r.status === filter)
       .filter(({ t }) => !needle || [t.name, t.game, t.code].some((s) => s?.toLowerCase().includes(needle)));
   });
@@ -88,7 +89,7 @@
       {/if}
     </div>
     <ul class="list">
-      {#each rows as { t, status } (t.id)}
+      {#each rows as { t, status, played, total, champion } (t.id)}
         <li>
           <a href="#/t/{t.id}">
             <span class="name">{t.name || 'Untitled'}</span>
@@ -98,6 +99,14 @@
               <span>{t.entrants.length} entrants</span>
               <span>{date(t.createdAt)}</span>
             </span>
+            {#if champion}
+              <span class="extra"><span class="label">Champion</span> <b>{champion}</b></span>
+            {:else if status === 'running' && total}
+              <span class="extra">
+                <span class="bar" aria-hidden="true"><span style="width: {(100 * played) / total}%"></span></span>
+                {played} of {total} matches played
+              </span>
+            {/if}
             <span class="status s-{status}">{STATUS_LABEL[status]}</span>
           </a>
         </li>
@@ -134,8 +143,13 @@
   .list a:hover .name { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
   .name { font-family: var(--font-cond); font-weight: 700; font-size: 22px; text-transform: uppercase; line-height: 1.1; }
   .meta { grid-column: 1; display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 14px; }
+  .extra { grid-column: 1; display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-2); margin-top: 2px; }
+  .extra .label { color: var(--accent); }
+  .extra b { color: var(--ink); }
+  .bar { width: 64px; height: 5px; background: var(--line); border-radius: 1px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: var(--accent); }
   .status {
-    grid-column: 2; grid-row: 1 / span 2; align-self: center;
+    grid-column: 2; grid-row: 1 / span 3; align-self: center;
     font: 600 13px/1 var(--font-cond); letter-spacing: 0.08em; text-transform: uppercase;
     padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius);
   }

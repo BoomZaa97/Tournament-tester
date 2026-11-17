@@ -26,6 +26,8 @@
   );
   const alive = $derived(places.filter((p) => p.place === null));
   const out = $derived(droppedEntrants(tstate));
+  /** Leave out the draws column when nobody has drawn. */
+  const draws = $derived(Object.values(doc.results).some((r) => r.winner === 'draw'));
   const pct = (x: number) => (x * 100).toFixed(1);
   const ordinal = (n: number) => n + (['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] ?? 'th');
 </script>
@@ -36,11 +38,11 @@
       <thead>
         <tr>
           <th class="num">#</th><th>Name</th>
-          <th class="num" title="Played">P</th><th class="num" title="Wins">W</th><th class="num" title="Draws">D</th><th class="num" title="Losses">L</th>
+          <th class="num hide-s" title="Played">P</th><th class="num" title="Wins">W</th>{#if draws}<th class="num" title="Draws">D</th>{/if}<th class="num" title="Losses">L</th>
           <th class="num hide-s" title="Score for">+</th><th class="num hide-s" title="Score against">−</th><th class="num" title="Difference">±</th>
           <th class="num">Pts</th>
           {#if swiss}
-            <th class="num" title="Win %: wins (byes count) and half of draws, out of matches played">Win%</th>
+            <th class="num hide-s" title="Win %: wins (byes count) and half of draws, out of matches played">Win%</th>
             <th class="num" title="Opponents' win %: the average win rate of everyone this player faced">OMW%</th>
             <th class="num hide-s" title="Buchholz: total points of everyone this player has played">Opp</th>
           {/if}
@@ -51,12 +53,12 @@
           <tr class:top={r.rank === 1 && r.played > 0} class:cut={i === cut - 1 && i < rows.length - 1}>
             <td class="num rank">{r.rank}</td>
             <td class="name"><a href="#/p/{r.entrant}">{names.get(r.entrant)}</a>{#if out.has(r.entrant)} <span class="dropped">dropped</span>{/if}</td>
-            <td class="num">{r.played}</td><td class="num">{r.wins}</td><td class="num">{r.draws}</td><td class="num">{r.losses}</td>
+            <td class="num hide-s">{r.played}</td><td class="num">{r.wins}</td>{#if draws}<td class="num">{r.draws}</td>{/if}<td class="num">{r.losses}</td>
             <td class="num hide-s">{r.for}</td><td class="num hide-s">{r.against}</td>
             <td class="num">{r.diff > 0 ? '+' : ''}{r.diff}</td>
             <td class="num pts">{r.points}</td>
             {#if swiss}
-              <td class="num">{pct(r.played ? (r.wins + r.draws / 2) / r.played : 0)}</td>
+              <td class="num hide-s">{pct(r.played ? (r.wins + r.draws / 2) / r.played : 0)}</td>
               <td class="num">{pct(r.omw)}</td>
               <td class="num hide-s">{r.buchholz}</td>
             {/if}
@@ -68,6 +70,15 @@
 {/snippet}
 
 {#snippet placeList()}
+  {#if alive.length}
+    <div class="label sub">Still in · {alive.length}</div>
+    <ul class="alive">
+      {#each alive as p (p.entrant)}
+        <li><a href="#/p/{p.entrant}">{names.get(p.entrant)}</a></li>
+      {/each}
+    </ul>
+    {#if alive.length < places.length}<div class="label sub">Out</div>{/if}
+  {/if}
   <ol class="places">
     {#each places.filter((p) => p.place !== null) as p (p.entrant)}
       <li class:gold={p.place === 1}>
@@ -77,9 +88,6 @@
       </li>
     {/each}
   </ol>
-  {#if alive.length}
-    <p class="muted small still">Still in: {alive.map((p) => names.get(p.entrant)).join(', ')}</p>
-  {/if}
 {/snippet}
 
 {#if rr}
@@ -129,8 +137,14 @@
   .pl { font: 700 20px var(--font-cond); width: 48px; color: var(--muted); }
   .gold .pl { color: var(--accent); }
   .gold a { font-size: 20px; }
-  .still { margin-top: 12px; }
+  .sub { margin: 0 0 6px; }
+  .alive { list-style: none; padding: 0; margin: 0 0 24px; display: flex; flex-wrap: wrap; gap: 6px; max-width: 720px; }
+  .alive a {
+    display: block; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius);
+    background: var(--card); text-decoration: none; font-weight: 600;
+  }
+  .alive a:hover { border-color: var(--ink); }
   .dropped { font: 600 12px var(--font-cond); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
   .note { margin-top: 10px; max-width: 560px; }
-  @media (max-width: 520px) { .hide-s { display: none; } td, th { padding: 8px 6px; } }
+  @media (max-width: 520px) { .hide-s { display: none; } td, th { padding: 8px 6px; } .name { overflow-wrap: anywhere; } }
 </style>

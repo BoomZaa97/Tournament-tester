@@ -1,6 +1,6 @@
 <script lang="ts">
   import { BYE, isFinalsMatch } from '../../core';
-  import type { Format, ResolvedMatch } from '../../core';
+  import type { Format, ResolvedMatch, StandingRow } from '../../core';
   import { describeSource, isByeMatch, roundName } from '../lib/model';
   import MatchCard from './MatchCard.svelte';
 
@@ -12,15 +12,22 @@
     numbers: Map<string, number>;
     /** Points stage (rounds / groups) or the knockout finals after it. Plain brackets: 'points'. */
     stage?: 'points' | 'finals';
+    /** Groups: each group's table, drawn next to its rounds. */
+    groupTables?: Map<string, StandingRow[]>;
+    /** Show a draws column in the group tables. */
+    draws?: boolean;
+    /** Groups with finals: places per group that go through (a line under the last one). */
+    cut?: number;
     onselect?: (id: string) => void;
   }
-  let { format, resolved, names, seeds, numbers, stage = 'points', onselect }: Props = $props();
+  let { format, resolved, names, seeds, numbers, stage = 'points', groupTables, draws = false, cut = 0, onselect }: Props = $props();
 
   let hover = $state<string | null>(null);
 
   interface Section {
     key: string;
     title: string;
+    group?: string;
     /** Rounds of a points table (no connector lines). */
     table: boolean;
     columns: { title: string; matches: ResolvedMatch[]; note?: string }[];
@@ -35,6 +42,7 @@
       return {
         key,
         title,
+        group,
         table: side === 'RR' || side === 'SW',
         columns: rounds
           .map((r) => {
@@ -119,9 +127,41 @@
   const describe = (src: Parameters<typeof describeSource>[0]) => describeSource(src, resolved, numbers);
 </script>
 
+{#snippet groupTable(rows: StandingRow[])}
+  <table class="mini">
+    <thead>
+      <tr>
+        <th class="num">#</th><th>Name</th><th class="num" title="Wins">W</th>
+        {#if draws}<th class="num" title="Draws">D</th>{/if}
+        <th class="num" title="Losses">L</th><th class="num" title="Difference">±</th><th class="num">Pts</th>
+      </tr>
+    </thead>
+    <tbody>
+      {#each rows as r, i (r.entrant)}
+        <tr
+          class:cut={i === cut - 1 && i < rows.length - 1}
+          class:hl={hover === r.entrant}
+          onpointerenter={() => (hover = r.entrant)}
+          onpointerleave={() => (hover = null)}
+        >
+          <td class="num rank">{r.rank}</td>
+          <td class="nm"><a href="#/p/{r.entrant}">{names.get(r.entrant)}</a></td>
+          <td class="num">{r.wins}</td>
+          {#if draws}<td class="num">{r.draws}</td>{/if}
+          <td class="num">{r.losses}</td>
+          <td class="num">{r.diff > 0 ? '+' : ''}{r.diff}</td>
+          <td class="num pts">{r.points}</td>
+        </tr>
+      {/each}
+    </tbody>
+  </table>
+{/snippet}
+
 {#each sections as s (s.key)}
-  <section class="section">
+  {@const rows = s.group ? groupTables?.get(s.group) : undefined}
+  <section class="section" class:grouped={!!rows}>
     {#if s.title}<h3 class="title">{s.title}</h3>{/if}
+    {#if rows}{@render groupTable(rows)}{/if}
     <div class="scroller" bind:this={containers[s.key]} class:rr={s.table}>
       <svg class="lines" aria-hidden="true">
         {#each lines[s.key] ?? [] as l}
@@ -168,7 +208,8 @@
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
   }
-  .scroller.rr { gap: 16px; }
+  /* rounds of a points table have no connector lines: wrap onto the next line instead of scrolling */
+  .scroller.rr { gap: 22px 16px; flex-wrap: wrap; overflow-x: visible; }
   .lines {
     position: absolute;
     left: 0;
@@ -214,8 +255,35 @@
   }
   .cell.hidden { visibility: hidden; }
 
+  /* groups: the group's table on the left, its rounds on the right */
+  .grouped {
+    display: grid;
+    grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    column-gap: 28px;
+  }
+  .grouped .title { grid-column: 1 / -1; }
+  .grouped .scroller { padding-top: 0; }
+  .mini { align-self: start; margin-top: 4px; font-size: 15px; }
+  .mini th { padding: 6px 6px; height: 28px; }
+  .mini td { padding: 6px 6px; }
+  .mini .rank { font: 700 16px var(--font-cond); color: var(--muted); width: 26px; }
+  .mini .nm { max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mini .nm a { text-decoration: none; font-weight: 600; }
+  .mini .nm a:hover { text-decoration: underline; }
+  .mini .pts { font: 700 16px var(--font-cond); }
+  .mini tr.cut td { border-bottom: 2px solid var(--accent); }
+  .mini tr.hl td { background: var(--accent-soft); }
+
+  @media (max-width: 900px) {
+    .grouped { display: block; }
+    .mini { max-width: 420px; margin-bottom: 14px; }
+  }
   @media (max-width: 600px) {
     .scroller { --card-w: 176px; gap: 26px; }
+    /* rounds of a points table: one under the other, full width, no sideways scrolling */
+    .scroller.rr { --card-w: 100%; flex-direction: column; gap: 18px; overflow-x: visible; padding-bottom: 4px; }
+    .rr .colhead { height: 24px; }
   }
   @media print {
     .scroller { overflow: visible; flex-wrap: nowrap; }

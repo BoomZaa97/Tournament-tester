@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { applyEdit, resolve, undo } from '../../core';
+  import { applyEdit, groupStandings, resolve, undo } from '../../core';
   import type { Decision, ResolvedMatch, ResultInput } from '../../core';
   import Bracket from '../components/Bracket.svelte';
   import EditTournament from '../components/EditTournament.svelte';
@@ -16,8 +16,8 @@
   import DropPanel from '../components/DropPanel.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import {
-    describeResult, finalPlaces, FORMAT_LABEL, hasFinals, isTableFormat, logEntry, matchNumbers, nameMap, newId, pointsStageName,
-    restorePoint, roundName, STATUS_LABEL, statusOf, toState, withEntrants,
+    championOf, describeResult, FORMAT_LABEL, hasFinals, isTableFormat, logEntry, matchNumbers, nameMap, newId, pointsStageName,
+    progressOf, restorePoint, roundName, standingOptions, STATUS_LABEL, statusOf, toState, withEntrants,
   } from '../lib/model';
   import type { LogEntry, Player, TournamentDoc } from '../lib/model';
   import { myPin, rememberOrgKey, VersionConflictError } from '../lib/store';
@@ -103,8 +103,19 @@
   const champion = $derived.by(() => {
     if (!tstate || !doc || status !== 'finished') return null;
     // only a clear winner, not a tie for first
-    const firsts = [...finalPlaces(doc, tstate)].filter(([, place]) => place === 1);
-    return firsts.length === 1 ? names.get(firsts[0][0]) : null;
+    const id = championOf(doc, tstate);
+    return id ? names.get(id) : null;
+  });
+  const progress = $derived(progressOf(resolved));
+  /** Groups format: each group's table, shown next to its rounds. */
+  const groupTables = $derived(doc?.format === 'groups' && tstate ? groupStandings(tstate, standingOptions(doc)) : undefined);
+  const draws = $derived(Object.values(doc?.results ?? {}).some((r) => r.winner === 'draw'));
+
+  // phones: keep the open tab in view when the tab row scrolls
+  let tabRow = $state<HTMLElement>();
+  $effect(() => {
+    void tab;
+    tabRow?.querySelector<HTMLElement>('a.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   });
 
   const titleOf = (m: ResolvedMatch) => (tstate && doc ? roundName(m.template, tstate.structure.matches, doc.format) : '');
@@ -334,26 +345,30 @@
 {:else}
   <div class="wrap page">
     <div class="titlebar">
-      <div>
-        <div class="label">
-          {[
-            doc.game,
-            FORMAT_LABEL[doc.format],
-            `${doc.entrants.length}${doc.maxPlayers ? ` / ${doc.maxPlayers}` : ''} ${doc.entrants.length === 1 && !doc.maxPlayers ? 'entrant' : 'entrants'}`,
-          ].filter(Boolean).join(' · ')}
-        </div>
-        <h1>{doc.name}</h1>
-        <div class="row meta">
-          <span class="status s-{status}">{STATUS_LABEL[status]}</span>
-          {#if doc.code && app.store.kind === 'sheets'}<span class="small muted">Code <b class="jcode">{doc.code}</b></span>{/if}
-          {#if champion}<span class="champ">Champion: <b>{champion}</b></span>{/if}
-          {#if saving}<span class="muted small">Saving…</span>{/if}
-        </div>
+      <div class="label">
+        {[
+          doc.game,
+          FORMAT_LABEL[doc.format],
+          `${doc.entrants.length}${doc.maxPlayers ? ` / ${doc.maxPlayers}` : ''} ${doc.entrants.length === 1 && !doc.maxPlayers ? 'entrant' : 'entrants'}`,
+        ].filter(Boolean).join(' · ')}
       </div>
-      <div class="row no-print">
+      <div class="actions no-print">
         <button class="small" onclick={share}>Share</button>
-        <button class="small" onclick={() => print()}>Print</button>
+        <button class="small print" onclick={() => print()}>Print</button>
       </div>
+    </div>
+    <h1>{doc.name}</h1>
+    <div class="row meta">
+      <span class="status s-{status}">{STATUS_LABEL[status]}</span>
+      {#if status === 'running' && progress.total}
+        <span class="progress small" title="Matches played">
+          <span class="bar" aria-hidden="true"><span style="width: {(100 * progress.played) / progress.total}%"></span></span>
+          <span><b>{progress.played}</b> of {progress.total} matches played</span>
+        </span>
+      {/if}
+      {#if doc.code && app.store.kind === 'sheets'}<span class="small muted">Code <b class="jcode">{doc.code}</b></span>{/if}
+      {#if champion}<span class="champ"><span class="label">Champion</span> <b>{champion}</b></span>{/if}
+      {#if saving}<span class="muted small">Saving…</span>{/if}
     </div>
 
     {#if conflicts}
@@ -377,7 +392,7 @@
     {/if}
     <Waitlist {doc} {canEdit} onpromote={promote} />
 
-    <nav class="tabs no-print">
+    <nav class="tabs no-print" bind:this={tabRow}>
       {#each tabs as [key, label] (key)}
         <a href="#/t/{id}{key === 'bracket' ? '' : '/' + key}" class:on={tab === key}>{label}</a>
       {/each}
@@ -411,7 +426,17 @@
         {:else if !canEdit && app.store.report && status !== 'finished'}
           <p class="small muted hint no-print">Playing? Tap your match to report the result with your PIN.</p>
         {/if}
-        <Bracket format={doc.format} {resolved} {names} {seeds} {numbers} onselect={(m) => (openMatch = m)} />
+        <Bracket
+          format={doc.format}
+          {resolved}
+          {names}
+          {seeds}
+          {numbers}
+          {groupTables}
+          {draws}
+          cut={hasFinals(doc) ? (doc.options.finals?.advance ?? 0) : 0}
+          onselect={(m) => (openMatch = m)}
+        />
       {/if}
     </div>
   </div>
@@ -440,16 +465,26 @@
 
 <style>
   .page { padding-top: 22px; }
-  .titlebar { display: flex; justify-content: space-between; align-items: start; gap: 12px; flex-wrap: wrap; }
-  h1 { margin: 4px 0 8px; overflow-wrap: anywhere; }
-  .meta { gap: 12px; }
+  .titlebar { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 32px; }
+  .titlebar .label { min-width: 0; }
+  .actions { display: flex; gap: 6px; flex: none; }
+  h1 { margin: 2px 0 10px; overflow-wrap: anywhere; }
+  .meta { gap: 8px 16px; }
+  .progress { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); }
+  .progress b { color: var(--ink); }
+  .bar { width: 72px; height: 6px; background: var(--line); border-radius: 1px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: var(--accent); }
+  .champ { display: inline-flex; align-items: baseline; gap: 8px; font-size: 17px; }
+  .champ .label { color: var(--accent); }
+  @media (max-width: 520px) {
+    .print { display: none; }
+  }
   .status {
     font: 600 13px/1 var(--font-cond); letter-spacing: 0.08em; text-transform: uppercase;
     padding: 5px 7px; border: 1px solid var(--line-strong); border-radius: var(--radius);
   }
   .s-running { border-color: var(--accent); color: var(--accent); }
   .s-finished { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-  .champ { font-size: 16px; }
   .jcode { font: 700 16px var(--font-cond); letter-spacing: 0.12em; color: var(--ink); }
   .notice { margin-top: 16px; }
   .tabs {
@@ -472,5 +507,9 @@
     white-space: nowrap;
   }
   .tabs a.on { color: var(--ink); border-bottom-color: var(--accent); }
+  @media (max-width: 520px) {
+    .tabs { margin-left: -16px; margin-right: -16px; padding: 0 8px; }
+    .tabs a { padding: 10px 8px; font-size: 15px; letter-spacing: 0.03em; }
+  }
   .hint { margin-bottom: 10px; }
 </style>
