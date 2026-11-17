@@ -11,7 +11,8 @@ Free tournament brackets for any game, where any result can be edited later with
   - Change an old result and every later match updates. Matches that were already played get flagged so you can choose to reset (replay) or keep the score.
   - Add a late entrant, remove someone, put in a sub, reseed, or change the format partway through.
   - Every change goes in the log and can be undone.
-- **Run it together, like Challonge:** anyone can create a tournament and becomes its organizer. Send helpers a link to run it with you, let players sign themselves up, and let them report their own scores with a PIN. No accounts.
+- **Run it together, like Challonge:** anyone can create a tournament and becomes its organizer. Send helpers a link to run it with you, let players sign themselves up, and let them report their own scores with a PIN. No account needed.
+  - **Player accounts (optional):** a username and password that bring your PINs and the tournaments you run to any device, and let you join with one tap. Forgotten passwords are reset by the site admin.
 - **At the venue:**
   - **Join code + door poster:** every tournament has a short code (like `K7QM2X`). People type it in "Join with code" on the home page, or scan the QR code on the printable door poster (Edit tab → Door poster).
   Both open a sign-up page made for phones: type your name, tap Join, and it shows your PIN (or waitlist place), an "I'm here" check-in button, and later your next match and any score your opponent wants you to confirm.
@@ -62,6 +63,7 @@ npm run build     # build the site into dist/
 - [x] Group stage / Swiss / round robin → finals (top cut)
 - [x] Organizers, helpers, player sign-up, players report their own scores (PIN)
 - [x] Join codes and QR door poster, player limit and waitlist, check-in, drop-outs, score confirmation
+- [x] Player accounts (optional)
 - [ ] Rate-limit PIN guesses
 - [ ] Discord announcements
 - [ ] Import from Challonge

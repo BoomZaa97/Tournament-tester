@@ -18,6 +18,7 @@
   // re-read when the doc changes: signing up, checking in or reporting remembers the PIN on this device
   const mine = $derived.by(() => {
     void doc.updatedAt;
+    void app.accountSync; // logging in brings this player's PINs
     return myPin(doc.id);
   });
 
@@ -45,12 +46,15 @@
     }
   }
 
-  async function join() {
-    if (!name.trim() || !app.store.signup) return;
+  let byName = $state(false);
+
+  /** By name, or (no name) as the logged-in account. */
+  async function join(asAccount = false) {
+    if ((!asAccount && !name.trim()) || !app.store.signup) return;
     busy = true;
     error = '';
     try {
-      const r = await app.store.signup(doc.id, name.trim());
+      const r = await app.store.signup(doc.id, asAccount ? undefined : name.trim());
       app.notify(r.waitlisted ? "You're on the waitlist" : "You're in");
       onjoined(r.tournament);
     } catch (e) {
@@ -67,7 +71,9 @@
     {#if iDropped}
       <p class="small"><b>You dropped out.</b> Your results stay in the standings. Ask the organizer if you want back in.</p>
     {:else}
-      <p class="small muted">You need it to report your own scores. This device remembers it; write it down for other devices.</p>
+      <p class="small muted">
+        You need it to report your own scores. {app.account ? 'Your account keeps it for your other devices.' : 'This device remembers it; write it down for other devices.'}
+      </p>
       {#if canDrop}
         <div class="row"><button class="small danger" disabled={busy} onclick={dropOut}>Drop out</button></div>
       {/if}
@@ -81,6 +87,20 @@
       Your PIN is <b class="pin">{mine!.pin}</b>.
     </p>
     <p class="small muted">If a spot opens, the organizer moves people up in order. Keep your PIN: you'll need it to play.</p>
+  </div>
+{:else if open && app.account && !byName}
+  <div class="panel box">
+    <div>
+      <b>Sign-up is open.</b>
+      {#if full}<span class="small muted">All {doc.maxPlayers} spots are taken: you'll go on the waitlist.</span>{/if}
+    </div>
+    <div class="row">
+      <button class="primary" disabled={busy} onclick={() => join(true)}>
+        {busy ? 'Joining…' : `${full ? 'Join waitlist' : 'Join'} as ${app.account.name}`}
+      </button>
+      <button class="small ghost" onclick={() => (byName = true)}>Another name</button>
+    </div>
+    {#if error}<p class="small err">{error}</p>{/if}
   </div>
 {:else if open}
   <form class="panel box" onsubmit={(e) => { e.preventDefault(); join(); }}>
@@ -98,6 +118,9 @@
         {busy ? 'Joining…' : full ? 'Join waitlist' : 'Join'}
       </button>
     </div>
+    {#if app.store.login && !app.account}
+      <p class="small muted">Have an account? <a href="#/account/t/{doc.id}">Log in</a> to join with one tap.</p>
+    {/if}
     {#if error}<p class="small err">{error}</p>{/if}
   </form>
 {/if}

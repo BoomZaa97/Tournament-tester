@@ -40,6 +40,15 @@ Made because Challonge made fixing wrong results hard.
   a normal conflict for the organizer. Swiss rounds a player reports into get frozen on load (`toState` calls
   `lockSwissRounds`) and stored on the next organizer save.
 - Entrant rewrites carry PINs over by playerId; new entrants get a PIN.
+- Accounts (optional, `Accounts` tab, `routes/Account.svelte` at `#/account[/<return path>]`): username + password linked to
+  one player. They add NO new rights: `me` hands a logged-in device the player's PINs and the account's org keys
+  (`Accounts.orgKeys`, plain keys checked against `orgKeyHash`), written into `tt.pins.v1` / `tt.keys.v1`, so all PIN /
+  org-key code works unchanged. `tt.account.v1` = {token, account, pins, keys}; the lists are what logout removes again.
+  Token = `accountId.HMAC(ACCOUNT_SECRET, salt)` (stateless; a new salt on password change/reset logs other devices out).
+  Passwords: HMAC with salt. 5 wrong in a row → 10 min lock. `signup` with `token` joins as the account's player; a name
+  that belongs to an account can't be used by name. Registering a name that already played needs a PIN of that player
+  (device PINs sent as `claims`, or join code + PIN typed). Admin: `resetPassword` (Player page). Players list has
+  `account: true`. `app.account` / `app.accountSync` (pages re-read `myPin` when it changes); `app.syncAccount()` on start.
 - `store.canEdit(id)` (admin key or org key for that id) replaces the old global flag.
 
 ## Architecture

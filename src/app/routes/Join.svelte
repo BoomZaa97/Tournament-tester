@@ -40,6 +40,7 @@
   // re-read when the doc changes: signing up or checking in remembers the PIN on this device
   const mine = $derived.by(() => {
     void doc?.updatedAt;
+    void app.accountSync; // logging in brings this player's PINs
     return myPin(id);
   });
   const results = $derived(doc ? Object.keys(doc.results).length : 0);
@@ -94,6 +95,8 @@
   let name = $state('');
   let pin = $state('');
   let havePin = $state(false);
+  /** Logged in, but signing up someone else by name. */
+  let byName = $state(false);
   let actionError = $state('');
 
   async function act(fn: () => Promise<TournamentDoc>, done?: string) {
@@ -108,10 +111,11 @@
       busy = false;
     }
   }
-  function join() {
-    if (!name.trim() || !app.store.signup) return;
+  /** Sign up by name, or (no name) as the logged-in account. */
+  function join(asAccount = false) {
+    if ((!asAccount && !name.trim()) || !app.store.signup) return;
     act(async () => {
-      const r = await app.store.signup!(id, name.trim());
+      const r = await app.store.signup!(id, asAccount ? undefined : name.trim());
       app.notify(r.waitlisted ? "You're on the waitlist" : "You're in");
       return r.tournament;
     });
@@ -204,7 +208,9 @@
           <span class="small">Your PIN</span>
           <span class="pin">{mine!.pin}</span>
         </div>
-        <p class="small muted">You need it to report your scores. This phone remembers it; write it down in case you switch phones.</p>
+        <p class="small muted">
+          You need it to report your scores. {app.account ? 'Your account keeps it: log in on any phone to get it back.' : 'This phone remembers it; write it down in case you switch phones.'}
+        </p>
       </section>
       {/if}
 
@@ -223,6 +229,14 @@
       {#if next && results === 0}
         {@render nextCard(next)}
       {/if}
+    {:else if open && app.account && !byName}
+      <section class="card">
+        <button class="primary big" disabled={busy} onclick={() => join(true)}>
+          {busy ? 'Joining…' : `${full ? 'Join the waitlist' : 'Join'} as ${app.account.name}`}
+        </button>
+        {#if full}<p class="small muted">All spots are taken. You'll get a place on the waitlist.</p>{/if}
+        <button class="ghost small linkish" onclick={() => (byName = true)}>Join under another name or as a team</button>
+      </section>
     {:else if open}
       <form class="card" onsubmit={(e) => { e.preventDefault(); join(); }}>
         <label class="field">
@@ -233,6 +247,9 @@
           {busy ? 'Joining…' : full ? 'Join the waitlist' : 'Join'}
         </button>
         {#if full}<p class="small muted">All spots are taken. You'll get a PIN and a place on the waitlist.</p>{/if}
+        {#if app.store.login && !app.account}
+          <p class="small muted">Have an account? <a href="#/account/j/{id}">Log in</a> to join with one tap.</p>
+        {/if}
       </form>
     {/if}
 

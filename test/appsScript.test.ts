@@ -2,12 +2,13 @@
  * Runs apps-script/Code.gs in Node against a fake in-memory spreadsheet,
  * so the Google Sheets backend is tested without a Google account.
  */
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
 
 function fakeGoogle(adminKey = 'secret') {
+  const props = new Map<string, string>([['ADMIN_KEY', adminKey]]);
   const sheets = new Map<string, string[][]>();
   const sheet = (name: string) => {
     const grid = () => sheets.get(name)!;
@@ -57,12 +58,14 @@ function fakeGoogle(adminKey = 'secret') {
       MimeType: { JSON: 'json' },
       createTextOutput: (text: string) => ({ setMimeType: () => ({ text }) }),
     },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: () => adminKey }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k: string) => props.get(k) ?? null, setProperty: (k: string, v: string) => void props.set(k, v) }) },
     LockService: { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) },
     Utilities: {
       DigestAlgorithm: { SHA_256: 'sha256' },
       Charset: { UTF_8: 'utf8' },
       // Apps Script returns signed bytes (-128..127)
+      computeHmacSha256Signature: (v: string, k: string) => [...createHmac('sha256', k).update(v, 'utf8').digest()].map((b) => (b > 127 ? b - 256 : b)),
+      getUuid: () => randomUUID(),
       computeDigest: (_alg: string, s: string) => [...createHash('sha256').update(s, 'utf8').digest()].map((b) => (b > 127 ? b - 256 : b)),
     },
     JSON,
@@ -437,6 +440,114 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(draw('A-RR1-1').error).toBeUndefined();
       // the finals settings survive the round trip
       expect(g.get({ action: 'get', id: 'o3' }).tournament.options.finals).toEqual({ format: 'single_elim', advance: 2 });
+    });
+  });
+
+  describe('accounts', () => {
+    const ORG = 'organizer-key-0123456789';
+    const open = { ...doc, id: 'o1', format: 'swiss', options: {}, results: {}, log: [], signup: true };
+    type G = ReturnType<typeof fakeGoogle>;
+    const create = (g: G, extra: Record<string, unknown> = {}) =>
+      g.post({ action: 'save', orgKey: ORG, tournament: open, players: open.entrants, ...extra });
+    const reg = (g: G, body: Record<string, unknown>) => g.post({ action: 'register', password: 'hunter22', ...body });
+    const pinsOf = (g: G) => g.post({ action: 'pins', id: 'o1', orgKey: ORG }).pins as Record<string, string>;
+
+    it('register, log in, wrong passwords lock the account for a while; nothing secret is public', () => {
+      const g = fakeGoogle();
+      const r = reg(g, { username: 'Dana_1', name: 'Dana' });
+      expect(r.error).toBeUndefined();
+      expect(r.account).toMatchObject({ username: 'dana_1', name: 'Dana' });
+      expect(r.token).toMatch(/^\w+\.[0-9a-f]{40}$/);
+      expect(reg(g, { username: 'dana_1', name: 'Other' }).error).toMatch(/taken/);
+      expect(reg(g, { username: 'x', name: 'Other' }).error).toMatch(/3 to 24/);
+      expect(reg(g, { username: 'other', name: 'Other', password: '123' }).error).toMatch(/6 characters/);
+
+      const ok = g.post({ action: 'login', username: ' DANA_1 ', password: 'hunter22' });
+      expect(ok.account.playerId).toBe(r.account.playerId);
+      expect(ok.token).toBe(r.token);
+      for (let i = 0; i < 5; i++) expect(g.post({ action: 'login', username: 'dana_1', password: 'nope' }).error).toBe('Wrong username or password');
+      // 5 wrong in a row: even the right password has to wait
+      expect(g.post({ action: 'login', username: 'dana_1', password: 'hunter22' }).error).toMatch(/Try again in 10 minutes/);
+
+      const all = g.get({ action: 'all' });
+      expect(all.players).toEqual([{ id: r.account.playerId, name: 'Dana', account: true }]);
+      const text = JSON.stringify(all);
+      expect(text).not.toContain('hunter22');
+      expect(text).not.toContain('passHash');
+      // the password itself is never stored
+      expect(g.sheets.get('Accounts')!.flat().join(' ')).not.toContain('hunter22');
+    });
+
+    it('join with one tap; a name with an account can only be used by logging in', () => {
+      const g = fakeGoogle();
+      create(g);
+      const { token, account } = reg(g, { username: 'dana', name: 'Dana' });
+      const out = g.post({ action: 'signup', id: 'o1', token });
+      expect(out.error).toBeUndefined();
+      expect(out.playerId).toBe(account.playerId);
+      expect(out.pin).toMatch(/^\d{6}$/);
+      expect(out.tournament.entrants.map((e: { name: string }) => e.name)).toContain('Dana');
+      expect(g.post({ action: 'signup', id: 'o1', token }).error).toMatch(/already signed up/);
+      expect(g.post({ action: 'signup', id: 'o1', name: 'dana' }).error).toMatch(/has an account/);
+      expect(g.post({ action: 'signup', id: 'o1', token: token.slice(0, -1) + 'x' }).error).toMatch(/log in again/);
+    });
+
+    it('a logged-in device gets its PINs and organizer keys; keys it brings are kept for other devices', () => {
+      const g = fakeGoogle();
+      const { token } = reg(g, { username: 'olga', name: 'Olga' });
+      // made while logged in: the account keeps the key
+      expect(create(g, { token }).error).toBeUndefined();
+      // made on another device before logging in, brought along on the next sync
+      const KEY2 = 'second-organizer-key-99';
+      g.post({ action: 'save', orgKey: KEY2, tournament: { ...open, id: 'o2' }, players: open.entrants });
+      const signed = g.post({ action: 'signup', id: 'o2', token });
+
+      const me = g.post({ action: 'me', token, orgKeys: { o2: KEY2, o1: 'wrong-key-wrong-key', nope: KEY2 } });
+      expect(me.orgKeys).toEqual({ o1: ORG, o2: KEY2 });
+      expect(me.pins).toEqual({ o2: { playerId: signed.playerId, pin: signed.pin } });
+      expect(g.post({ action: 'me', token }).orgKeys).toEqual({ o1: ORG, o2: KEY2 });
+      // deleted tournaments drop out
+      g.post({ action: 'delete', id: 'o2', orgKey: KEY2 });
+      expect(g.post({ action: 'me', token }).orgKeys).toEqual({ o1: ORG });
+      expect(g.post({ action: 'me', token: 'abc.def' }).error).toMatch(/log in again/);
+    });
+
+    it('taking over a player who already played needs one of their PINs', () => {
+      const g = fakeGoogle();
+      create(g);
+      const dana = g.post({ action: 'signup', id: 'o1', name: 'Dana' });
+      expect(reg(g, { username: 'dana', name: 'dana' }).error).toMatch(/join code and your PIN/);
+      expect(reg(g, { username: 'dana', name: 'Dana', claims: [{ id: 'o1', pin: '000000' }] }).error).toMatch(/join code and your PIN/);
+      // the PIN this device remembers
+      const r = reg(g, { username: 'dana', name: 'Dana', claims: [{ id: 'o1', pin: dana.pin }] });
+      expect(r.account.playerId).toBe(dana.playerId);
+      expect(reg(g, { username: 'dana2', name: 'Dana', claims: [{ id: 'o1', pin: dana.pin }] }).error).toMatch(/already has an account/);
+      // or typed with the join code, under a new name (renames the player everywhere)
+      const code = g.get({ action: 'get', id: 'o1' }).tournament.code as string;
+      const r2 = reg(g, { username: 'ally', name: 'Ally', claim: { code: code.toLowerCase(), pin: pinsOf(g)['a'] } });
+      expect(r2.account).toMatchObject({ playerId: 'a', name: 'Ally' });
+      expect(g.get({ action: 'get', id: 'o1' }).tournament.entrants[0].name).toBe('Ally');
+      expect(reg(g, { username: 'z9z', name: 'Zed', claim: { code, pin: '123456' } }).error).toMatch(/don't match/);
+    });
+
+    it('change password logs out other devices; rename yourself; the admin resets a password', () => {
+      const g = fakeGoogle();
+      create(g);
+      const { token, account } = reg(g, { username: 'dana', name: 'Dana' });
+      expect(g.post({ action: 'password', token, password: 'wrong!', newPassword: 'newpass1' }).error).toMatch(/current password/);
+      const changed = g.post({ action: 'password', token, password: 'hunter22', newPassword: 'newpass1' });
+      expect(changed.token).not.toBe(token);
+      expect(g.post({ action: 'me', token }).error).toMatch(/log in again/);
+      expect(g.post({ action: 'login', username: 'dana', password: 'newpass1' }).token).toBe(changed.token);
+
+      expect(g.post({ action: 'rename', token: changed.token, name: 'Alice' }).error).toMatch(/already called/);
+      expect(g.post({ action: 'rename', token: changed.token, name: 'Dana B' }).account.name).toBe('Dana B');
+
+      expect(g.post({ action: 'resetPassword', playerId: account.playerId, orgKey: ORG }).error).toMatch(/site admin/);
+      const reset = g.post({ action: 'resetPassword', playerId: account.playerId, key: 'secret' });
+      expect(reset.username).toBe('dana');
+      expect(g.post({ action: 'login', username: 'dana', password: reset.password }).account.name).toBe('Dana B');
+      expect(g.post({ action: 'me', token: changed.token }).error).toMatch(/log in again/);
     });
   });
 

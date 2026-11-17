@@ -17,6 +17,8 @@ export interface Row {
 export interface Player {
   id: string;
   name: string;
+  /** Has a player account (from the Google script's player list; never saved back). */
+  account?: boolean;
 }
 
 export interface LogEntry {

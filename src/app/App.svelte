@@ -8,8 +8,11 @@
   import Players from './routes/Players.svelte';
   import PlayerPage from './routes/Player.svelte';
   import Settings from './routes/Settings.svelte';
+  import Account from './routes/Account.svelte';
 
   const section = $derived(app.path[0] ?? '');
+  // bring a logged-in account's PINs and organizer keys onto this device
+  app.syncAccount();
 </script>
 
 <header class="top no-print">
@@ -22,6 +25,9 @@
       <a href="#/" class:on={section === '' || section === 't' || section === 'j' || section === 'new'}>Tournaments</a>
       <a href="#/players" class:on={section === 'players' || section === 'p'}>Players</a>
       <a href="#/settings" class:on={section === 'settings'}>Settings</a>
+      {#if app.store.kind === 'sheets'}
+        <a href="#/account" class="acct" class:on={section === 'account'}>{app.account ? app.account.name : 'Log in'}</a>
+      {/if}
     </nav>
   </div>
 </header>
@@ -42,6 +48,8 @@
       <PlayerPage id={app.path[1]} />
     {:else if section === 'settings'}
       <Settings />
+    {:else if section === 'account'}
+      <Account next={app.path.slice(1).join('/')} />
     {:else}
       <Home />
     {/if}
@@ -112,6 +120,12 @@
     font-size: 15px;
     color: var(--ink-2);
     border-bottom: 3px solid transparent;
+  }
+  nav a.acct {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   nav a.on {
     color: var(--ink);

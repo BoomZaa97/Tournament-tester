@@ -13,6 +13,10 @@
  *     the same key through a helper link;
  *   - players: sign up while sign-up is open, and report their own unplayed matches
  *     with their 6-digit PIN (Entrants.pin, never sent to viewers).
+ *   - accounts (optional, Accounts tab): a username and password linked to one player. Logging in
+ *     gives a device that player's PINs and the organizer keys of the tournaments they made, so
+ *     everything above works on any device. Passwords are stored salted and hashed with a secret
+ *     (ACCOUNT_SECRET script property, made by the script the first time it's needed).
  *
  * Every tab is plain rows, so you can read and fix data by hand. In the Results
  * tab, the `winner` column accepts p1 / p2 / draw, or simply the winner's name.
@@ -32,6 +36,8 @@ var TABLES = {
   Log: ['tournamentId', 'time', 'summary', 'undone', 'id', 'changes', 'restore'],
   // People who signed up after the player limit was reached, in order (oldest first).
   Waitlist: ['tournamentId', 'playerId', 'name', 'pin', 'at', 'checkedIn'],
+  // Player accounts. Delete a row to delete an account (the player and their results stay).
+  Accounts: ['id', 'username', 'playerId', 'passHash', 'salt', 'createdAt', 'orgKeys', 'fails', 'lockedUntil'],
 };
 
 var CELL_LIMIT = 45000; // Google Sheets allows 50,000 characters per cell
@@ -68,12 +74,21 @@ function doPost(e) {
         if (!isAdmin) throw new Error('Only the site admin can rename players');
         return renamePlayer(body.id, body.name);
       }
-      if (body.action === 'signup') return signUp(body.id, body.name);
+      if (body.action === 'signup') return signUp(body.id, body.name, body.token);
       if (body.action === 'report') return report(body.id, body.matchId, body.pin, body.result, body.matchNo);
       if (body.action === 'pins') return { pins: pinsFor(body.id, body, isAdmin) };
       if (body.action === 'checkin') return checkIn(body, isAdmin);
       if (body.action === 'drop') return dropOut(body.id, body.pin);
       if (body.action === 'confirm') return confirmResult(body.id, body.matchId, body.pin, body.ok !== false, body.matchNo);
+      if (body.action === 'register') return register(body);
+      if (body.action === 'login') return logIn(body.username, body.password);
+      if (body.action === 'me') return aboutMe(body.token, body.orgKeys);
+      if (body.action === 'password') return changePassword(body.token, body.password, body.newPassword);
+      if (body.action === 'rename') return renameSelf(body.token, body.name);
+      if (body.action === 'resetPassword') {
+        if (!isAdmin) throw new Error('Only the site admin can reset passwords');
+        return resetPassword(body.playerId);
+      }
       throw new Error('Unknown action: ' + body.action);
     } finally {
       lock.releaseLock();
@@ -99,7 +114,16 @@ function readAll() {
   var tournaments = data.Tournaments.map(function (t) {
     return assemble(t, data);
   });
-  return { tournaments: tournaments, players: data.Players.map(toPlayer) };
+  var hasAccount = {};
+  data.Accounts.forEach(function (a) {
+    hasAccount[a.playerId] = true;
+  });
+  var players = data.Players.map(function (p) {
+    var out = toPlayer(p);
+    if (hasAccount[p.id]) out.account = true;
+    return out;
+  });
+  return { tournaments: tournaments, players: players };
 }
 
 function readTournament(id) {
@@ -408,6 +432,16 @@ function saveTournament(doc, players, body, isAdmin) {
   writeTable('Results', results);
   writeTable('Log', log);
   writeTable('Waitlist', waitlist);
+  // Made while logged in: the account keeps the organizer key, so every device it logs in on can edit it.
+  if (!existing && body.token && body.orgKey) {
+    var owner = accountFromToken(body.token, data);
+    if (owner) {
+      var keys = json(owner.orgKeys, {});
+      keys[doc.id] = String(body.orgKey);
+      owner.orgKeys = JSON.stringify(keys);
+      writeTable('Accounts', data.Accounts);
+    }
+  }
   // Send back what is stored now (code, waitlist, ...), exactly as a reload would see it.
   return assemble(tRow, { Entrants: entrants, Results: results, Log: log, Waitlist: waitlist });
 }
@@ -514,12 +548,31 @@ function logRow(id, summary, changes) {
   };
 }
 
-/** A player adds themselves while sign-up is open and nothing has been played. */
-function signUp(id, rawName) {
-  var name = String(rawName || '').replace(/\s+/g, ' ').trim();
+/** A cleaned-up player name, or an error. */
+function cleanName(raw) {
+  var name = String(raw || '').replace(/\s+/g, ' ').trim();
   if (!name) throw new Error('Type your name');
   if (name.length > 60) throw new Error('That name is too long');
+  return name;
+}
+
+/**
+ * A player adds themselves while sign-up is open and nothing has been played:
+ * by name, or (with an account token) as the account's player.
+ */
+function signUp(id, rawName, token) {
   var data = loadTables();
+  var account = null;
+  var name;
+  if (token) {
+    account = accountFromToken(token, data);
+    if (!account) throw new Error(LOGGED_OUT);
+    var own = findById(data.Players, account.playerId);
+    name = own ? String(own.name) : '';
+    if (!name) throw new Error('Your account has no player. Ask the site admin.');
+  } else {
+    name = cleanName(rawName);
+  }
   var t = findTournament(data.Tournaments, id);
   if (!t) throw new Error('Tournament not found');
   if (!truthy(t.signup)) throw new Error('Sign-up is closed for this tournament');
@@ -534,13 +587,18 @@ function signUp(id, rawName) {
   var waiting = waitlistOf(id, data);
   var everyone = mine.concat(waiting);
   var lower = name.toLowerCase();
-  var player = data.Players.filter(function (p) {
-    return String(p.name).trim().toLowerCase() === lower;
-  })[0];
+  var player = account
+    ? findById(data.Players, account.playerId)
+    : data.Players.filter(function (p) {
+        return String(p.name).trim().toLowerCase() === lower;
+      })[0];
+  if (!account && player && accountOf(player.id, data)) {
+    throw new Error(player.name + ' has an account. Log in to join as ' + player.name + ', or use another name.');
+  }
   var taken = everyone.some(function (e) {
     return String(e.name).trim().toLowerCase() === lower || (player && e.playerId === player.id);
   });
-  if (taken) throw new Error('Someone called "' + name + '" is already signed up');
+  if (taken) throw new Error(account ? "You're already signed up" : 'Someone called "' + name + '" is already signed up');
   if (!player) {
     player = { id: newId(), name: name };
     data.Players.push(player);
@@ -838,6 +896,281 @@ function pinsFor(id, body, isAdmin) {
   });
   if (changed) writeTable('Entrants', data.Entrants);
   return out;
+}
+
+// ------------------------------------------------------------------ accounts
+
+/*
+ * An account is a username + password linked to one player (Players tab). It doesn't add new
+ * rights: logging in hands the device that player's PINs and the organizer keys of tournaments
+ * the account made (or opened with a helper link while logged in), and the app uses those as
+ * before. Tokens are "accountId.signature": no session table, and changing the password (new
+ * salt) logs out every other device.
+ */
+
+var LOGGED_OUT = 'Your login has expired. Please log in again.';
+var MAX_FAILS = 5; // wrong passwords in a row before the account is locked for a while
+var LOCK_MINUTES = 10;
+
+function accountSecret() {
+  var props = PropertiesService.getScriptProperties();
+  var secret = props.getProperty('ACCOUNT_SECRET');
+  if (!secret) {
+    secret = Utilities.getUuid() + Utilities.getUuid();
+    props.setProperty('ACCOUNT_SECRET', secret);
+  }
+  return secret;
+}
+
+function hmac(value) {
+  var bytes = Utilities.computeHmacSha256Signature(value, accountSecret(), Utilities.Charset.UTF_8);
+  return bytes
+    .map(function (b) {
+      var h = (b < 0 ? b + 256 : b).toString(16);
+      return h.length === 1 ? '0' + h : h;
+    })
+    .join('');
+}
+
+function passwordHash(salt, password) {
+  return hmac('password:' + salt + ':' + password);
+}
+
+function tokenFor(a) {
+  return a.id + '.' + hmac('session:' + a.id + ':' + a.salt).slice(0, 40);
+}
+
+/** The Accounts row this token belongs to, or null. */
+function accountFromToken(token, data) {
+  var parts = String(token || '').split('.');
+  if (parts.length !== 2) return null;
+  var a = findById(data.Accounts, parts[0]);
+  return a && tokenFor(a) === String(token) ? a : null;
+}
+
+function findById(rows, id) {
+  return (
+    rows.filter(function (r) {
+      return r.id === id;
+    })[0] || null
+  );
+}
+
+function accountOf(playerId, data) {
+  return (
+    data.Accounts.filter(function (a) {
+      return a.playerId === playerId;
+    })[0] || null
+  );
+}
+
+function cleanUsername(raw) {
+  var u = String(raw || '').trim().toLowerCase();
+  if (!/^[a-z0-9_.-]{3,24}$/.test(u)) {
+    throw new Error('Usernames are 3 to 24 letters, numbers, dots, dashes or underscores');
+  }
+  return u;
+}
+
+function checkPassword(p) {
+  p = String(p || '');
+  if (p.length < 6) throw new Error('Use at least 6 characters for the password');
+  if (p.length > 100) throw new Error('That password is too long');
+  return p;
+}
+
+function newSalt() {
+  return Utilities.getUuid().replace(/-/g, '');
+}
+
+/** What the app may know about an account (never the hash or salt). */
+function accountInfo(a, data) {
+  var p = findById(data.Players, a.playerId);
+  return { id: a.id, username: a.username, playerId: a.playerId, name: p ? p.name : a.username };
+}
+
+/** The player this PIN belongs to in a tournament (by id or join code), or null. */
+function playerByPin(claim, data) {
+  if (!claim || !claim.pin) return null;
+  var t = claim.id
+    ? findTournament(data.Tournaments, claim.id)
+    : data.Tournaments.filter(function (r) {
+        return cleanCode(r.code) === cleanCode(claim.code) && !!cleanCode(claim.code);
+      })[0];
+  if (!t) return null;
+  var row = byPin(t.id, claim.pin, data, true);
+  return row ? row.playerId : null;
+}
+
+/**
+ * Create an account. The display name becomes a player. If a player with that name already
+ * played here, the account takes them over only with proof: a PIN they had in one of their
+ * tournaments (sent by the app from this device, or typed with that tournament's join code).
+ */
+function register(body) {
+  var data = loadTables();
+  var username = cleanUsername(body.username);
+  var password = checkPassword(body.password);
+  var name = cleanName(body.name);
+  var taken = data.Accounts.some(function (a) {
+    return String(a.username).toLowerCase() === username;
+  });
+  if (taken) throw new Error('The username ' + username + ' is taken');
+
+  var lower = name.toLowerCase();
+  var sameName = data.Players.filter(function (p) {
+    return String(p.name).trim().toLowerCase() === lower;
+  })[0];
+  var proven = {};
+  (Array.isArray(body.claims) ? body.claims : []).slice(0, 200).forEach(function (c) {
+    var pid = playerByPin(c, data);
+    if (pid) proven[pid] = true;
+  });
+  var player = null;
+  if (body.claim && body.claim.pin) {
+    // "I played here before": link the player behind this join code + PIN
+    var pid = playerByPin(body.claim, data);
+    if (!pid) throw new Error('That join code and PIN don\'t match anyone');
+    player = findById(data.Players, pid);
+    if (!player) throw new Error('That join code and PIN don\'t match anyone');
+    if (sameName && sameName.id !== player.id) throw new Error('Another player is already called ' + name + '. Pick a different name.');
+  } else if (sameName) {
+    if (!proven[sameName.id]) {
+      throw new Error(
+        'A player called ' + name + ' has played here before. If that\'s you, add the join code and your PIN ' +
+          'from one of their tournaments. If not, pick a different name.',
+      );
+    }
+    player = sameName;
+  }
+  if (player && accountOf(player.id, data)) throw new Error(player.name + ' already has an account. Log in instead.');
+
+  var renamed = false;
+  if (!player) {
+    player = { id: newId(), name: name };
+    data.Players.push(player);
+    writeTable('Players', data.Players);
+  } else if (player.name !== name) {
+    renamed = true;
+  }
+  var salt = newSalt();
+  var a = {
+    id: newId(),
+    username: username,
+    playerId: player.id,
+    passHash: passwordHash(salt, password),
+    salt: salt,
+    createdAt: new Date().toISOString(),
+    orgKeys: '',
+    fails: '',
+    lockedUntil: '',
+  };
+  data.Accounts.push(a);
+  writeTable('Accounts', data.Accounts);
+  if (renamed) renamePlayer(player.id, name);
+  return { token: tokenFor(a), account: accountInfo(a, loadTables()) };
+}
+
+function logIn(rawUsername, password) {
+  var data = loadTables();
+  var username = String(rawUsername || '').trim().toLowerCase();
+  var a = data.Accounts.filter(function (r) {
+    return String(r.username).toLowerCase() === username;
+  })[0];
+  if (!a) throw new Error('Wrong username or password');
+  var now = Date.now();
+  if (a.lockedUntil && new Date(a.lockedUntil).getTime() > now) {
+    var mins = Math.ceil((new Date(a.lockedUntil).getTime() - now) / 60000);
+    throw new Error('Too many wrong passwords. Try again in ' + mins + ' minute' + (mins === 1 ? '' : 's') + '.');
+  }
+  if (passwordHash(a.salt, String(password || '')) !== a.passHash) {
+    var fails = num(a.fails) + 1;
+    a.fails = fails >= MAX_FAILS ? '' : fails;
+    a.lockedUntil = fails >= MAX_FAILS ? new Date(now + LOCK_MINUTES * 60000).toISOString() : '';
+    writeTable('Accounts', data.Accounts);
+    throw new Error('Wrong username or password');
+  }
+  if (a.fails || a.lockedUntil) {
+    a.fails = '';
+    a.lockedUntil = '';
+    writeTable('Accounts', data.Accounts);
+  }
+  return { token: tokenFor(a), account: accountInfo(a, data) };
+}
+
+/**
+ * Everything a logged-in device needs: the account, this player's PINs (by tournament) and the
+ * account's organizer keys. Organizer keys the device already has (`orgKeys`, checked against
+ * each tournament's hash) are added to the account, so other devices get them too.
+ */
+function aboutMe(token, deviceKeys) {
+  var data = loadTables();
+  var a = accountFromToken(token, data);
+  if (!a) throw new Error(LOGGED_OUT);
+  var keys = json(a.orgKeys, {});
+  var before = JSON.stringify(keys);
+  Object.keys(deviceKeys || {})
+    .slice(0, 500)
+    .forEach(function (id) {
+      var t = findTournament(data.Tournaments, id);
+      if (t && t.orgKeyHash && sha256(String(deviceKeys[id])) === t.orgKeyHash) keys[id] = String(deviceKeys[id]);
+    });
+  // forget keys of deleted tournaments, and keys that no longer match (organizer key changed by hand)
+  Object.keys(keys).forEach(function (id) {
+    var t = findTournament(data.Tournaments, id);
+    if (!t || sha256(keys[id]) !== t.orgKeyHash) delete keys[id];
+  });
+  var after = JSON.stringify(keys);
+  if (after !== before && after.length <= CELL_LIMIT) {
+    a.orgKeys = after;
+    writeTable('Accounts', data.Accounts);
+  }
+  var pins = {};
+  data.Entrants.concat(data.Waitlist).forEach(function (e) {
+    if (e.playerId === a.playerId && e.pin) pins[e.tournamentId] = { playerId: e.playerId, pin: String(e.pin) };
+  });
+  return { account: accountInfo(a, data), pins: pins, orgKeys: keys };
+}
+
+function changePassword(token, oldPassword, newPassword) {
+  var data = loadTables();
+  var a = accountFromToken(token, data);
+  if (!a) throw new Error(LOGGED_OUT);
+  if (passwordHash(a.salt, String(oldPassword || '')) !== a.passHash) throw new Error('Your current password is wrong');
+  var p = checkPassword(newPassword);
+  a.salt = newSalt(); // also logs out every other device
+  a.passHash = passwordHash(a.salt, p);
+  writeTable('Accounts', data.Accounts);
+  return { token: tokenFor(a), account: accountInfo(a, data) };
+}
+
+/** Change your own display name (renames the player everywhere, like the admin's Rename). */
+function renameSelf(token, rawName) {
+  var data = loadTables();
+  var a = accountFromToken(token, data);
+  if (!a) throw new Error(LOGGED_OUT);
+  var name = cleanName(rawName);
+  var lower = name.toLowerCase();
+  var clash = data.Players.some(function (p) {
+    return p.id !== a.playerId && String(p.name).trim().toLowerCase() === lower;
+  });
+  if (clash) throw new Error('Another player is already called ' + name);
+  renamePlayer(a.playerId, name);
+  return { account: accountInfo(a, loadTables()) };
+}
+
+/** Site admin: give an account a new random password (people have no email here to reset it). */
+function resetPassword(playerId) {
+  var data = loadTables();
+  var a = accountOf(playerId, data);
+  if (!a) throw new Error('That player has no account');
+  var password = Utilities.getUuid().replace(/-/g, '').slice(0, 10);
+  a.salt = newSalt();
+  a.passHash = passwordHash(a.salt, password);
+  a.fails = '';
+  a.lockedUntil = '';
+  writeTable('Accounts', data.Accounts);
+  return { username: a.username, password: password };
 }
 
 // ------------------------------------------------------------------ sheet helpers

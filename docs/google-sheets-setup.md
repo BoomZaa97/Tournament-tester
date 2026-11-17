@@ -10,15 +10,19 @@ This lets other people see, run and join tournaments, and keeps all data in a Go
 | Organizer | Whoever creates a tournament. Their browser gets a secret organizer key for it automatically | Edit or delete **that** tournament, open sign-up, set a player limit, move people up from the waitlist, run check-in, drop players, settle disputed scores, see its player PINs |
 | Helper | Opens the organizer's **helper link** (Edit tab → Players and helpers) | Same as the organizer, for that tournament |
 | Player | Signs up on the tournament page (if sign-up is open) and gets a **6-digit PIN**, or gets it from the organizer | Report the score of their own unplayed match; confirm or dispute a score their opponent reported; check in ("I'm here") before the start; drop out once it has started. Fixing a result stays with the organizer. |
+| Account holder | Makes a username + password on the site's **Log in** page (optional) | The same as above, on any device: logging in brings their PINs and the organizer keys of tournaments they made. Join a tournament with one tap. Change their own display name. |
 | Everyone else | The site link | View |
 
-There are no accounts: keys and PINs are remembered by each browser. The sheet only stores a hash of each organizer key,
-so the sheet itself doesn't give it away. PINs are stored in the `Entrants` tab (`pin` column) and never sent to viewers.
+Accounts are optional: without one, keys and PINs are remembered by each browser. The sheet only stores a hash of each
+organizer key, so the sheet itself doesn't give it away. PINs are stored in the `Entrants` tab (`pin` column) and never
+sent to viewers. Passwords are never stored: the `Accounts` tab keeps a salted hash made with a secret
+(`ACCOUNT_SECRET` script property, created by the script the first time someone makes an account; don't share it or change
+it, or every password stops working).
 
 ## 1. Make the sheet
 
 1. Go to [sheets.new](https://sheets.new) and name it something like `Tournament Tester data`.
-2. Leave it empty. The script creates the tabs (`Players`, `Tournaments`, `Entrants`, `Results`, `Log`, `Waitlist`) on first save.
+2. Leave it empty. The script creates the tabs (`Players`, `Tournaments`, `Entrants`, `Results`, `Log`, `Waitlist`, `Accounts`) on first save.
 
 ## 2. Add the script
 
@@ -73,6 +77,7 @@ The URL stays the same. New columns are added to the tabs by themselves on the n
 | Entrants | `checkedIn` | When the player tapped "I'm here" (empty = not yet) |
 | Results | `status`, `reportedBy` | For scores players reported: `reported` → `confirmed` or `disputed`; empty = entered by the organizer |
 | Waitlist (new tab) | `playerId`, `name`, `pin`, `at`, `checkedIn` | People waiting for a spot, oldest first. Not in the bracket. |
+| Accounts (new tab) | `username`, `playerId`, `passHash`, `salt`, `orgKeys`, `fails`, `lockedUntil` | Player accounts. `orgKeys` holds the organizer keys of the account's tournaments. Delete a row to delete an account (the player and their results stay). |
 
 Players who dropped out are in the Tournaments `options` column (`"dropped": [seed, …]`).
 
@@ -86,6 +91,8 @@ You can edit the sheet directly:
 - **Results** tab: change `winner` to `p1`, `p2`, `draw`, or just type the winner's name. Change `score1` and `score2` as needed.
   Delete a row to un-play a match.
 - **Players** tab: rename a player (or use Rename on their page in the app).
+- **Forgotten password:** open the player's page with your admin key and tap **Reset password**; give them the new one.
+  5 wrong passwords in a row lock an account for 10 minutes.
 
 If a manual edit makes later matches wrong, the app marks them **Check** and lets you fix them.
 

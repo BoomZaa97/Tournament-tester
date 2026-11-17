@@ -41,6 +41,12 @@
   const canEdit = $derived(app.store.canEdit(id));
 
   let doc = $state<TournamentDoc | null>(null);
+  // this device's PIN here; logging in (account sync) can bring one
+  const myPinNow = $derived.by(() => {
+    void app.accountSync;
+    void doc?.updatedAt;
+    return myPin(id);
+  });
   let players = $state<Player[]>([]);
   let missing = $state(false);
   let error = $state('');
@@ -403,7 +409,7 @@
         scoring={doc.scoring}
         {canEdit}
         canReport={!!app.store.report}
-        me={myPin(id)}
+        me={myPinNow}
         onsave={(input, decisions) => saveResult(openMatch!, input, decisions)}
         onreport={(input, pin) => reportResult(openMatch!, input, pin)}
         onconfirm={(ok, pin) => confirmReport(openMatch!, ok, pin)}

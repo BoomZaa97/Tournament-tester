@@ -29,7 +29,8 @@ export interface Store {
   /** The tournament with this join code. Throws if there is none. */
   findByCode(code: string): Promise<{ id: string; name: string }>;
   /** Shared (Google Sheet) mode only: players join and report their own scores. */
-  signup?(id: string, name: string): Promise<{ playerId: string; pin: string; waitlisted?: boolean; tournament: TournamentDoc }>;
+  /** By name, or (no name) as the logged-in account's player. */
+  signup?(id: string, name?: string): Promise<{ playerId: string; pin: string; waitlisted?: boolean; tournament: TournamentDoc }>;
   report?(id: string, matchId: string, pin: string, result: ReportedResult, matchNo?: number): Promise<TournamentDoc>;
   /** Mark someone as arrived (or not): a player with their PIN, or the organizer by player id. */
   checkin?(id: string, who: { pin: string } | { playerId: string }, here: boolean): Promise<TournamentDoc>;
@@ -39,6 +40,22 @@ export interface Store {
   drop?(id: string, pin: string): Promise<TournamentDoc>;
   /** Organizer/admin only: every entrant's PIN, by player id. */
   pins?(id: string): Promise<Record<string, string>>;
+  /** Player accounts (shared mode). Each returns the account now saved on this device. */
+  register?(input: { username: string; password: string; name: string; claim?: { code: string; pin: string } }): Promise<Account>;
+  login?(username: string, password: string): Promise<Account>;
+  /** Fetch this account's PINs and organizer keys onto this device (and share this device's keys with it). */
+  syncAccount?(): Promise<Account>;
+  changePassword?(password: string, newPassword: string): Promise<Account>;
+  renameSelf?(name: string): Promise<Account>;
+  /** Site admin: a new random password for the account of this player. */
+  resetPassword?(playerId: string): Promise<{ username: string; password: string }>;
+}
+
+export interface Account {
+  id: string;
+  username: string;
+  playerId: string;
+  name: string;
 }
 
 export type ReportedResult = Pick<MatchResult, 'winner' | 'score1' | 'score2' | 'p1' | 'p2'>;
@@ -79,6 +96,57 @@ export function myPin(id: string): { playerId: string; pin: string } | undefined
 export function rememberPin(id: string, playerId: string, pin: string) {
   writeJson(PINS, { ...readJson(PINS), [id]: { playerId, pin } });
 }
+
+// ---------------------------------------------------------------- account kept in this browser
+
+const ACCOUNT = 'tt.account.v1';
+/** Server message for a token that no longer works (password changed or reset). */
+export const LOGGED_OUT = 'Your login has expired. Please log in again.';
+
+interface SavedAccount {
+  token: string;
+  account: Account;
+  /** Tournament ids whose PIN / organizer key came from the account: removed again on log out. */
+  pins: string[];
+  keys: string[];
+}
+
+function savedAccount(): SavedAccount | null {
+  try {
+    const a = JSON.parse(localStorage.getItem(ACCOUNT) ?? 'null');
+    return a && a.token && a.account ? { pins: [], keys: [], ...a } : null;
+  } catch {
+    return null;
+  }
+}
+export function myAccount(): Account | null {
+  return savedAccount()?.account ?? null;
+}
+function saveAccount(a: SavedAccount) {
+  writeJson(ACCOUNT, a);
+}
+/** Log out on this device: forget the account and the PINs and organizer keys it brought. */
+export function forgetAccount() {
+  const a = savedAccount();
+  if (a) {
+    const pins = readJson(PINS);
+    for (const id of a.pins) delete pins[id];
+    writeJson(PINS, pins);
+    const keys = readJson<string>(KEYS);
+    for (const id of a.keys) delete keys[id];
+    writeJson(KEYS, keys);
+  }
+  try {
+    localStorage.removeItem(ACCOUNT);
+  } catch {
+    /* ignore */
+  }
+}
+/** Tournaments this device can edit with an organizer key. */
+export function orgKeyIds(): string[] {
+  return Object.keys(readJson<string>(KEYS));
+}
+
 /** Link that gives a helper the same rights as the organizer. */
 export function helperLink(id: string): string | undefined {
   const key = orgKeyFor(id);
@@ -231,7 +299,9 @@ export class SheetsStore implements Store {
       orgKey = makeOrgKey();
       rememberOrgKey(doc.id, orgKey);
     }
-    const r = await this.call<{ tournament: TournamentDoc }>('POST', { action: 'save', tournament: doc, players, orgKey: orgKey ?? '' });
+    const token = savedAccount()?.token;
+    const r = await this.call<{ tournament: TournamentDoc }>('POST', { action: 'save', tournament: doc, players, orgKey: orgKey ?? '', ...(token ? { token } : {}) });
+    if (token && doc.version === 0) this.track('keys', doc.id);
     return r.tournament;
   }
 
@@ -239,10 +309,88 @@ export class SheetsStore implements Store {
     await this.call('POST', { action: 'delete', id, orgKey: orgKeyFor(id) ?? '' });
   }
 
-  async signup(id: string, name: string) {
-    const r = await this.call<{ playerId: string; pin: string; waitlisted?: boolean; tournament: TournamentDoc }>('POST', { action: 'signup', id, name });
+  async signup(id: string, name?: string) {
+    const who = name === undefined ? { token: savedAccount()?.token ?? '' } : { name };
+    const r = await this.call<{ playerId: string; pin: string; waitlisted?: boolean; tournament: TournamentDoc }>('POST', { action: 'signup', id, ...who });
     rememberPin(id, r.playerId, r.pin);
+    if (name === undefined) this.track('pins', id);
     return r;
+  }
+
+  // ---- accounts
+
+  /** Remember that this tournament's PIN or key came with the account, so log out removes it. */
+  private track(kind: 'pins' | 'keys', id: string) {
+    const a = savedAccount();
+    if (a && !a[kind].includes(id)) saveAccount({ ...a, [kind]: [...a[kind], id] });
+  }
+
+  private async loggedIn(r: { token: string; account: Account }) {
+    const old = savedAccount();
+    const same = old?.account.id === r.account.id;
+    if (old && !same) forgetAccount();
+    saveAccount({ token: r.token, account: r.account, pins: same ? old!.pins : [], keys: same ? old!.keys : [] });
+    try {
+      return await this.syncAccount();
+    } catch {
+      return r.account; // logged in; PINs and keys come with the next sync
+    }
+  }
+
+  /** PINs this device remembers: proof for taking over a player who already played here. */
+  private claims() {
+    return Object.entries(readJson<{ playerId: string; pin: string }>(PINS)).map(([id, p]) => ({ id, pin: p.pin }));
+  }
+
+  async register(input: { username: string; password: string; name: string; claim?: { code: string; pin: string } }) {
+    const r = await this.call<{ token: string; account: Account }>('POST', { action: 'register', ...input, claims: this.claims() });
+    return this.loggedIn(r);
+  }
+
+  async login(username: string, password: string) {
+    const r = await this.call<{ token: string; account: Account }>('POST', { action: 'login', username, password });
+    return this.loggedIn(r);
+  }
+
+  async syncAccount() {
+    const a = savedAccount();
+    if (!a) throw new Error(LOGGED_OUT);
+    let r: { account: Account; pins: Record<string, { playerId: string; pin: string }>; orgKeys: Record<string, string> };
+    try {
+      r = await this.call('POST', { action: 'me', token: a.token, orgKeys: readJson<string>(KEYS) });
+    } catch (e) {
+      if (e instanceof Error && e.message === LOGGED_OUT) forgetAccount();
+      throw e;
+    }
+    // This device now acts as the account's player in its tournaments (a borrowed phone's PIN gives way).
+    writeJson(PINS, { ...readJson(PINS), ...r.pins });
+    writeJson(KEYS, { ...readJson<string>(KEYS), ...r.orgKeys });
+    const now = savedAccount() ?? a;
+    saveAccount({
+      ...now,
+      account: r.account,
+      pins: [...new Set([...now.pins, ...Object.keys(r.pins)])],
+      keys: [...new Set([...now.keys, ...Object.keys(r.orgKeys)])],
+    });
+    return r.account;
+  }
+
+  async changePassword(password: string, newPassword: string) {
+    const a = savedAccount();
+    const r = await this.call<{ token: string; account: Account }>('POST', { action: 'password', token: a?.token ?? '', password, newPassword });
+    if (a) saveAccount({ ...a, token: r.token, account: r.account });
+    return r.account;
+  }
+
+  async renameSelf(name: string) {
+    const a = savedAccount();
+    const r = await this.call<{ account: Account }>('POST', { action: 'rename', token: a?.token ?? '', name });
+    if (a) saveAccount({ ...a, account: r.account });
+    return r.account;
+  }
+
+  resetPassword(playerId: string) {
+    return this.call<{ username: string; password: string }>('POST', { action: 'resetPassword', playerId });
   }
 
   async report(id: string, matchId: string, pin: string, result: ReportedResult, matchNo?: number) {

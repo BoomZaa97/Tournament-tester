@@ -40,6 +40,16 @@
     return [...m.values()].sort((a, b) => b.w + b.l + b.d - (a.w + a.l + a.d));
   });
 
+  let reset = $state<{ username: string; password: string } | null>(null);
+  async function resetPassword() {
+    if (!stats || !confirm(`Give ${stats.player.name}'s account a new password? Their old one stops working.`)) return;
+    try {
+      reset = await app.store.resetPassword!(id);
+    } catch (err) {
+      app.notify(errorText(err), 'error');
+    }
+  }
+
   const ordinal = (n: number) => n + (['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] ?? 'th');
 
   async function rename(e: SubmitEvent) {
@@ -75,9 +85,19 @@
         <h1>{stats.player.name}</h1>
         {#if app.store.isAdmin}
           <button class="small ghost" onclick={() => { newName = stats!.player.name; renaming = true; }}>Rename</button>
+          {#if stats.player.account && app.store.resetPassword}
+            <button class="small ghost" onclick={resetPassword}>Reset password</button>
+          {/if}
         {/if}
       {/if}
     </div>
+    {#if stats.player.account}<p class="small muted acct">Has an account</p>{/if}
+    {#if reset}
+      <p class="notice">
+        New password for <b>{reset.username}</b>: <b class="pw">{reset.password}</b>. Give it to them; they can change it on their
+        Account page. Their other devices are logged out.
+      </p>
+    {/if}
 
     <dl class="stats">
       <div><dt class="label">Titles</dt><dd>{stats.titles}</dd></div>
@@ -145,6 +165,8 @@
   .page { padding-top: 20px; }
   .back { display: inline-block; margin-bottom: 8px; color: var(--muted); text-decoration: none; }
   .titlebar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .acct { margin: 2px 0 0; }
+  .pw { font: 700 18px var(--font-cond); letter-spacing: 0.08em; color: var(--accent); }
   .titlebar input { max-width: 260px; }
   .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 20px 0 28px; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line); }
   .stats div { padding: 12px 4px; }

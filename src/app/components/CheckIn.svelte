@@ -19,6 +19,7 @@
   // re-read when the doc changes: checking in with a PIN remembers it on this device
   const mine = $derived.by(() => {
     void doc.updatedAt;
+    void app.accountSync;
     return myPin(doc.id);
   });
   const meIn = $derived(!!mine && (names.has(mine.playerId) || !!doc.waitlist?.some((w) => w.id === mine!.playerId)));
