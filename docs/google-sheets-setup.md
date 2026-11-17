@@ -15,7 +15,8 @@ This lets other people see, run and join tournaments, and keeps all data in a Go
 
 Accounts are optional: without one, keys and PINs are remembered by each browser. The sheet only stores a hash of each
 organizer key, so the sheet itself doesn't give it away. PINs are stored in the `Entrants` tab (`pin` column) and never
-sent to viewers. Passwords are never stored: the `Accounts` tab keeps a salted hash made with a secret
+sent to viewers. To stop anyone guessing them, a tournament refuses every PIN for 10 minutes after 10 wrong ones, and for
+6 hours after 40 wrong ones (the organizer can still enter scores and check people in meanwhile). Passwords are never stored: the `Accounts` tab keeps a salted hash made with a secret
 (`ACCOUNT_SECRET` script property, created by the script the first time someone makes an account; don't share it or change
 it, or every password stops working).
 

@@ -1,6 +1,8 @@
 export interface FakeGoogle {
   ctx: Record<string, unknown>;
   props: Map<string, string>;
+  /** Move the CacheService clock forward (cache entries expire). */
+  advance(ms: number): void;
   /** Filled rows of each tab (live: changing a cell changes the sheet, like editing it by hand). */
   sheets: {
     get(name: string): string[][] | undefined;

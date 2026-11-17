@@ -12,7 +12,8 @@
  *     random organizer key and only its SHA-256 hash is stored (orgKeyHash). Helpers get
  *     the same key through a helper link;
  *   - players: sign up while sign-up is open, and report their own unplayed matches
- *     with their 6-digit PIN (Entrants.pin, never sent to viewers).
+ *     with their 6-digit PIN (Entrants.pin, never sent to viewers). Guessing is limited: after
+ *     too many wrong PINs a tournament refuses PINs for a while (PIN_LIMIT, kept in CacheService).
  *   - accounts (optional, Accounts tab): a username and password linked to one player. Logging in
  *     gives a device that player's PINs and the organizer keys of the tournaments they made, so
  *     everything above works on any device. Passwords are stored salted and hashed with a secret
@@ -663,6 +664,50 @@ function signUp(id, rawName, token) {
   return { playerId: player.id, pin: pin, waitlisted: waitlisted, tournament: assemble(t, data) };
 }
 
+// ------------------------------------------------------------------ PIN guessing limit
+
+/**
+ * A PIN is 6 digits, so it must not be guessable by trying many: after `short` wrong PINs for one
+ * tournament within 10 minutes, or `long` within 6 hours, it refuses every PIN (right ones too)
+ * until that window has passed. The organizer can still do everything. Counts live in
+ * CacheService, so guessing never writes to the sheet.
+ */
+var PIN_LIMIT = { short: 10, shortSecs: 600, long: 40, longSecs: 21600 };
+var TOO_MANY_PINS = 'Too many wrong PINs for this tournament. Wait 10 minutes and try again, or ask the organizer.';
+
+function pinCache() {
+  try {
+    return CacheService.getScriptCache();
+  } catch (e) {
+    return null; // no cache: no limit rather than no PINs
+  }
+}
+
+function pinLocked(id) {
+  var c = pinCache();
+  if (!c) return false;
+  var v = c.getAll(['pin10:' + id, 'pin6h:' + id]);
+  return num(v['pin10:' + id]) >= PIN_LIMIT.short || num(v['pin6h:' + id]) >= PIN_LIMIT.long;
+}
+
+function pinMiss(id) {
+  var c = pinCache();
+  if (!c) return;
+  c.put('pin10:' + id, String(num(c.get('pin10:' + id)) + 1), PIN_LIMIT.shortSecs);
+  c.put('pin6h:' + id, String(num(c.get('pin6h:' + id)) + 1), PIN_LIMIT.longSecs);
+}
+
+/** byPin, counting wrong PINs: throws "Wrong PIN" or, after too many, TOO_MANY_PINS. */
+function pinOwner(id, rawPin, data, waitlistToo) {
+  if (pinLocked(id)) throw new Error(TOO_MANY_PINS);
+  var who = byPin(id, rawPin, data, waitlistToo);
+  if (!who) {
+    pinMiss(id);
+    throw new Error('Wrong PIN');
+  }
+  return who;
+}
+
 /** The entrant (or, with `waitlistToo`, waitlisted person) with this PIN, or null. */
 function byPin(id, rawPin, data, waitlistToo) {
   var pin = String(rawPin || '').trim();
@@ -695,8 +740,7 @@ function checkIn(body, isAdmin) {
   var who;
   if (body.pin) {
     if (!truthy(t.checkIn) && !organizer) throw new Error("Check-in isn't open for this tournament");
-    who = byPin(body.id, body.pin, data, true);
-    if (!who) throw new Error('Wrong PIN');
+    who = pinOwner(body.id, body.pin, data, true);
   } else {
     if (!organizer) throw new Error(NOT_ORGANIZER);
     who = data.Entrants.concat(data.Waitlist).filter(function (e) {
@@ -736,8 +780,7 @@ function dropOut(id, rawPin) {
   var data = loadOne(id);
   var t = findTournament(data.Tournaments, id);
   if (!t) throw new Error('Tournament not found');
-  var me = byPin(id, rawPin, data, false);
-  if (!me) throw new Error('Wrong PIN');
+  var me = pinOwner(id, rawPin, data, false);
   var started = data.Results.some(function (r) {
     return r.tournamentId === id;
   });
@@ -792,16 +835,10 @@ function report(id, matchId, rawPin, result, matchNo) {
   var data = loadOne(id);
   var t = findTournament(data.Tournaments, id);
   if (!t) throw new Error('Tournament not found');
-  var pin = String(rawPin || '').trim();
   var mine = data.Entrants.filter(function (e) {
     return e.tournamentId === id;
   });
-  var me = /^\d{6}$/.test(pin)
-    ? mine.filter(function (e) {
-        return String(e.pin) === pin;
-      })[0]
-    : null;
-  if (!me) throw new Error('Wrong PIN');
+  var me = pinOwner(id, rawPin, data, false);
   if (!result || (result.p1 !== me.playerId && result.p2 !== me.playerId)) {
     throw new Error('You can only report your own matches');
   }
@@ -874,8 +911,7 @@ function confirmResult(id, matchId, rawPin, ok, matchNo) {
   var data = loadOne(id);
   var t = findTournament(data.Tournaments, id);
   if (!t) throw new Error('Tournament not found');
-  var me = byPin(id, rawPin, data, false);
-  if (!me) throw new Error('Wrong PIN');
+  var me = pinOwner(id, rawPin, data, false);
   var row = data.Results.filter(function (r) {
     return r.tournamentId === id && r.matchId === matchId;
   })[0];
@@ -1019,8 +1055,12 @@ function accountInfo(a, data) {
   return { id: a.id, username: a.username, playerId: a.playerId, name: p ? p.name : a.username };
 }
 
-/** The player this PIN belongs to in a tournament (by id or join code), or null. */
-function playerByPin(claim, data) {
+/**
+ * The player this PIN belongs to in a tournament (by id or join code), or null. Wrong PINs count
+ * towards that tournament's guessing limit; while it's reached, typed claims (`loud`) get
+ * TOO_MANY_PINS and the device's remembered ones are skipped.
+ */
+function playerByPin(claim, data, loud) {
   if (!claim || !claim.pin) return null;
   var t = claim.id
     ? findTournament(data.Tournaments, claim.id)
@@ -1028,7 +1068,12 @@ function playerByPin(claim, data) {
         return cleanCode(r.code) === cleanCode(claim.code) && !!cleanCode(claim.code);
       })[0];
   if (!t) return null;
+  if (pinLocked(t.id)) {
+    if (loud) throw new Error(TOO_MANY_PINS);
+    return null;
+  }
   var row = byPin(t.id, claim.pin, data, true);
+  if (!row) pinMiss(t.id);
   return row ? row.playerId : null;
 }
 
@@ -1052,14 +1097,15 @@ function register(body) {
     return String(p.name).trim().toLowerCase() === lower;
   })[0];
   var proven = {};
-  (Array.isArray(body.claims) ? body.claims : []).slice(0, 200).forEach(function (c) {
-    var pid = playerByPin(c, data);
+  // the PINs this device remembers (a phone rarely has more than a few dozen)
+  (Array.isArray(body.claims) ? body.claims : []).slice(0, 50).forEach(function (c) {
+    var pid = playerByPin(c, data, false);
     if (pid) proven[pid] = true;
   });
   var player = null;
   if (body.claim && body.claim.pin) {
     // "I played here before": link the player behind this join code + PIN
-    var pid = playerByPin(body.claim, data);
+    var pid = playerByPin(body.claim, data, true);
     if (!pid) throw new Error('That join code and PIN don\'t match anyone');
     player = findById(data.Players, pid);
     if (!player) throw new Error('That join code and PIN don\'t match anyone');

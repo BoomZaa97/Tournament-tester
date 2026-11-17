@@ -97,7 +97,23 @@ export function fakeGoogle({ adminKey = 'secret', codePath = 'apps-script/Code.g
     return api;
   };
 
+  // CacheService: entries expire on a clock tests can move forward (`advance(ms)`)
+  let clock = 0;
+  const cache = new Map();
+  const cached = (k) => {
+    const e = cache.get(k);
+    if (e && e.expires <= clock) cache.delete(k);
+    return cache.get(k)?.value ?? null;
+  };
   const ctx = {
+    CacheService: {
+      getScriptCache: () => ({
+        get: (k) => cached(k),
+        getAll: (ks) => Object.fromEntries(ks.filter((k) => cached(k) !== null).map((k) => [k, cached(k)])),
+        put: (k, v, secs = 600) => void cache.set(k, { value: String(v), expires: clock + Math.min(secs, 21600) * 1000 }),
+        remove: (k) => void cache.delete(k),
+      }),
+    },
     SpreadsheetApp: {
       getActiveSpreadsheet: () => ({
         getSheetByName: (n) => (tabs.has(n) ? sheet(n) : null),
@@ -127,6 +143,8 @@ export function fakeGoogle({ adminKey = 'secret', codePath = 'apps-script/Code.g
   return {
     ctx,
     props,
+    /** Move the CacheService clock forward. */
+    advance: (ms) => void (clock += ms),
     sheets,
     /** A sheet tab as Code.gs sees it (e.g. to call onEdit with one of its ranges). */
     tab: (name) => sheet(name),

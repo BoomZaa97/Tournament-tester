@@ -33,7 +33,7 @@ Made because Challonge made fixing wrong results hard.
 |---|---|---|
 | Site admin | `key` = `ADMIN_KEY` | Everything; only one who can rename players or import backups |
 | Organizer / helper | `orgKey` (random, made by the creator's browser, `tt.keys.v1`); sheet stores only `Tournaments.orgKeyHash` (SHA-256) | Save/delete that tournament, `pins`. Helper link = `#/t/<id>/org/<key>` |
-| Player | 6-digit `Entrants.pin` (`tt.pins.v1`); never in GET responses | `signup` (only while `signup` is on and no results), `report` (own match, no result yet) |
+| Player | 6-digit `Entrants.pin` (`tt.pins.v1`); never in GET responses; guessing limited per tournament (`pinOwner` / `PIN_LIMIT`: 10 wrong in 10 min or 40 in 6 h → all PINs refused, counts in CacheService; account `claims` count too, max 50) | `signup` (only while `signup` is on and no results), `report` (own match, no result yet) |
 
 - Anyone can create: a new tournament (`version` 0) is accepted with any `orgKey` ≥ 16 chars.
 - Code.gs has no bracket engine, so `report` trusts the reporter's `p1`/`p2` snapshot; a wrong pairing shows up as
@@ -178,6 +178,5 @@ Push to `main` = deploy. Check UI changes in a real browser (Playwright, desktop
 
 ## Next up (agreed roadmap)
 
-1. Maybe: rate-limit PIN guesses.
-2. Maybe: keep PINs of removed entrants so undoing a removal gives them the same PIN.
-3. Later: Discord announcements, import from Challonge.
+1. Maybe: keep PINs of removed entrants so undoing a removal gives them the same PIN.
+2. Later: Discord announcements, import from Challonge.

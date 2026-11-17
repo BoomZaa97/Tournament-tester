@@ -480,6 +480,66 @@ describe('Google Sheets backend (Code.gs)', () => {
     });
   });
 
+  describe('PIN guessing limit', () => {
+    const ORG = 'organizer-key-0123456789';
+    const ev = (id: string) => ({ ...doc, id, results: {}, log: [], checkIn: true });
+    const setup = () => {
+      const g = fakeGoogle();
+      for (const id of ['g1', 'g2']) g.post({ action: 'save', orgKey: ORG, tournament: ev(id), players: doc.entrants });
+      const pins = (id: string) => g.post({ action: 'pins', id, orgKey: ORG }).pins as Record<string, string>;
+      return { g, pin: pins('g1').a, pin2: pins('g2').a };
+    };
+    const wrong = (right: string) => String((Number(right) + 1) % 1000000).padStart(6, '0');
+    const checkin = (g: ReturnType<typeof fakeGoogle>, id: string, pin: string) => g.post({ action: 'checkin', id, pin, here: true }).error;
+    const TEN_MIN = 10 * 60 * 1000;
+
+    it('refuses every PIN of a tournament for 10 minutes after 10 wrong ones; others and the organizer are unaffected', () => {
+      const { g, pin, pin2 } = setup();
+      expect(checkin(g, 'g1', pin)).toBeUndefined();
+      // a wrong guess from any action counts: report, confirm, drop, check-in
+      expect(g.post({ action: 'report', id: 'g1', matchId: 'W1-2', pin: wrong(pin), result: {} }).error).toBe('Wrong PIN');
+      expect(g.post({ action: 'drop', id: 'g1', pin: '12' }).error).toBe('Wrong PIN');
+      for (let i = 0; i < 8; i++) expect(checkin(g, 'g1', wrong(pin))).toBe('Wrong PIN');
+      // the right PIN is refused too while it's locked (or guessing would go on)
+      expect(checkin(g, 'g1', pin)).toMatch(/Too many wrong PINs/);
+      expect(g.post({ action: 'confirm', id: 'g1', matchId: 'W1-2', pin, ok: true }).error).toMatch(/Too many wrong PINs/);
+      expect(checkin(g, 'g2', pin2)).toBeUndefined();
+      expect(g.post({ action: 'checkin', id: 'g1', playerId: 'a', here: true, orgKey: ORG }).error).toBeUndefined();
+      expect(g.post({ action: 'pins', id: 'g1', orgKey: ORG }).pins.a).toBe(pin);
+      // guessing writes nothing to the sheet
+      expect(g.sheets.has('Log') ? g.sheets.get('Log')!.length : 0).toBeLessThanOrEqual(1);
+
+      g.advance(TEN_MIN);
+      expect(checkin(g, 'g1', pin)).toBeUndefined();
+    });
+
+    it('locks for 6 hours after 40 wrong ones, even spread out', () => {
+      const { g, pin } = setup();
+      for (let round = 0; round < 4; round++) {
+        for (let i = 0; i < 10; i++) expect(checkin(g, 'g1', wrong(pin))).toBe('Wrong PIN');
+        g.advance(TEN_MIN);
+      }
+      expect(checkin(g, 'g1', pin)).toMatch(/Too many/);
+      g.advance(6 * 60 * 60 * 1000);
+      expect(checkin(g, 'g1', pin)).toBeUndefined();
+    });
+
+    it('counts the PINs an account sign-up sends as proof, and takes at most 50 of them', () => {
+      const { g, pin } = setup();
+      const claims = Array.from({ length: 200 }, (_, i) => ({ id: 'g1', pin: String(100000 + i) }));
+      // a name nobody has: the claims only count as guesses
+      expect(g.post({ action: 'register', username: 'guesser', password: 'hunter22', name: 'Guesser', claims }).error).toBeUndefined();
+      expect(checkin(g, 'g1', pin)).toMatch(/Too many/);
+      // a typed join code + PIN says so; remembered ones are skipped quietly
+      const code = g.get({ action: 'get', id: 'g1' }).tournament.code;
+      expect(g.post({ action: 'register', username: 'alice', password: 'hunter22', name: 'Alice', claim: { code, pin } }).error).toMatch(/Too many/);
+      g.advance(6 * 60 * 60 * 1000);
+      const ok = g.post({ action: 'register', username: 'alice', password: 'hunter22', name: 'Alice', claim: { code, pin } });
+      expect(ok.error).toBeUndefined();
+      expect(ok.account.playerId).toBe('a');
+    });
+  });
+
   describe('categories and profiles', () => {
     it('stores a tournament category next to the game, trimmed and short', () => {
       const g = fakeGoogle();
