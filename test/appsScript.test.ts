@@ -444,6 +444,38 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.post({ action: 'renamePlayer', key: 'secret', id: other.id, name: 'Dana' }).error).toBeUndefined();
     });
 
+    it('a removed player keeps their PIN: adding them back or them signing up again gives the same one', () => {
+      const g = fakeGoogle();
+      create(g);
+      const [alice, ...rest] = open.entrants;
+      const before = pinsOf(g);
+      const save = (version: number, entrants: typeof open.entrants) =>
+        g.post({ action: 'save', orgKey: ORG, tournament: { ...open, version, entrants }, players: [] });
+
+      expect(save(1, rest).error).toBeUndefined();
+      expect(pinsOf(g)[alice.id]).toBeUndefined();
+      // never sent to anyone, and not usable while removed
+      const text = JSON.stringify([g.get({ action: 'get', id: 'o1' }), g.get({ action: 'all' })]);
+      expect(text).not.toContain('removedPins');
+      expect(text).not.toContain(before[alice.id]);
+      expect(g.post({ action: 'checkin', id: 'o1', pin: before[alice.id] }).error).toBeTruthy();
+
+      // the organizer adds them back (or undoes the removal): same PIN
+      const newcomer = { id: 'n1', name: 'Newcomer' };
+      expect(save(2, [...open.entrants, newcomer]).error).toBeUndefined();
+      const after = pinsOf(g);
+      expect(after[alice.id]).toBe(before[alice.id]);
+      for (const e of rest) expect(after[e.id]).toBe(before[e.id]);
+      expect(Object.values(after).filter((p) => p === after.n1)).toHaveLength(1);
+
+      // removed again, then they sign themselves up by name: still the same PIN
+      expect(save(3, rest).error).toBeUndefined();
+      const back = g.post({ action: 'signup', id: 'o1', name: alice.name });
+      expect(back.error).toBeUndefined();
+      expect(back.pin).toBe(before[alice.id]);
+      expect(back.playerId).toBe(alice.id);
+    });
+
     it('a logged-in device gets its PINs and organizer keys; keys it brings are kept for other devices', () => {
       const g = fakeGoogle();
       const { token } = reg(g, { username: 'olga', name: 'Olga' });

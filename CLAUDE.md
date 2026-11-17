@@ -178,7 +178,8 @@ Push to `main` = deploy. Check UI changes in a real browser (Playwright, desktop
 - Check-in: `Tournaments.checkIn`, `Entrants/Waitlist.checkedIn`; `doc.checkedIn` = player ids. `checkin` action takes a
   PIN or (organizer) a playerId, only before the first result, and does NOT bump `version` (only `updatedAt`), so the
   page reloads on `updatedAt` changes too. "Remove no-shows" = `withEntrants` with a `restore` log entry. Removed
-  players get a new PIN if they're added back (PINs aren't kept for removed entrants).
+  players get their old PIN back if they're added again (organizer save or their own sign-up): `Tournaments.removedPins`
+  (hidden JSON {playerId: pin}, never in responses, not valid while they're out).
 - Drop-outs: `options.dropped` (seeds). `resolve()` turns any unplayed match with a dropped player into a walkover
   (`status:'bye'`, `walkover:true`, real `loser`); swiss pairs only active players in unstarted rounds. Points tables
   count walkovers as a win/loss (byes exclude them); `swissRecord` gives the winner a point but no bye. A walkover GF
@@ -192,5 +193,5 @@ Push to `main` = deploy. Check UI changes in a real browser (Playwright, desktop
 
 ## Next up (agreed roadmap)
 
-1. Maybe: keep PINs of removed entrants so undoing a removal gives them the same PIN.
-2. Later: Discord announcements, import from Challonge.
+1. Discord announcements.
+2. Import from Challonge.

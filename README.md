@@ -64,6 +64,8 @@ npm run build     # build the site into dist/
 - [x] Organizers, helpers, player sign-up, players report their own scores (PIN)
 - [x] Join codes and QR door poster, player limit and waitlist, check-in, drop-outs, score confirmation
 - [x] Player accounts (optional)
-- [ ] Rate-limit PIN guesses
+- [x] Rate-limit PIN guesses
+- [x] Rankings (rating + points, majors / semi-majors), player profiles, verified names
+- [x] Removed players keep their PIN if they're added back
 - [ ] Discord announcements
 - [ ] Import from Challonge

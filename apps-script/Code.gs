@@ -37,7 +37,7 @@ var TABLES = {
   Players: ['id', 'name'],
   Tournaments: [
     'id', 'name', 'game', 'category', 'tier', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash',
-    'code', 'maxPlayers', 'checkIn',
+    'code', 'maxPlayers', 'checkIn', 'removedPins',
   ],
   Entrants: ['tournamentId', 'tournament', 'seed', 'playerId', 'name', 'pin', 'checkedIn'],
   Results: [
@@ -406,6 +406,12 @@ function saveTournament(doc, players, body, isAdmin) {
     if (r.pin) oldPins[r.playerId] = r.pin;
     if (r.checkedIn) arrived[r.playerId] = r.checkedIn;
   });
+  // PINs of people removed earlier: someone added back (or a removal undone) gets the same PIN again.
+  // Kept only in this hidden column; never sent to anyone, and not valid for reporting while they're out.
+  var removedPins = json(existing && existing.removedPins, {});
+  Object.keys(removedPins).forEach(function (id) {
+    if (!oldPins[id] && removedPins[id]) oldPins[id] = String(removedPins[id]);
+  });
   var usedPins = Object.keys(oldPins).map(function (k) {
     return oldPins[k];
   });
@@ -433,6 +439,15 @@ function saveTournament(doc, players, body, isAdmin) {
       checkedIn: arrived[e.id] || '',
     };
   });
+  var stillOut = {};
+  var waiting = {};
+  waitlist.forEach(function (w) {
+    waiting[w.playerId] = true;
+  });
+  Object.keys(oldPins).forEach(function (id) {
+    if (!inBracket[id] && !waiting[id]) stillOut[id] = oldPins[id];
+  });
+  tRow.removedPins = Object.keys(stillOut).length ? JSON.stringify(stillOut) : '';
 
   // in the order they were played, so the newest result is at the bottom of the block
   var results = Object.keys(saved.results)
@@ -676,11 +691,25 @@ function signUp(id, rawName, token) {
     player = { id: newId(), name: name };
     data.Players.push(player);
   }
-  var pin = newPin(
-    everyone.map(function (e) {
-      return e.pin;
-    }),
-  );
+  // someone the organizer removed earlier gets their old PIN back
+  var removedPins = json(t.removedPins, {});
+  var pin = removedPins[player.id]
+    ? String(removedPins[player.id])
+    : newPin(
+        everyone
+          .map(function (e) {
+            return e.pin;
+          })
+          .concat(
+            Object.keys(removedPins).map(function (k) {
+              return String(removedPins[k]);
+            }),
+          ),
+      );
+  if (removedPins[player.id]) {
+    delete removedPins[player.id];
+    t.removedPins = Object.keys(removedPins).length ? JSON.stringify(removedPins) : '';
+  }
   // Full (or people are already waiting, who go first): join the waitlist instead of the bracket.
   var cap = num(t.maxPlayers);
   var waitlisted = cap > 0 && (mine.length >= cap || waiting.length > 0);
