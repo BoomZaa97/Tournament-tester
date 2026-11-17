@@ -480,6 +480,49 @@ describe('Google Sheets backend (Code.gs)', () => {
     });
   });
 
+  describe('categories and profiles', () => {
+    it('stores a tournament category next to the game, trimmed and short', () => {
+      const g = fakeGoogle();
+      g.post({ key: 'secret', action: 'save', tournament: { ...doc, category: '  U18   girls ' } });
+      expect(g.get({ action: 'get', id: 't1' }).tournament.category).toBe('U18 girls');
+      expect(g.sheets.get('Tournaments')![0].slice(0, 4)).toEqual(['id', 'name', 'game', 'category']);
+      expect(g.get({ action: 'all', lite: '1' }).tournaments[0].category).toBe('U18 girls');
+    });
+
+    it('lets only the player (logged in) or the site admin change a profile, and checks what goes in', () => {
+      const g = fakeGoogle();
+      g.post({ key: 'secret', action: 'save', tournament: doc, players: doc.entrants });
+      const dana = g.post({ action: 'register', username: 'dana', password: 'hunter22', name: 'Dana' });
+      const me = dana.account.playerId;
+      const photo = 'data:image/jpeg;base64,' + 'A'.repeat(100);
+      expect(g.get({ action: 'profile', id: me }).profile).toBeNull();
+
+      const ok = g.post({ action: 'profile', id: me, token: dana.token, photo, bio: ' Hi! ', links: ['https://x.com/dana', ''] });
+      expect(ok.error).toBeUndefined();
+      expect(ok.profile).toEqual({ photo, bio: 'Hi!', links: ['https://x.com/dana'] });
+      expect(g.get({ action: 'profile', id: me }).profile).toEqual(ok.profile);
+
+      // not someone else's, not without logging in
+      expect(g.post({ action: 'profile', id: 'a', token: dana.token, bio: 'x' }).error).toMatch(/your own/);
+      expect(g.post({ action: 'profile', id: me, bio: 'x' }).error).toMatch(/log in/);
+      // the admin can
+      expect(g.post({ action: 'profile', id: 'a', key: 'secret', bio: 'Admin wrote this' }).profile.bio).toBe('Admin wrote this');
+      expect(g.post({ action: 'profile', id: 'nobody', key: 'secret', bio: 'x' }).error).toMatch(/not found/);
+
+      const bad = (body: Record<string, unknown>) => g.post({ action: 'profile', id: me, token: dana.token, ...body }).error;
+      expect(bad({ photo: 'https://evil.example/x.png' })).toMatch(/can't be used/);
+      expect(bad({ photo: 'data:image/svg+xml;base64,AAAA' })).toMatch(/can't be used/);
+      expect(bad({ photo: 'data:image/jpeg;base64,' + 'A'.repeat(50000) })).toMatch(/too big/);
+      expect(bad({ bio: 'x'.repeat(281) })).toMatch(/280/);
+      expect(bad({ links: ['javascript:alert(1)'] })).toMatch(/https/);
+      expect(bad({ links: ['https://a.b', 'https://c.d', 'https://e.f', 'https://g.h'] })).toMatch(/Up to 3/);
+
+      // photos stay out of the lists (only the player page reads them)
+      expect(JSON.stringify(g.get({ action: 'all', lite: '1' }))).not.toContain('base64');
+      expect(JSON.stringify(g.get({ action: 'players' }))).not.toContain('base64');
+    });
+  });
+
   describe('join codes', () => {
     it('every tournament gets a unique code that never changes; anyone can look it up', () => {
       const g = fakeGoogle();
@@ -680,8 +723,10 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.sheets.get('Entrants')![0]).not.toContain('tournament');
 
       vm.runInContext(readFileSync('apps-script/Code.gs', 'utf8'), g.ctx as vm.Context); // the owner pastes the new script
+      // newer scripts add fields (an empty category); everything that was there stays the same
       const after = [1, 2, 3].map((n) => g.get({ action: 'get', id: 'e' + n }).tournament);
-      expect(after).toEqual(before);
+      expect(after).toEqual(before.map((t) => ({ ...t, category: after[0].category })));
+      expect(after[0].category).toBe('');
       for (const tab of ['Entrants', 'Results', 'Log']) {
         expect(blocks(g, tab)).toEqual(['e3', 'e2', 'e1']);
         expect(g.sheets.get(tab)![0][1]).toBe('tournament');

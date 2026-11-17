@@ -27,7 +27,7 @@ export interface LogEntry {
   summary: string;
   changes: Change[];
   /** For tournament edits (entrants/format): the previous setup, so it can be undone. */
-  restore?: Pick<TournamentDoc, 'name' | 'game' | 'format' | 'options' | 'scoring' | 'entrants' | 'results'>;
+  restore?: Pick<TournamentDoc, 'name' | 'game' | 'format' | 'options' | 'scoring' | 'entrants' | 'results'> & { category?: string };
   undone?: boolean;
 }
 
@@ -44,6 +44,8 @@ export interface TournamentDoc {
   id: string;
   name: string;
   game: string;
+  /** Optional division inside the game (Open, U18, Doubles…): rankings can be split by it. */
+  category?: string;
   format: Format;
   options: FormatOptions;
   scoring: Scoring;
@@ -156,8 +158,8 @@ export const UPDATE_SCRIPT = 'The site owner needs to update the Google script f
 
 /** The setup before a change, so the change can be undone from the log. */
 export function restorePoint(doc: TournamentDoc): NonNullable<LogEntry['restore']> {
-  const { name, game, format, options, scoring, entrants, results } = doc;
-  return { name, game, format, options, scoring, entrants, results };
+  const { name, game, category, format, options, scoring, entrants, results } = doc;
+  return { name, game, category: category ?? '', format, options, scoring, entrants, results };
 }
 
 /**

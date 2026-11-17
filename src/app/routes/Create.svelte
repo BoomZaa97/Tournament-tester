@@ -11,6 +11,7 @@
 
   let name = $state('');
   let game = $state('');
+  let category = $state('');
   let format = $state<Format>('single_elim');
   let options = $state<FormatOptions>({});
   let scoring = $state<Scoring>({});
@@ -20,11 +21,13 @@
   const shared = app.store.kind === 'sheets';
   let known = $state<Player[]>([]);
   let games = $state<string[]>([]);
+  let categories = $state<string[]>([]);
   let saving = $state(false);
 
   app.store.loadAll().then((d) => {
     known = d.players;
     games = [...new Set(d.tournaments.map((t) => t.game).filter(Boolean))];
+    categories = [...new Set(d.tournaments.map((t) => t.category ?? '').filter(Boolean))];
   });
 
   const names = $derived(rows.map((r) => r.name.trim()).filter(Boolean));
@@ -60,7 +63,7 @@
     saving = true;
     try {
       const { entrants, created } = rowsToPlayers(rows, known);
-      const doc = { ...emptyDoc(), name: name.trim(), game: game.trim(), format, options, scoring, entrants, signup: shared && signup };
+      const doc = { ...emptyDoc(), name: name.trim(), game: game.trim(), category: category.trim() || undefined, format, options, scoring, entrants, signup: shared && signup };
       const saved = await app.store.save(doc, created);
       app.notify(shared ? 'Tournament created. You are its organizer on this device.' : 'Tournament created');
       app.go(`t/${saved.id}`);
@@ -91,6 +94,11 @@
           <span>Game <span class="muted">(optional)</span></span>
           <input bind:value={game} placeholder="Any game" list="known-games" />
           <datalist id="known-games">{#each games as g}<option value={g}></option>{/each}</datalist>
+        </label>
+        <label class="field">
+          <span>Category <span class="muted">(optional: Open, U18, Doubles…)</span></span>
+          <input bind:value={category} placeholder="None" list="known-categories" maxlength="40" />
+          <datalist id="known-categories">{#each categories as c}<option value={c}></option>{/each}</datalist>
         </label>
 
         <FormatFields bind:format bind:options bind:scoring entrantCount={names.length} />

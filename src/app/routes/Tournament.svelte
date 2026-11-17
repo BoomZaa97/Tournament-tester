@@ -395,6 +395,7 @@
       <div class="label">
         {[
           doc.game,
+          doc.category,
           FORMAT_LABEL[doc.format],
           `${doc.entrants.length}${doc.maxPlayers ? ` / ${doc.maxPlayers}` : ''} ${doc.entrants.length === 1 && !doc.maxPlayers ? 'entrant' : 'entrants'}`,
         ].filter(Boolean).join(' · ')}

@@ -26,12 +26,16 @@
  * `tournament` column next to its id. A save only rewrites that tournament's block, so the rest of
  * the sheet doesn't move. Editing a row by hand marks its tournament as changed (onEdit), so open
  * pages pick the edit up within about 20 seconds.
+ *
+ * Profiles tab: a player's photo (a small JPEG as a data: URL), bio and links, one row per player
+ * (`id` = the player id). Only the player page reads it. The player (logged in to their account) or
+ * the site admin can change it.
  */
 
 var TABLES = {
   Players: ['id', 'name'],
   Tournaments: [
-    'id', 'name', 'game', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash',
+    'id', 'name', 'game', 'category', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash',
     'code', 'maxPlayers', 'checkIn',
   ],
   Entrants: ['tournamentId', 'tournament', 'seed', 'playerId', 'name', 'pin', 'checkedIn'],
@@ -44,6 +48,8 @@ var TABLES = {
   Waitlist: ['tournamentId', 'tournament', 'playerId', 'name', 'pin', 'at', 'checkedIn'],
   // Player accounts. Delete a row to delete an account (the player and their results stay).
   Accounts: ['id', 'username', 'playerId', 'passHash', 'salt', 'createdAt', 'orgKeys', 'fails', 'lockedUntil'],
+  // Player profiles: id = the player's id. Read only by the player page (photos are big).
+  Profiles: ['id', 'name', 'photo', 'bio', 'links', 'updatedAt'],
 };
 
 var CELL_LIMIT = 45000; // Google Sheets allows 50,000 characters per cell
@@ -64,6 +70,7 @@ function doGet(e) {
     if (action === 'get') return readTournament(p.id, p.since);
     if (action === 'players') return { players: readPlayers(readTable('Players'), readTable('Accounts')) };
     if (action === 'code') return findByCode(e.parameter.code);
+    if (action === 'profile') return { profile: readProfile(p.id) };
     throw new Error('Unknown action: ' + action);
   });
 }
@@ -100,6 +107,7 @@ function doPost(e) {
       if (body.action === 'me') return aboutMe(body.token, body.orgKeys);
       if (body.action === 'password') return changePassword(body.token, body.password, body.newPassword);
       if (body.action === 'rename') return renameSelf(body.token, body.name);
+      if (body.action === 'profile') return { profile: saveProfile(body, isAdmin) };
       if (body.action === 'resetPassword') {
         if (!isAdmin) throw new Error('Only the site admin can reset passwords');
         return resetPassword(body.playerId);
@@ -266,6 +274,7 @@ function assemble(t, data, lite) {
     id: t.id,
     name: t.name,
     game: t.game,
+    category: t.category || '',
     signup: truthy(t.signup),
     code: t.code || '',
     maxPlayers: num(t.maxPlayers),
@@ -361,6 +370,7 @@ function saveTournament(doc, players, body, isAdmin) {
     id: saved.id,
     name: saved.name,
     game: saved.game,
+    category: String(saved.category || '').replace(/\s+/g, ' ').trim().slice(0, 40),
     format: saved.format,
     options: JSON.stringify(saved.options || {}),
     scoring: JSON.stringify(saved.scoring || {}),
@@ -1179,6 +1189,47 @@ function renameSelf(token, rawName) {
   return { account: accountInfo(a, loadTables()) };
 }
 
+// ------------------------------------------------------------------ profiles
+
+var PROFILE_LIMITS = { photo: 45000, bio: 280, links: 3, link: 200 };
+
+function readProfile(id) {
+  var row = readTable('Profiles').filter(function (r) {
+    return r.id === String(id || '');
+  })[0];
+  return row ? { photo: row.photo || '', bio: row.bio || '', links: json(row.links, []) } : null;
+}
+
+/** The player (with their account token) or the site admin sets a photo, bio and links. */
+function saveProfile(body, isAdmin) {
+  var id = String(body.id || '');
+  var data = loadTables();
+  var player = findById(data.Players, id);
+  if (!player) throw new Error('Player not found');
+  if (!isAdmin) {
+    var a = accountFromToken(body.token, data);
+    if (!a) throw new Error(LOGGED_OUT);
+    if (a.playerId !== id) throw new Error('You can only change your own profile');
+  }
+  var photo = String(body.photo || '');
+  if (photo && !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/.test(photo)) throw new Error("That photo can't be used");
+  if (photo.length > PROFILE_LIMITS.photo) throw new Error('That photo is too big');
+  var bio = String(body.bio || '').trim();
+  if (bio.length > PROFILE_LIMITS.bio) throw new Error('Keep the bio under ' + PROFILE_LIMITS.bio + ' characters');
+  var links = (body.links || [])
+    .map(function (l) {
+      return String(l || '').trim();
+    })
+    .filter(String);
+  if (links.length > PROFILE_LIMITS.links) throw new Error('Up to ' + PROFILE_LIMITS.links + ' links');
+  links.forEach(function (l) {
+    if (!/^https?:\/\/[^\s]+$/i.test(l) || l.length > PROFILE_LIMITS.link) throw new Error('Links must start with https://');
+  });
+  var row = { id: id, name: player.name, photo: photo, bio: bio, links: JSON.stringify(links), updatedAt: new Date().toISOString() };
+  writeRow('Profiles', row);
+  return { photo: photo, bio: bio, links: links };
+}
+
 /** Site admin: give an account a new random password (people have no email here to reset it). */
 function resetPassword(playerId) {
   var data = loadTables();
@@ -1202,7 +1253,7 @@ function resetPassword(playerId) {
 function loadTables() {
   var out = {};
   Object.keys(TABLES).forEach(function (name) {
-    if (name !== 'Log') out[name] = readTable(name);
+    if (name !== 'Log' && name !== 'Profiles') out[name] = readTable(name);
   });
   return out;
 }

@@ -27,7 +27,7 @@
     const needle = q.trim().toLowerCase();
     return summaries
       .filter((r) => filter === 'all' || r.status === filter)
-      .filter(({ t }) => !needle || [t.name, t.game, t.code].some((s) => s?.toLowerCase().includes(needle)));
+      .filter(({ t }) => !needle || [t.name, t.game, t.category, t.code].some((s) => s?.toLowerCase().includes(needle)));
   });
   const rows = $derived(matches.slice(0, shown));
 
@@ -104,6 +104,7 @@
             <span class="name">{t.name || 'Untitled'}</span>
             <span class="meta">
               {#if t.game}<span>{t.game}</span>{/if}
+              {#if t.category}<span>{t.category}</span>{/if}
               <span>{FORMAT_LABEL[t.format]}</span>
               <span>{t.entrants.length} entrants</span>
               <span>{date(t.createdAt)}</span>

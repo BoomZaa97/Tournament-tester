@@ -23,7 +23,7 @@
     </a>
     <nav>
       <a href="#/" class:on={section === '' || section === 't' || section === 'j' || section === 'new'}>Tournaments</a>
-      <a href="#/players" class:on={section === 'players' || section === 'p'}>Players</a>
+      <a href="#/players" class:on={section === 'players' || section === 'p'}>Rankings</a>
       <a href="#/settings" class:on={section === 'settings'}>Settings</a>
       {#if app.store.kind === 'sheets'}
         <a href="#/account" class="acct" class:on={section === 'account'}>{app.account ? app.account.name : 'Log in'}</a>

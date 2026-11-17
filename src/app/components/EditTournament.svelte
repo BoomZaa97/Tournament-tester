@@ -17,6 +17,7 @@
 
   let name = $state(doc.name);
   let game = $state(doc.game);
+  let category = $state(doc.category ?? '');
   let format = $state<Format>(doc.format);
   let options = $state<FormatOptions>({ ...doc.options });
   let scoring = $state<Scoring>({ ...doc.scoring });
@@ -68,6 +69,7 @@
     if (JSON.stringify(scoring) !== JSON.stringify(doc.scoring)) notes.push('scoring changed');
     if (name.trim() !== doc.name) notes.push('renamed');
     if (game.trim() !== doc.game) notes.push('game changed');
+    if (category.trim() !== (doc.category ?? '')) notes.push('category changed');
 
     const out = restructure(tstate, { format, entrants: ids, options });
     // options from the rebuilt state: swiss rounds already played are carried over there
@@ -84,7 +86,7 @@
       summary: `Edited tournament: ${plan.notes.join('; ')}`,
       changes: [],
       restore: {
-        name: doc.name, game: doc.game, format: doc.format, options: doc.options,
+        name: doc.name, game: doc.game, category: doc.category ?? '', format: doc.format, options: doc.options,
         scoring: doc.scoring, entrants: doc.entrants, results: doc.results,
       },
     };
@@ -92,6 +94,7 @@
       ...doc,
       name: name.trim(),
       game: game.trim(),
+      category: category.trim() || undefined,
       format,
       options: plan.options,
       scoring,
@@ -108,6 +111,7 @@
     <div class="col">
       <label class="field"><span>Name</span><input bind:value={name} /></label>
       <label class="field"><span>Game</span><input bind:value={game} /></label>
+      <label class="field"><span>Category <span class="muted">(optional)</span></span><input bind:value={category} placeholder="None" maxlength="40" /></label>
       <FormatFields bind:format bind:options bind:scoring entrantCount={rows.filter((r) => r.name.trim()).length} />
     </div>
     <div class="col">

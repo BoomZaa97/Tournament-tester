@@ -50,6 +50,14 @@ Made because Challonge made fixing wrong results hard.
   (device PINs sent as `claims`, or join code + PIN typed). Admin: `resetPassword` (Player page). Players list has
   `account: true`. `app.account` / `app.accountSync` (pages re-read `myPin` when it changes); `app.syncAccount()` on start.
 - `store.canEdit(id)` (admin key or org key for that id) replaces the old global flag.
+- Rankings (`lib/ranking.ts`, `routes/Players.svelte` at `#/players`, nav "Rankings"): computed in the browser from results,
+  nothing stored. Elo (start 1500, K 40 under 10 rated matches then 24; forfeits/byes/walkovers don't count; ranked from
+  `PROVISIONAL` = 5 rated matches) and placement points (`placementPoints`, finished tournaments only), filtered by game,
+  `TournamentDoc.category` (optional, `Tournaments.category`) and year. Player page: a rank card per game and per category
+  they played, rating chart (`components/RatingChart.svelte`), medals, recent form.
+- Profiles (`Profiles` tab, read only by `GET action=profile`, never in lists; `loadTables` skips it): photo = square JPEG
+  data URL made by `lib/photo.ts` (≤ 45k chars), bio ≤ 280, ≤ 3 http(s) links. `POST action=profile`: the player's own
+  account token or the admin key. Local mode keeps them in `tt.profiles.v1`.
 
 ## Architecture
 
@@ -172,4 +180,4 @@ Push to `main` = deploy. Check UI changes in a real browser (Playwright, desktop
 
 1. Maybe: rate-limit PIN guesses.
 2. Maybe: keep PINs of removed entrants so undoing a removal gives them the same PIN.
-3. Later: Discord announcements, import from Challonge, Elo.
+3. Later: Discord announcements, import from Challonge.

@@ -10,6 +10,14 @@ export class VersionConflictError extends Error {
   }
 }
 
+/** A player's photo, bio and links (shown on their page). */
+export interface Profile {
+  /** A small square JPEG as a data: URL, or '' for none. */
+  photo: string;
+  bio: string;
+  links: string[];
+}
+
 export interface AllData {
   tournaments: TournamentDoc[];
   players: Player[];
@@ -39,6 +47,12 @@ export interface Store {
   peek(id: string): CachedDoc | null;
   /** The tournament list this device already has (shared mode: last seen, no logs). */
   peekAll(): AllData | null;
+  /** A player's photo, bio and links (null = none yet). */
+  profile(playerId: string): Promise<Profile | null>;
+  /** The player themself (logged in) or the site admin. Returns what was stored. */
+  saveProfile(playerId: string, profile: Profile): Promise<Profile>;
+  /** Can this device change this player's profile? */
+  canEditProfile(playerId: string): boolean;
   /** Saves and returns the doc with its new version. Throws VersionConflictError. */
   save(doc: TournamentDoc, players: Player[]): Promise<TournamentDoc>;
   remove(id: string): Promise<void>;
@@ -173,6 +187,7 @@ export function helperLink(id: string): string | undefined {
 // ---------------------------------------------------------------- local
 
 const LS_KEY = 'tt.data.v1';
+const PROFILES_KEY = 'tt.profiles.v1';
 
 function readLocal(): AllData {
   try {
@@ -238,6 +253,25 @@ export class LocalStore implements Store {
 
   peekAll() {
     return readLocal();
+  }
+
+  async profile(playerId: string) {
+    return readJson<Profile>(PROFILES_KEY)[playerId] ?? null;
+  }
+
+  async saveProfile(playerId: string, profile: Profile) {
+    const all = readJson<Profile>(PROFILES_KEY);
+    all[playerId] = profile;
+    try {
+      localStorage.setItem(PROFILES_KEY, JSON.stringify(all));
+    } catch {
+      throw new Error('This browser is out of storage space for the photo');
+    }
+    return profile;
+  }
+
+  canEditProfile() {
+    return true;
   }
 
   async save(doc: TournamentDoc, players: Player[]) {
@@ -358,6 +392,25 @@ export class SheetsStore implements Store {
     if (out.tournament) this.cache.remember(out.tournament, out.players);
     else this.cache.forget(id);
     return out;
+  }
+
+  async profile(playerId: string) {
+    try {
+      return (await this.call<{ profile: Profile | null }>('GET', { action: 'profile', id: playerId })).profile;
+    } catch (e) {
+      if (e instanceof Error && e.message === UPDATE_SCRIPT) return null; // older script: no profiles yet
+      throw e;
+    }
+  }
+
+  async saveProfile(playerId: string, profile: Profile) {
+    const token = savedAccount()?.token;
+    const r = await this.call<{ profile: Profile }>('POST', { action: 'profile', id: playerId, ...profile, ...(token ? { token } : {}) });
+    return r.profile;
+  }
+
+  canEditProfile(playerId: string) {
+    return this.isAdmin || savedAccount()?.account.playerId === playerId;
   }
 
   async players() {

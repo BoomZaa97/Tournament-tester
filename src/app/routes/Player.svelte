@@ -1,7 +1,11 @@
 <script lang="ts">
+  import RatingChart from '../components/RatingChart.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import { buildHistory, winRate } from '../lib/history';
   import type { PlayerStats } from '../lib/history';
+  import { squarePhoto } from '../lib/photo';
+  import { PROVISIONAL, ranked, rankings } from '../lib/ranking';
+  import type { AllData, Profile } from '../lib/store';
 
   interface Props {
     id: string;
@@ -9,16 +13,109 @@
   let { id }: Props = $props();
 
   let stats = $state<PlayerStats | null>(null);
+  let data = $state<AllData | null>(null);
   let names = $state(new Map<string, string>());
   let error = $state('');
   let renaming = $state(false);
   let newName = $state('');
 
-  function show(d: { tournaments: Parameters<typeof buildHistory>[0]; players: Parameters<typeof buildHistory>[1] }) {
+  function show(d: AllData) {
+    data = d;
     const all = buildHistory(d.tournaments, d.players);
     names = new Map([...all.values()].map((s) => [s.player.id, s.player.name]));
     stats = all.get(id) ?? null;
   }
+
+  // ---- photo, bio, links
+  let profile = $state<Profile | null>(null);
+  app.store.profile(id).then((p) => (profile = p), () => {});
+  const canEditProfile = $derived.by(() => {
+    void app.account; // logging in or out changes this
+    return app.store.canEditProfile(id);
+  });
+  let editing = $state(false);
+  let draft = $state<Profile>({ photo: '', bio: '', links: [] });
+  let busy = $state(false);
+  function startEdit() {
+    draft = { photo: profile?.photo ?? '', bio: profile?.bio ?? '', links: [...(profile?.links ?? []), '', '', ''].slice(0, 3) };
+    editing = true;
+  }
+  async function pickPhoto(e: Event) {
+    const file = (e.currentTarget as HTMLInputElement).files?.[0];
+    if (!file) return;
+    try {
+      draft.photo = await squarePhoto(file);
+    } catch (err) {
+      app.notify(errorText(err), 'error');
+    }
+  }
+  async function saveProfile(e: SubmitEvent) {
+    e.preventDefault();
+    busy = true;
+    try {
+      profile = await app.store.saveProfile(id, {
+        photo: draft.photo,
+        bio: draft.bio.trim(),
+        links: draft.links.map((l) => l.trim()).filter(Boolean).map((l) => (/^https?:\/\//i.test(l) ? l : `https://${l}`)),
+      });
+      editing = false;
+      app.notify('Profile saved');
+    } catch (err) {
+      app.notify(errorText(err), 'error');
+    } finally {
+      busy = false;
+    }
+  }
+  const host = (url: string) => {
+    try {
+      return new URL(url).hostname.replace(/^www\./, '');
+    } catch {
+      return url;
+    }
+  };
+
+  // ---- rank in each game this player has played, and in each category of it they played in
+  const gameCards = $derived.by(() => {
+    if (!data || !stats) return [];
+    const d = data;
+    const mine = new Set(stats.tournaments.map((t) => t.id));
+    const scopes: { game: string; category: string }[] = [];
+    for (const game of [...new Set(stats.tournaments.map((t) => t.game))].sort()) {
+      scopes.push({ game, category: '' });
+      const inGame = d.tournaments.filter((t) => t.game === game);
+      const cats = new Set(inGame.filter((t) => mine.has(t.id)).map((t) => t.category ?? '').filter(Boolean));
+      // a category card only says something new when the game has other tournaments too
+      for (const category of [...cats].sort()) if (inGame.some((t) => (t.category ?? '') !== category)) scopes.push({ game, category });
+    }
+    return scopes.map(({ game, category }) => {
+      const ts = d.tournaments.filter((t) => t.game === game && (!category || t.category === category));
+      const list = ranked(rankings(ts, d.players).values(), 'rating');
+      const me = list.find((r) => r.player.id === id)!;
+      return {
+        key: `${game}|${category}`,
+        label: (game || 'No game set') + (category ? ` · ${category}` : ''),
+        me,
+        of: list.filter((r) => r.rank !== null).length,
+        pointsRank: ranked(list, 'points').find((r) => r.player.id === id)?.rank ?? null,
+      };
+    });
+  });
+  let chartKey = $state<string | null>(null);
+  const chartCard = $derived(gameCards.find((c) => c.key === chartKey) ?? gameCards.find((c) => c.me.history.length));
+
+  const medals = $derived(
+    [1, 2, 3].map((p) => stats?.tournaments.filter((t) => t.finished && t.place === p).length ?? 0),
+  );
+  const form = $derived(stats?.matches.slice(0, 10) ?? []);
+  const streak = $derived.by(() => {
+    const ms = stats?.matches ?? [];
+    if (!ms.length) return '';
+    const n = ms.findIndex((m) => m.outcome !== ms[0].outcome);
+    const count = n < 0 ? ms.length : n;
+    if (count < 2) return '';
+    const word = { W: 'wins', L: 'losses', D: 'draws' }[ms[0].outcome];
+    return `${count} ${word} in a row`;
+  });
 
   async function load() {
     // what this device saw last time, until the sheet answers
@@ -74,12 +171,15 @@
 </script>
 
 <div class="wrap page">
-  <a class="back small" href="#/players">← Players</a>
+  <a class="back small" href="#/players">← Rankings</a>
   {#if error}
     <p class="notice">{error}</p>
   {:else if !stats}
     <p class="muted">Loading…</p>
   {:else}
+    <div class="head">
+    {#if profile?.photo}<img class="photo" src={profile.photo} alt="" width="96" height="96" />{/if}
+    <div class="who">
     <div class="titlebar">
       {#if renaming}
         <form class="row" onsubmit={rename}>
@@ -95,9 +195,56 @@
             <button class="small ghost" onclick={resetPassword}>Reset password</button>
           {/if}
         {/if}
+        {#if canEditProfile && !editing}
+          <button class="small ghost" onclick={startEdit}>Edit profile</button>
+        {/if}
       {/if}
     </div>
     {#if stats.player.account}<p class="small muted acct">Has an account</p>{/if}
+    {#if profile?.bio}<p class="bio">{profile.bio}</p>{/if}
+    {#if profile?.links.length}
+      <ul class="links">
+        {#each profile.links as l}<li><a href={l} target="_blank" rel="noopener noreferrer nofollow">{host(l)}</a></li>{/each}
+      </ul>
+    {/if}
+    </div>
+    </div>
+
+    {#if editing}
+      <form class="panel editor" onsubmit={saveProfile}>
+        <div class="photo-edit">
+          {#if draft.photo}
+            <img class="photo" src={draft.photo} alt="" width="96" height="96" />
+          {:else}
+            <div class="photo none" aria-hidden="true"></div>
+          {/if}
+          <div class="row">
+            <label class="btn small">
+              {draft.photo ? 'Change photo' : 'Add photo'}
+              <input type="file" accept="image/*" onchange={pickPhoto} hidden />
+            </label>
+            {#if draft.photo}<button type="button" class="small ghost" onclick={() => (draft.photo = '')}>Remove</button>{/if}
+          </div>
+        </div>
+        <label class="field">
+          <span>Bio <span class="muted">({280 - draft.bio.length} left)</span></span>
+          <textarea bind:value={draft.bio} maxlength="280" rows="3" placeholder="Main character, team, where you play…"></textarea>
+        </label>
+        <div class="field">
+          <span>Links <span class="muted">(up to 3: socials, stream, team page)</span></span>
+          {#each draft.links as _, i}
+            <input bind:value={draft.links[i]} placeholder="https://" inputmode="url" aria-label="Link {i + 1}" />
+          {/each}
+        </div>
+        <div class="row">
+          <button class="primary" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save profile'}</button>
+          <button type="button" class="ghost" onclick={() => (editing = false)}>Cancel</button>
+          {#if app.store.kind === 'sheets' && !app.store.isAdmin}
+            <span class="small muted">Everyone can see this.</span>
+          {/if}
+        </div>
+      </form>
+    {/if}
     {#if reset}
       <p class="notice">
         New password for <b>{reset.username}</b>: <b class="pw">{reset.password}</b>. Give it to them; they can change it on their
@@ -107,10 +254,43 @@
 
     <dl class="stats">
       <div><dt class="label">Titles</dt><dd>{stats.titles}</dd></div>
+      <div>
+        <dt class="label" title="1st / 2nd / 3rd places">Medals</dt>
+        <dd class="medals"><span>{medals[0]}</span><i>/</i><span>{medals[1]}</span><i>/</i><span>{medals[2]}</span></dd>
+      </div>
       <div><dt class="label">Record</dt><dd>{stats.wins}–{stats.losses}{stats.draws ? `–${stats.draws}` : ''}</dd></div>
       <div><dt class="label">Win rate</dt><dd>{winRate(stats)}</dd></div>
       <div><dt class="label">Events</dt><dd>{stats.tournaments.length}</dd></div>
     </dl>
+
+    {#if gameCards.length}
+      <section class="ranks">
+        <h2>Rankings</h2>
+        <div class="cards">
+          {#each gameCards as c (c.key)}
+            <button class="gcard" class:on={chartCard?.key === c.key} onclick={() => (chartKey = c.key)} disabled={!c.me.history.length}>
+              <span class="label">{c.label}</span>
+              <span class="big">
+                {#if c.me.rank}#{c.me.rank} <small class="muted">of {c.of}</small>{:else}<span class="muted">Unranked</span>{/if}
+              </span>
+              <span class="small">
+                Rating <b>{Math.round(c.me.rating)}</b>
+                {#if c.me.rated < PROVISIONAL}<span class="muted">({c.me.rated} of {PROVISIONAL} matches)</span>
+                {:else}<span class="muted">· peak {Math.round(c.me.peak)}</span>{/if}
+              </span>
+              <span class="small">
+                {c.me.points} pts{#if c.pointsRank}<span class="muted">&nbsp;· #{c.pointsRank} on points</span>{/if}
+                {#if c.me.best}<span class="muted">&nbsp;· best {ordinal(c.me.best)}</span>{/if}
+              </span>
+            </button>
+          {/each}
+        </div>
+        {#if chartCard?.me.history.length}
+          <h3 class="charthead">Rating{gameCards.length > 1 ? ` · ${chartCard.label}` : ''}</h3>
+          <RatingChart points={chartCard.me.history} />
+        {/if}
+      </section>
+    {/if}
 
     <div class="cols">
       <section>
@@ -147,6 +327,15 @@
 
       <section>
         <h2>Match history</h2>
+        {#if form.length}
+          <div class="form">
+            <span class="label">Recent form</span>
+            <span class="boxes" aria-label="Last {form.length} results, newest first">
+              {#each form as m, i (i)}<span class="res r-{m.outcome}" title="vs {names.get(m.opponent) ?? '?'}">{m.outcome}</span>{/each}
+            </span>
+            {#if streak}<span class="small muted">{streak}</span>{/if}
+          </div>
+        {/if}
         {#if stats.matches.length}
           <ul class="plain matches">
             {#each stats.matches as m, i (i)}
@@ -174,10 +363,40 @@
   .acct { margin: 2px 0 0; }
   .pw { font: 700 18px var(--font-cond); letter-spacing: 0.08em; color: var(--accent); }
   .titlebar input { max-width: 260px; }
-  .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 20px 0 28px; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line); }
+  .head { display: flex; gap: 18px; align-items: flex-start; }
+  .who { min-width: 0; flex: 1; }
+  .photo { width: 96px; height: 96px; flex: none; object-fit: cover; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--card); }
+  .photo.none { border-style: dashed; }
+  .bio { margin: 8px 0 0; max-width: 620px; white-space: pre-line; color: var(--ink-2); }
+  .links { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 0; margin: 6px 0 0; }
+  .links a { font-weight: 600; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+  .editor { display: grid; gap: 14px; padding: 16px; margin-top: 16px; max-width: 560px; }
+  .editor .field { gap: 6px; }
+  .photo-edit { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .btn.small { min-height: 32px; padding: 0 10px; font-size: 14px; }
+  .stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 20px 0 28px; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line); }
   .stats div { padding: 12px 4px; }
   .stats div + div { border-left: 1px solid var(--line); padding-left: 14px; }
   dd { margin: 2px 0 0; font: 700 30px/1 var(--font-cond); }
+  .medals i { font-style: normal; color: var(--line-strong); margin: 0 3px; font-weight: 400; }
+  .medals span:first-child { color: var(--accent); }
+  .ranks { margin-bottom: 32px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-top: 12px; }
+  .gcard {
+    all: unset; box-sizing: border-box; display: grid; gap: 4px; padding: 12px 14px; cursor: pointer;
+    background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius);
+  }
+  .gcard:hover:not(:disabled) { border-color: var(--ink); }
+  .gcard:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .gcard:disabled { cursor: default; }
+  .gcard.on { border-color: var(--ink); box-shadow: inset 3px 0 0 var(--accent); }
+  .big { font: 700 28px/1.1 var(--font-cond); }
+  .big small { font-size: 16px; font-weight: 500; }
+  .charthead { margin: 20px 0 6px; }
+  .form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .boxes { display: flex; gap: 3px; }
+  .boxes .res { width: 24px; height: 24px; flex: 0 0 24px; font-size: 13px; }
+  .r-D { color: var(--ink-2); background: var(--line); }
   .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px; }
   h2 { padding-bottom: 6px; border-bottom: 2px solid var(--ink); }
   .mt { margin-top: 28px; }
@@ -197,7 +416,10 @@
   td a { text-decoration: none; }
   @media (max-width: 760px) {
     .cols { grid-template-columns: minmax(0, 1fr); }
-    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .stats div:nth-child(3) { border-left: 0; padding-left: 4px; }
+    .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .stats div { border-bottom: 1px solid var(--line); }
+    .stats div:nth-child(4) { border-left: 0; padding-left: 4px; }
+    .head { gap: 12px; }
+    .head > .photo { width: 72px; height: 72px; }
   }
 </style>
