@@ -23,8 +23,9 @@
   color-scheme: light;
 }
 
+/* Dark: follows the device unless the person picked a theme in Settings (data-theme on <html>). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --paper: #131417;
     --card: #1c1e23;
     --ink: #ecebe6;
@@ -42,6 +43,29 @@
     --shadow: none;
     color-scheme: dark;
   }
+}
+:root[data-theme='dark'] {
+  --paper: #131417;
+  --card: #1c1e23;
+  --ink: #ecebe6;
+  --ink-2: #b9b8b2;
+  --muted: #8a8d95;
+  --line: #2d3037;
+  --line-strong: #444852;
+  --accent: #ff6a4d;
+  --accent-ink: #160a07;
+  --accent-soft: #3a1f19;
+  --ok: #4fc58a;
+  --warn: #f0a73a;
+  --warn-soft: #36290f;
+  --danger: #ff6b5c;
+  --shadow: none;
+  color-scheme: dark;
+}
+
+/* Settings → Text size: Large */
+:root[data-size='large'] body {
+  zoom: 1.12;
 }
 
 *,

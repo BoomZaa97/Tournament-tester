@@ -6,7 +6,7 @@ This lets other people see, run and join tournaments, and keeps all data in a Go
 
 | Who | How | Can |
 |---|---|---|
-| You (site admin) | Your **admin key**, entered in the site's Settings | Everything, on every tournament. Rename players, delete spam. |
+| You (site admin) | Your **admin key**, entered in the site's Settings → Admin settings (`#/admin`) | Everything, on every tournament. Rename players, delete spam. |
 | Organizer | Whoever creates a tournament. Their browser gets a secret organizer key for it automatically | Edit or delete **that** tournament, open sign-up, set a player limit, move people up from the waitlist, run check-in, drop players, settle disputed scores, see its player PINs |
 | Helper | Opens the organizer's **helper link** (Edit tab → Players and helpers) | Same as the organizer, for that tournament |
 | Player | Signs up on the tournament page (if sign-up is open) and gets a **6-digit PIN**, or gets it from the organizer | Report the score of their own unplayed match; confirm or dispute a score their opponent reported; check in ("I'm here") before the start; drop out once it has started. Fixing a result stays with the organizer. |
@@ -51,7 +51,7 @@ it, or every password stops working).
 
 ## 5. Connect the site
 
-**On your own device (site admin):** open the site, go to **Settings**, choose **Google Sheet**, paste the URL and your admin key, click **Test and save**.
+**On your own device (site admin):** open the site, go to **Settings → Admin settings** (or open `#/admin`), choose **Google Sheet**, paste the URL and your admin key, click **Test and save**.
 
 **For everyone else (to view):** put the URL (not the key!) in `public/config.json` and push:
 
@@ -63,7 +63,7 @@ it, or every password stops working).
 
 Now anyone who opens your site sees the tournaments from the sheet and can create their own.
 
-If you already made tournaments in your browser before connecting, use **Settings → Copy this browser's tournaments to the sheet**.
+If you already made tournaments in your browser before connecting, use **Settings → Admin settings → Copy this browser's tournaments to the sheet**.
 
 ## Updating the script later
 
@@ -127,4 +127,4 @@ If a manual edit makes later matches wrong, the app marks them **Check** and let
 Google's free limits are far more than a tournament needs (about 20,000 requests a day).
 Each save takes 1–2 seconds and doesn't get slower as tournaments pile up. Viewers' pages refresh every 20 seconds.
 A Google Sheet holds 10 million cells: thousands of tournaments. If it ever gets slow, download a backup
-(Settings → Download backup), then delete old tournaments on the site.
+(Settings → Admin settings → Download backup), then delete old tournaments on the site.

@@ -1,158 +1,166 @@
 <script lang="ts">
-  import { app, errorText } from '../lib/app.svelte';
-  import { LocalStore, SheetsStore, saveSettings } from '../lib/store';
-  import type { AllData, Settings, Store } from '../lib/store';
+  import Verified from '../components/Verified.svelte';
+  import { app } from '../lib/app.svelte';
+  import { getPrefs, savePrefs } from '../lib/prefs';
+  import type { Prefs, TextSize, Theme } from '../lib/prefs';
+  import { forgetOrgKey, orgKeyIds, pinnedTournaments } from '../lib/store';
+  import type { AllData } from '../lib/store';
 
-  let s = $state<Settings>({ ...app.settings });
-  let testing = $state(false);
-  let testResult = $state('');
-  let busy = $state('');
-
-  async function test() {
-    testing = true;
-    testResult = '';
-    try {
-      const st = new SheetsStore(s.sheetsUrl.trim(), s.adminKey.trim());
-      const data = await st.loadAll();
-      let msg = `Connected. ${data.tournaments.length} tournament(s) in the sheet.`;
-      if (!s.adminKey.trim()) msg += ' No admin key: you can still create and run your own tournaments.';
-      else if (await st.checkKey()) {
-        // A key that works is what people want kept; don't make them find the Save button too.
-        save();
-        msg += ' Admin key accepted and saved. You can create and edit tournaments now.';
-      } else msg += ' Admin key is WRONG. Nothing was saved.';
-      testResult = msg;
-    } catch (e) {
-      testResult = `Couldn't connect: ${errorText(e)}`;
-    } finally {
-      testing = false;
-    }
+  let prefs = $state<Prefs>(getPrefs());
+  function set<K extends keyof Prefs>(k: K, v: Prefs[K]) {
+    prefs = { ...prefs, [k]: v };
+    savePrefs(prefs);
   }
+  const themes: [Theme, string][] = [['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']];
+  const sizes: [TextSize, string][] = [['normal', 'Normal'], ['large', 'Large']];
 
-  function save() {
-    const clean = { ...s, sheetsUrl: s.sheetsUrl.trim(), adminKey: s.adminKey.trim() };
-    saveSettings(clean);
-    app.applySettings(clean);
-    app.notify('Settings saved');
-  }
+  // ---- what this device may do, and where
+  let data = $state<AllData | null>(app.store.peekAll());
+  app.store.loadAll().then((d) => (data = d), () => {});
+  let keysTick = $state(0);
+  const organizing = $derived.by(() => {
+    void keysTick;
+    void app.accountSync; // logging in brings keys
+    return orgKeyIds().map((id) => ({ id, t: data?.tournaments.find((t) => t.id === id) }));
+  });
+  const playing = $derived.by(() => {
+    void app.accountSync;
+    return pinnedTournaments().map(({ id, playerId }) => ({
+      id,
+      playerId,
+      t: data?.tournaments.find((t) => t.id === id),
+      name: data?.players.find((p) => p.id === playerId)?.name,
+    }));
+  });
+  const shared = app.store.kind === 'sheets';
+  const role = $derived(
+    app.store.isAdmin ? (shared ? 'Site admin' : 'Everything (this browser only)') : organizing.length ? 'Organizer' : playing.length || app.account ? 'Player' : 'Viewer',
+  );
 
-  /** Merge tournaments into a store, keeping whatever version the store has. */
-  async function copyInto(target: Store, data: AllData) {
-    for (const t of data.tournaments) {
-      const existing = await target.get(t.id);
-      await target.save({ ...t, version: existing?.version ?? 0 }, data.players.filter((p) => t.entrants.some((e) => e.id === p.id)));
-    }
-  }
-
-  async function exportBackup() {
-    const data = await app.store.loadAll({ full: true });
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `tournaments-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
-
-  async function importBackup(e: Event & { currentTarget: HTMLInputElement }) {
-    const file = e.currentTarget.files?.[0];
-    if (!file) return;
-    busy = 'Importing…';
-    try {
-      const data = JSON.parse(await file.text()) as AllData;
-      if (!Array.isArray(data.tournaments)) throw new Error('Not a backup file');
-      await copyInto(app.store, data);
-      app.notify(`Imported ${data.tournaments.length} tournament(s)`);
-    } catch (err) {
-      app.notify(errorText(err), 'error');
-    } finally {
-      busy = '';
-      e.currentTarget.value = '';
-    }
-  }
-
-  async function uploadLocal() {
-    const local = await new LocalStore().loadAll();
-    if (!local.tournaments.length) return app.notify('Nothing saved in this browser');
-    if (!confirm(`Copy ${local.tournaments.length} tournament(s) from this browser into the Google Sheet?`)) return;
-    busy = 'Copying…';
-    try {
-      await copyInto(app.store, local);
-      app.notify('Copied to the sheet');
-    } catch (err) {
-      app.notify(errorText(err), 'error');
-    } finally {
-      busy = '';
-    }
+  function forget(id: string, name: string) {
+    if (!confirm(`Stop editing “${name}” on this device? You'll need a helper link (or the account that made it) to edit it here again.`)) return;
+    forgetOrgKey(id);
+    keysTick++;
   }
 </script>
 
 <div class="wrap page">
   <h1>Settings</h1>
+  <p class="muted lead">For this device only.</p>
 
   <section>
-    <h2>Where data is saved</h2>
-    <div class="choices">
-      <label class="choice" class:on={s.source === 'local'}>
-        <input type="radio" bind:group={s.source} value="local" />
-        <span><b>This browser only</b><br /><span class="small muted">Nothing to set up. Other people can't see it.</span></span>
-      </label>
-      <label class="choice" class:on={s.source === 'sheets'}>
-        <input type="radio" bind:group={s.source} value="sheets" />
-        <span><b>Google Sheet</b><br /><span class="small muted">Free. Anyone with the link can view; only people with the admin key can edit.</span></span>
-      </label>
-    </div>
-
-    {#if s.source === 'sheets'}
-      <div class="sheet">
-        <label class="field">
-          <span>Apps Script web app URL</span>
-          <input bind:value={s.sheetsUrl} placeholder="https://script.google.com/macros/s/…/exec" inputmode="url" />
-        </label>
-        <label class="field">
-          <span>Site admin key <span class="muted">(owner only; everyone else leaves this empty)</span></span>
-          <input bind:value={s.adminKey} type="password" autocomplete="off" />
-        </label>
-        <div class="row">
-          <button onclick={test} disabled={!s.sheetsUrl.trim() || testing}>{testing ? 'Testing…' : 'Test and save'}</button>
-          {#if testResult}<span class="small">{testResult}</span>{/if}
-        </div>
-        <p class="small muted">
-          Setup takes about 5 minutes: follow <b>docs/google-sheets-setup.md</b> in the project. To make the sheet the default for
-          everyone who opens your site, put the URL in <code>public/config.json</code>. Never put the admin key there.
-        </p>
+    <h2>Appearance</h2>
+    <div class="opt">
+      <span class="name">Theme</span>
+      <div class="seg" role="radiogroup" aria-label="Theme">
+        {#each themes as [v, label] (v)}
+          <button role="radio" aria-checked={prefs.theme === v} class:on={prefs.theme === v} onclick={() => set('theme', v)}>{label}</button>
+        {/each}
       </div>
-    {/if}
-
-    <div class="row"><button class="primary" onclick={save}>Save settings</button></div>
+      <span class="small muted hint">Auto follows your phone or computer.</span>
+    </div>
+    <div class="opt">
+      <span class="name">Text size</span>
+      <div class="seg" role="radiogroup" aria-label="Text size">
+        {#each sizes as [v, label] (v)}
+          <button role="radio" aria-checked={prefs.size === v} class:on={prefs.size === v} onclick={() => set('size', v)}>{label}</button>
+        {/each}
+      </div>
+      <span class="small muted hint">Large makes everything a bit bigger, handy on a phone at the venue.</span>
+    </div>
   </section>
 
   <hr class="rule" />
 
   <section>
-    <h2>Backup</h2>
-    <p class="small muted">Download everything as one file, or load a backup into the current data source.</p>
-    <div class="row">
-      <button onclick={exportBackup}>Download backup</button>
-      {#if app.store.isAdmin}
-        <label class="btn">Import backup<input type="file" accept="application/json,.json" hidden onchange={importBackup} /></label>
-      {/if}
-      {#if app.store.kind === 'sheets'}
-        <button onclick={uploadLocal}>Copy this browser's tournaments to the sheet</button>
-      {/if}
-      {#if busy}<span class="small muted">{busy}</span>{/if}
+    <h2>Your access</h2>
+    <div class="role">
+      <span class="label">On this device you are</span>
+      <b class="rname">{role}</b>
     </div>
+
+    {#if shared}
+      <div class="item">
+        {#if app.account}
+          <span>Logged in as <a href="#/p/{app.account.playerId}"><b>{app.account.name}</b></a><Verified id={app.account.playerId} /></span>
+          <a class="small" href="#/account">Account</a>
+        {:else}
+          <span class="muted">Not logged in. An account keeps your PINs and tournaments on all your devices and locks your name to you.</span>
+          <a class="small" href="#/account/settings">Log in</a>
+        {/if}
+      </div>
+    {/if}
+
+    {#if app.store.isAdmin && shared}
+      <p class="small">Site admin: you can edit every tournament. <a href="#/admin">Admin settings</a></p>
+    {/if}
+
+    {#if organizing.length}
+      <h3>You organize</h3>
+      <ul class="list">
+        {#each organizing as o (o.id)}
+          <li>
+            <a href="#/t/{o.id}">{o.t?.name ?? 'Tournament ' + o.id}</a>
+            {#if o.t?.game}<span class="small muted">{o.t.game}</span>{/if}
+            <span class="spacer"></span>
+            <button class="small ghost" onclick={() => forget(o.id, o.t?.name ?? o.id)}>Stop editing here</button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    {#if playing.length}
+      <h3>You play in</h3>
+      <ul class="list">
+        {#each playing as p (p.id)}
+          <li>
+            <a href="#/t/{p.id}">{p.t?.name ?? 'Tournament ' + p.id}</a>
+            {#if p.name}<span class="small muted">as {p.name}</span>{/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    {#if !app.store.isAdmin && !organizing.length && !playing.length}
+      <p class="small muted">You can see every tournament. Create one to organize it, or join one to report your own scores.</p>
+    {/if}
   </section>
+
+  {#if !app.store.isAdmin || !shared}
+    <hr class="rule" />
+    <p class="small muted owner">
+      {shared ? 'Site owner?' : 'Data source, backups and roles:'} <a href="#/admin">Admin settings</a>
+    </p>
+  {/if}
 </div>
 
 <style>
   .page { padding-top: 28px; max-width: 720px; }
-  h1 { margin-bottom: 24px; }
+  h1 { margin-bottom: 4px; }
+  .lead { margin: 0 0 24px; }
   section { display: grid; gap: 14px; }
-  .choices { display: grid; gap: 8px; }
-  .choice { display: flex; gap: 12px; align-items: start; padding: 12px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--card); cursor: pointer; }
-  .choice.on { border-color: var(--ink); box-shadow: inset 3px 0 0 var(--accent); }
-  .choice input { width: 18px; min-height: 0; margin-top: 3px; accent-color: var(--accent); }
-  .sheet { display: grid; gap: 12px; }
-  code { font-size: 13px; background: var(--card); border: 1px solid var(--line); padding: 1px 4px; border-radius: 3px; }
+  h3 { margin: 8px 0 0; }
+  .opt { display: grid; grid-template-columns: 110px minmax(0, 360px); align-items: center; gap: 6px 16px; }
+  .opt .name { font-weight: 600; }
+  .opt .hint { grid-column: 2; }
+  .seg { display: flex; border: 1px solid var(--line-strong); border-radius: var(--radius); overflow: hidden; }
+  .seg button {
+    flex: 1 1 0; min-width: 0; min-height: 38px; border: 0; border-radius: 0; background: transparent; padding: 0 8px;
+    font: 600 15px var(--font-cond); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted);
+  }
+  .seg button + button { border-left: 1px solid var(--line-strong); }
+  .seg button.on { background: var(--ink); color: var(--paper); }
+  .role { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .rname { font: 700 26px/1 var(--font-cond); color: var(--accent); }
+  .item { display: flex; align-items: baseline; gap: 12px; justify-content: space-between; flex-wrap: wrap; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+  .list { list-style: none; padding: 0; margin: 0; border-top: 1px solid var(--line); }
+  .list li { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; padding: 8px 2px; border-bottom: 1px solid var(--line); min-height: 44px; }
+  .list a { font-weight: 600; text-decoration: none; }
+  .list a:hover { text-decoration: underline; }
+  .spacer { flex: 1; }
+  .owner { margin: 0; }
+  @media (max-width: 520px) {
+    .opt { grid-template-columns: minmax(0, 1fr); }
+    .opt .hint { grid-column: 1; }
+  }
 </style>

@@ -23,7 +23,7 @@ Made because Challonge made fixing wrong results hard.
   with `apps-script/Code.gs` pasted into Extensions → Apps Script and deployed as a web app
   (Execute as: Me, Access: Anyone). Its `/exec` URL is in `public/config.json`.
 - `ADMIN_KEY` (Apps Script → Project Settings → Script properties) is the site admin key: full rights everywhere.
-  The owner keeps it; never ask for it in chat and never commit it. It's entered per device in the site's Settings page.
+  The owner keeps it; never ask for it in chat and never commit it. It's entered per device on the site's Admin page (`#/admin`, linked from Settings).
 - If `Code.gs` changes, the owner must paste it again and do Deploy → Manage deployments → edit →
   Version: New version (URL stays the same). Their Google UI is in Thai.
 
@@ -55,6 +55,11 @@ Made because Challonge made fixing wrong results hard.
   names compared by `nameKey`: case and extra spaces ignored, same as `lib/players.ts` `nameKey`): a save can't create a
   new player id under a verified name, and `renamePlayer` (admin) can't rename someone else onto one.
 - `store.canEdit(id)` (admin key or org key for that id) replaces the old global flag.
+- Settings are split: `#/settings` (`routes/Settings.svelte`, everyone) = this device's look (`lib/prefs.ts`, `tt.prefs.v1`:
+  theme auto/light/dark → `data-theme` on <html>, text size → `data-size=large` = `zoom: 1.12` on body; Bracket divides its
+  connector measurements by that zoom) and "Your access" (role, account, tournaments organized/played on this device).
+  `#/admin` (`routes/Admin.svelte`; nav link only for the site admin in sheets mode, linked from Settings otherwise) = data
+  source, admin key, roles and access table, verified players, backups.
 - Rankings (`lib/ranking.ts`, `routes/Players.svelte` at `#/players`, nav "Rankings"): computed in the browser from results,
   nothing stored. Elo (start 1500, K 40 under 10 rated matches then 24; forfeits/byes/walkovers don't count; ranked from
   `PROVISIONAL` = 5 rated matches) and placement points (`placementPoints`, finished tournaments only), filtered by game,

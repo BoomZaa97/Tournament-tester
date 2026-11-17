@@ -8,6 +8,7 @@
   import Players from './routes/Players.svelte';
   import PlayerPage from './routes/Player.svelte';
   import Settings from './routes/Settings.svelte';
+  import Admin from './routes/Admin.svelte';
   import Account from './routes/Account.svelte';
 
   const section = $derived(app.path[0] ?? '');
@@ -24,7 +25,8 @@
     <nav>
       <a href="#/" class:on={section === '' || section === 't' || section === 'j' || section === 'new'}>Tournaments</a>
       <a href="#/players" class:on={section === 'players' || section === 'p'}>Rankings</a>
-      <a href="#/settings" class:on={section === 'settings'}>Settings</a>
+      {#if app.store.isAdmin && app.store.kind === 'sheets'}<a href="#/admin" class:on={section === 'admin'}>Admin</a>{/if}
+      <a href="#/settings" class:on={section === 'settings' || (section === 'admin' && !(app.store.isAdmin && app.store.kind === 'sheets'))}>Settings</a>
       {#if app.store.kind === 'sheets'}
         <a href="#/account" class="acct" class:on={section === 'account'}>{app.account ? app.account.name : 'Log in'}</a>
       {/if}
@@ -48,6 +50,8 @@
       <PlayerPage id={app.path[1]} />
     {:else if section === 'settings'}
       <Settings />
+    {:else if section === 'admin'}
+      <Admin />
     {:else if section === 'account'}
       <Account next={app.path.slice(1).join('/')} />
     {:else}
@@ -112,8 +116,16 @@
     display: flex;
     gap: 2px;
     margin: 0 -8px;
+    min-width: 0;
+    max-width: calc(100% + 16px);
+    /* narrow phone (or large text): slide sideways instead of spilling off the screen */
+    overflow-x: auto;
+    scrollbar-width: none;
   }
+  nav::-webkit-scrollbar { display: none; }
   nav a {
+    flex: none;
+    white-space: nowrap;
     text-decoration: none;
     padding: 8px;
     font-weight: 600;

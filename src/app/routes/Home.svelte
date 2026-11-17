@@ -73,7 +73,7 @@
   {#if app.store.kind === 'local'}
     <p class="notice small">
       Saved in this browser only. To share brackets with other people, connect a Google Sheet in
-      <a href="#/settings">Settings</a>.
+      <a href="#/admin">Admin settings</a>.
     </p>
   {/if}
 

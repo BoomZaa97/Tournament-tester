@@ -83,6 +83,8 @@
       const box = containers[s.key];
       if (!box || s.table) continue;
       const origin = box.getBoundingClientRect();
+      // Settings → Large text zooms the page: screen pixels → the SVG's own (unzoomed) pixels
+      const z = box.offsetWidth ? origin.width / box.offsetWidth || 1 : 1;
       const pos = new Map<string, DOMRect>();
       box.querySelectorAll<HTMLElement>('[data-mid]').forEach((el) => {
         if (el.dataset.hidden !== 'true') pos.set(el.dataset.mid!, el.getBoundingClientRect());
@@ -97,10 +99,10 @@
             if (src.type !== 'winner') continue;
             const from = pos.get(src.match);
             if (!from) continue;
-            const x1 = from.right - origin.left + box.scrollLeft;
-            const y1 = from.top + from.height / 2 - origin.top;
-            const x2 = to.left - origin.left + box.scrollLeft;
-            const y2 = to.top + (side === 'p1' ? to.height * 0.27 : to.height * 0.73) - origin.top;
+            const x1 = (from.right - origin.left) / z + box.scrollLeft;
+            const y1 = (from.top + from.height / 2 - origin.top) / z;
+            const x2 = (to.left - origin.left) / z + box.scrollLeft;
+            const y2 = (to.top + (side === 'p1' ? to.height * 0.27 : to.height * 0.73) - origin.top) / z;
             const xm = x1 + (x2 - x1) / 2;
             const feeder = resolved.get(src.match);
             paths.push({ d: `M${x1} ${y1}H${xm}V${y2}H${x2}`, on: feeder?.status === 'done' || feeder?.status === 'bye' });

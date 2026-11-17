@@ -177,6 +177,16 @@ export function forgetAccount() {
 export function orgKeyIds(): string[] {
   return Object.keys(readJson<string>(KEYS));
 }
+/** Tournaments this device plays in (it has the PIN), with the player id. */
+export function pinnedTournaments(): { id: string; playerId: string }[] {
+  return Object.entries(readJson<{ playerId: string; pin: string }>(PINS)).map(([id, p]) => ({ id, playerId: p.playerId }));
+}
+/** Forget this device's organizer key for one tournament (it stops being able to edit it here). */
+export function forgetOrgKey(id: string) {
+  const keys = readJson<string>(KEYS);
+  delete keys[id];
+  writeJson(KEYS, keys);
+}
 
 /** Link that gives a helper the same rights as the organizer. */
 export function helperLink(id: string): string | undefined {
