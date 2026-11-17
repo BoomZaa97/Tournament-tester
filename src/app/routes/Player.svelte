@@ -14,15 +14,21 @@
   let renaming = $state(false);
   let newName = $state('');
 
+  function show(d: { tournaments: Parameters<typeof buildHistory>[0]; players: Parameters<typeof buildHistory>[1] }) {
+    const all = buildHistory(d.tournaments, d.players);
+    names = new Map([...all.values()].map((s) => [s.player.id, s.player.name]));
+    stats = all.get(id) ?? null;
+  }
+
   async function load() {
+    // what this device saw last time, until the sheet answers
+    const seen = app.store.peekAll();
+    if (seen) show(seen);
     try {
-      const d = await app.store.loadAll();
-      const all = buildHistory(d.tournaments, d.players);
-      names = new Map([...all.values()].map((s) => [s.player.id, s.player.name]));
-      stats = all.get(id) ?? null;
+      show(await app.store.loadAll());
       if (!stats) error = 'Player not found.';
     } catch (e) {
-      error = errorText(e);
+      if (!stats) error = errorText(e);
     }
   }
   load();

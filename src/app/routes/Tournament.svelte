@@ -20,6 +20,7 @@
     progressOf, restorePoint, roundName, standingOptions, STATUS_LABEL, statusOf, toState, withEntrants,
   } from '../lib/model';
   import type { LogEntry, Player, TournamentDoc } from '../lib/model';
+  import { createSaveQueue } from '../lib/saveQueue';
   import { myPin, rememberOrgKey, VersionConflictError } from '../lib/store';
 
   interface Props {
@@ -40,19 +41,29 @@
   /** Organizer or helper of this tournament on this device, or the site admin. */
   const canEdit = $derived(app.store.canEdit(id));
 
-  let doc = $state<TournamentDoc | null>(null);
+  // What this device saw last time: shown at once while the sheet answers (4–6 s).
+  const cached = app.store.peek(id);
+  let doc = $state<TournamentDoc | null>(cached?.tournament ?? null);
+  /** The doc shown has its log (a copy from the tournament list doesn't, so asking "changed?" would never bring it). */
+  let full = cached?.full ?? false;
+  /** The sheet has answered since the page opened (local mode: always). */
+  let fresh = $state(app.store.kind === 'local');
+  /** When the sheet last answered (ms), for "updated 12 s ago". */
+  let checkedAt = $state(0);
   // this device's PIN here; logging in (account sync) can bring one
   const myPinNow = $derived.by(() => {
     void app.accountSync;
     void doc?.updatedAt;
     return myPin(id);
   });
-  let players = $state<Player[]>([]);
+  let players = $state<Player[]>(cached?.players ?? []);
   let missing = $state(false);
   let error = $state('');
   // #/t/<id>/matches/<matchId> opens that match (links from the sign-up page)
   let openMatch = $state<string | null>(tab === 'matches' && arg ? arg : null);
   let saving = $state(false);
+  /** Organizer saves still on their way to the sheet (the page already shows them). */
+  let pendingSaves = $state(0);
 
   /** Add or update players by id (the page keeps every player it has been sent). */
   const withPlayers = (list: Player[]) => {
@@ -64,20 +75,43 @@
   async function load() {
     try {
       // only this tournament, and nothing at all when it hasn't changed
-      const r = await app.store.open(id, doc?.updatedAt);
+      const r = await app.store.open(id, full ? doc?.updatedAt : undefined);
       if (r !== 'same') {
         withPlayers(r.players);
         const d = r.tournament;
         if (!d) missing = true;
-        // check-ins change updatedAt but not the version (they don't touch the bracket)
-        else if (!doc || d.version !== doc.version || d.updatedAt !== doc.updatedAt) doc = d;
-      }
+        else {
+          full = true;
+          queue.confirmed = d;
+          // don't undo changes the page shows that are still being saved
+          // (check-ins change updatedAt but not the version: they don't touch the bracket)
+          if (!queue.pending && (!doc || d.version !== doc.version || d.updatedAt !== doc.updatedAt)) doc = d;
+        }
+      } else if (doc && !queue.confirmed) queue.confirmed = doc;
       error = '';
+      fresh = true;
+      checkedAt = Date.now();
     } catch (e) {
       error = errorText(e);
     }
   }
-  load();
+
+  // Organizer changes show at once and go to the sheet in the background, one after another.
+  const queue = createSaveQueue<TournamentDoc, Player[]>({
+    send: (d, created) => app.store.save(d, created ?? []),
+    onSaved: (saved, left) => {
+      checkedAt = Date.now();
+      if (!left) doc = saved;
+    },
+    onFailed: (e) => {
+      // put back what the sheet has, then look for anything newer
+      if (queue.confirmed) doc = queue.confirmed;
+      app.notify(`Not saved: ${errorText(e)}`, 'error');
+      load();
+    },
+    onPending: (n) => (pendingSaves = n),
+  });
+  const firstLoad = load();
 
   // The Edit tab matches typed names to people who played before: it needs every player.
   let allPlayers = false;
@@ -88,8 +122,17 @@
   });
 
   // Viewers of a shared sheet see updates without refreshing.
-  const poll = app.store.kind === 'sheets' ? setInterval(() => !openMatch && !saving && tab !== 'edit' && load(), 20000) : undefined;
+  const poll = app.store.kind === 'sheets' ? setInterval(() => !openMatch && !saving && !pendingSaves && tab !== 'edit' && load(), 20000) : undefined;
   onDestroy(() => clearInterval(poll));
+
+  // "updated 12 s ago" keeps counting
+  let now = $state(Date.now());
+  const tick = app.store.kind === 'sheets' ? setInterval(() => (now = Date.now()), 5000) : undefined;
+  onDestroy(() => clearInterval(tick));
+  const ago = $derived.by(() => {
+    const s = Math.max(0, Math.round((now - checkedAt) / 1000));
+    return s < 10 ? 'just now' : s < 60 ? `${s} s ago` : `${Math.floor(s / 60)} min ago`;
+  });
 
   // A bracket needs 2 players; with sign-up open there may be fewer for a while.
   const tstate = $derived(doc && doc.entrants.length >= 2 ? toState(doc) : null);
@@ -120,22 +163,23 @@
 
   const titleOf = (m: ResolvedMatch) => (tstate && doc ? roundName(m.template, tstate.structure.matches, doc.format) : '');
 
+  /**
+   * Show a change at once and save it in the background. True = accepted (if the sheet then
+   * refuses it, the page goes back to the sheet's copy and says so).
+   */
   async function persist(next: TournamentDoc, created: Player[] = []): Promise<boolean> {
-    saving = true;
-    try {
-      doc = await app.store.save(next, created);
-      if (created.length) withPlayers(created);
-      return true;
-    } catch (e) {
-      if (e instanceof VersionConflictError) {
-        doc = null;
-        await load();
-      }
-      app.notify(errorText(e), 'error');
-      return false;
-    } finally {
-      saving = false;
-    }
+    doc = next;
+    if (created.length) withPlayers(created);
+    // changes made on a copy this device had saved wait until the sheet has answered once
+    void queue.push(next, firstLoad, created);
+    return true;
+  }
+
+  /** A tournament the sheet just sent back after a player's action: it's now the sheet's copy. */
+  function fromSheet(d: TournamentDoc) {
+    queue.confirmed = d;
+    doc = d;
+    checkedAt = Date.now();
   }
 
   async function saveResult(matchId: string, input: ResultInput | null, decisions: Record<string, Decision>) {
@@ -150,7 +194,8 @@
       (extra ? ` (+${extra} later match${extra === 1 ? '' : 'es'} updated)` : '');
     const entry: LogEntry = { id: newId(), time: new Date().toISOString(), summary, changes: out.changes };
     const ok = await persist({ ...doc, results: out.results, options: out.options, log: [...doc.log, entry] });
-    if (ok) app.notify('Saved');
+    // shared mode: the header says when it has reached the sheet
+    if (ok && app.store.kind === 'local') app.notify('Saved');
     return ok;
   }
 
@@ -161,8 +206,9 @@
     if (!m || typeof m.p1 !== 'string' || typeof m.p2 !== 'string') return false;
     saving = true;
     try {
+      await queue.idle();
       const { winner, score1, score2 } = input;
-      doc = await app.store.report(id, matchId, pin, { winner, score1, score2, p1: m.p1, p2: m.p2 }, numbers.get(matchId));
+      fromSheet(await app.store.report(id, matchId, pin, { winner, score1, score2, p1: m.p1, p2: m.p2 }, numbers.get(matchId)));
       app.notify('Result reported');
       return true;
     } catch (e) {
@@ -179,7 +225,8 @@
     if (!app.store.confirm) return false;
     saving = true;
     try {
-      doc = await app.store.confirm(id, matchId, pin, ok, numbers.get(matchId));
+      await queue.idle();
+      fromSheet(await app.store.confirm(id, matchId, pin, ok, numbers.get(matchId)));
       app.notify(ok ? 'Result confirmed' : 'Result disputed: the organizer will settle it');
       return true;
     } catch (e) {
@@ -368,7 +415,15 @@
       {/if}
       {#if doc.code && app.store.kind === 'sheets'}<span class="small muted">Code <b class="jcode">{doc.code}</b></span>{/if}
       {#if champion}<span class="champ"><span class="label">Champion</span> <b>{champion}</b></span>{/if}
-      {#if saving}<span class="muted small">Saving…</span>{/if}
+      {#if saving || pendingSaves}
+        <span class="live small saving">Saving…</span>
+      {:else if app.store.kind === 'sheets'}
+        <span class="live small muted" title="This page checks the sheet for changes every 20 seconds">
+          {#if !fresh}{error ? "Can't reach the sheet: showing this device's copy" : 'Updating…'}
+          {:else if error}Can't reach the sheet · last updated {ago}
+          {:else}Live · updated {ago}{/if}
+        </span>
+      {/if}
     </div>
 
     {#if conflicts}
@@ -386,9 +441,9 @@
       </p>
     {/if}
 
-    <SignUp {doc} {names} finished={status === 'finished'} onjoined={(d) => (doc = d)} />
+    <SignUp {doc} {names} finished={status === 'finished'} onjoined={fromSheet} />
     {#if doc.checkIn && app.store.checkin && status === 'setup' && Object.keys(doc.results).length === 0 && doc.entrants.length}
-      <CheckIn {doc} {names} {canEdit} onchange={(d) => (doc = d)} onnoshows={removeNoShows} />
+      <CheckIn {doc} {names} {canEdit} onchange={fromSheet} onnoshows={removeNoShows} />
     {/if}
     <Waitlist {doc} {canEdit} onpromote={promote} />
 
@@ -476,6 +531,7 @@
   .bar > span { display: block; height: 100%; background: var(--accent); }
   .champ { display: inline-flex; align-items: baseline; gap: 8px; font-size: 17px; }
   .champ .label { color: var(--accent); }
+  .saving { color: var(--ink-2); }
   @media (max-width: 520px) {
     .print { display: none; }
   }

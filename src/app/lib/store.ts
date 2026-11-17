@@ -1,4 +1,6 @@
 import type { MatchResult } from '../../core';
+import { DeviceCache } from './cache';
+import type { CachedDoc } from './cache';
 import { cleanCode, makeCode, UPDATE_SCRIPT } from './model';
 import type { Player, TournamentDoc } from './model';
 
@@ -30,6 +32,13 @@ export interface Store {
   open(id: string, since?: string): Promise<{ tournament: TournamentDoc | null; players: Player[] } | 'same'>;
   /** Every player (to pick existing people when editing entrants). */
   players(): Promise<Player[]>;
+  /**
+   * What this device already has of a tournament, right now (shared mode: the device cache, maybe
+   * out of date; `full` = has its log). Pages show it at once, then load the real thing.
+   */
+  peek(id: string): CachedDoc | null;
+  /** The tournament list this device already has (shared mode: last seen, no logs). */
+  peekAll(): AllData | null;
   /** Saves and returns the doc with its new version. Throws VersionConflictError. */
   save(doc: TournamentDoc, players: Player[]): Promise<TournamentDoc>;
   remove(id: string): Promise<void>;
@@ -221,6 +230,16 @@ export class LocalStore implements Store {
     return readLocal().players;
   }
 
+  peek(id: string) {
+    const d = readLocal();
+    const t = d.tournaments.find((t) => t.id === id);
+    return t ? { tournament: t, players: d.players, full: true } : null;
+  }
+
+  peekAll() {
+    return readLocal();
+  }
+
   async save(doc: TournamentDoc, players: Player[]) {
     const data = readLocal();
     const i = data.tournaments.findIndex((t) => t.id === doc.id);
@@ -271,8 +290,25 @@ export class SheetsStore implements Store {
   kind = 'sheets' as const;
   isAdmin: boolean;
 
+  private cache: DeviceCache;
+
   constructor(private url: string, private key: string) {
     this.isAdmin = key.length > 0;
+    this.cache = new DeviceCache(url);
+  }
+
+  peek(id: string) {
+    return this.cache.peek(id);
+  }
+
+  peekAll() {
+    return this.cache.peekAll();
+  }
+
+  /** Keep what the sheet answered with on this device. */
+  private keep(t: TournamentDoc) {
+    this.cache.remember(t);
+    return t;
   }
 
   canEdit(id: string) {
@@ -300,8 +336,10 @@ export class SheetsStore implements Store {
     return body as T;
   }
 
-  loadAll(opts: { full?: boolean } = {}) {
-    return this.call<AllData>('GET', opts.full ? { action: 'all' } : { action: 'all', lite: '1' });
+  async loadAll(opts: { full?: boolean } = {}) {
+    const data = await this.call<AllData>('GET', opts.full ? { action: 'all' } : { action: 'all', lite: '1' });
+    this.cache.setList(data);
+    return data;
   }
 
   async get(id: string) {
@@ -316,7 +354,10 @@ export class SheetsStore implements Store {
     );
     if (r.same) return 'same' as const;
     // an older Google script sends no players with it
-    return { tournament: r.tournament ?? null, players: r.players ?? (await this.loadAll()).players };
+    const out = { tournament: r.tournament ?? null, players: r.players ?? (await this.loadAll()).players };
+    if (out.tournament) this.cache.remember(out.tournament, out.players);
+    else this.cache.forget(id);
+    return out;
   }
 
   async players() {
@@ -338,11 +379,12 @@ export class SheetsStore implements Store {
     const token = savedAccount()?.token;
     const r = await this.call<{ tournament: TournamentDoc }>('POST', { action: 'save', tournament: doc, players, orgKey: orgKey ?? '', ...(token ? { token } : {}) });
     if (token && doc.version === 0) this.track('keys', doc.id);
-    return r.tournament;
+    return this.keep(r.tournament);
   }
 
   async remove(id: string) {
     await this.call('POST', { action: 'delete', id, orgKey: orgKeyFor(id) ?? '' });
+    this.cache.forget(id);
   }
 
   async signup(id: string, name?: string) {
@@ -350,6 +392,7 @@ export class SheetsStore implements Store {
     const r = await this.call<{ playerId: string; pin: string; waitlisted?: boolean; tournament: TournamentDoc }>('POST', { action: 'signup', id, ...who });
     rememberPin(id, r.playerId, r.pin);
     if (name === undefined) this.track('pins', id);
+    this.keep(r.tournament);
     return r;
   }
 
@@ -434,7 +477,7 @@ export class SheetsStore implements Store {
     // So they don't have to type it again, unless this device already belongs to another player
     // (a borrowed phone keeps its owner).
     if (!myPin(id)) rememberPin(id, r.playerId, pin);
-    return r.tournament;
+    return this.keep(r.tournament);
   }
 
   async checkin(id: string, who: { pin: string } | { playerId: string }, here: boolean) {
@@ -442,18 +485,18 @@ export class SheetsStore implements Store {
       action: 'checkin', id, here, ...who, orgKey: orgKeyFor(id) ?? '',
     });
     if ('pin' in who && !myPin(id)) rememberPin(id, r.playerId, who.pin);
-    return r.tournament;
+    return this.keep(r.tournament);
   }
 
   async confirm(id: string, matchId: string, pin: string, ok: boolean, matchNo?: number) {
     const r = await this.call<{ tournament: TournamentDoc; playerId: string }>('POST', { action: 'confirm', id, matchId, pin, ok, matchNo });
     if (!myPin(id)) rememberPin(id, r.playerId, pin);
-    return r.tournament;
+    return this.keep(r.tournament);
   }
 
   async drop(id: string, pin: string) {
     const r = await this.call<{ tournament: TournamentDoc; playerId: string }>('POST', { action: 'drop', id, pin });
-    return r.tournament;
+    return this.keep(r.tournament);
   }
 
   async pins(id: string) {

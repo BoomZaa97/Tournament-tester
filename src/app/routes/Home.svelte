@@ -3,13 +3,19 @@
   import { FORMAT_LABEL, STATUS_LABEL, summaryOf } from '../lib/model';
   import type { TournamentDoc } from '../lib/model';
 
-  let tournaments = $state<TournamentDoc[] | null>(null);
+  const newestFirst = (list: TournamentDoc[]) => [...list].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  // what this device saw last time, until the sheet answers
+  const seen = app.store.peekAll();
+  let tournaments = $state<TournamentDoc[] | null>(seen ? newestFirst(seen.tournaments) : null);
   let error = $state('');
   let filter = $state<'all' | 'running' | 'setup' | 'finished'>('all');
 
   app.store
     .loadAll()
-    .then((d) => (tournaments = d.tournaments.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))))
+    .then((d) => {
+      tournaments = newestFirst(d.tournaments);
+      error = '';
+    })
     .catch((e) => (error = errorText(e)));
 
   let q = $state('');
@@ -70,7 +76,10 @@
     </p>
   {/if}
 
-  {#if error}
+  {#if error && tournaments}
+    <p class="notice small">Can't reach the sheet ({error}). Showing what this device saw last time.</p>
+  {/if}
+  {#if error && !tournaments}
     <p class="notice">Couldn't load tournaments: {error}</p>
   {:else if tournaments === null}
     <p class="muted">Loading…</p>

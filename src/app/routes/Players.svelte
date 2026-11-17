@@ -16,7 +16,9 @@
       games = [...new Set(d.tournaments.map((t) => t.game).filter(Boolean))].sort();
       load(d);
     })
-    .catch((e) => (error = errorText(e)));
+    .catch((e) => {
+      if (!stats) error = errorText(e); // else keep showing the copy from last time
+    });
 
   let data: Awaited<ReturnType<typeof app.store.loadAll>> | null = null;
   function load(d = data) {
@@ -24,6 +26,12 @@
     data = d;
     const ts = game ? d.tournaments.filter((t) => t.game === game) : d.tournaments;
     stats = [...buildHistory(ts, d.players).values()];
+  }
+  // what this device saw last time, until the sheet answers
+  const seen = app.store.peekAll();
+  if (seen && !stats) {
+    games = [...new Set(seen.tournaments.map((t) => t.game).filter(Boolean))].sort();
+    load(seen);
   }
 
   const rows = $derived.by(() => {

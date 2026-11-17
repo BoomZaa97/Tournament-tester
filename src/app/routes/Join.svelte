@@ -17,7 +17,11 @@
   }
   let { id }: Props = $props();
 
-  let doc = $state<TournamentDoc | null>(null);
+  // what this device saw last time, until the sheet answers
+  const cached = app.store.peek(id);
+  let doc = $state<TournamentDoc | null>(cached?.tournament ?? null);
+  /** The sheet has answered (a copy from last time may say sign-up is closed when it's open now). */
+  let fresh = $state(app.store.kind === 'local');
   let error = $state('');
   let missing = $state(false);
 
@@ -28,6 +32,7 @@
       if (!d) missing = true;
       else if (!doc || d.version !== doc.version || d.updatedAt !== doc.updatedAt) doc = d;
       error = '';
+      fresh = true;
     } catch (e) {
       error = errorText(e);
     }
@@ -59,7 +64,7 @@
 
   // nothing to do here: go to the bracket (a spectator scanning the poster after sign-up closed)
   $effect(() => {
-    if (doc && !entrant && !waitPlace && !open && !checkInOpen) location.replace(bracket);
+    if (fresh && doc && !entrant && !waitPlace && !open && !checkInOpen) location.replace(bracket);
   });
 
   // ---- my matches (once the bracket exists)

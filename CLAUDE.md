@@ -95,6 +95,13 @@ Other details:
   `{same:true}` when unchanged (`store.open`), `all&lite=1` leaves out logs (`loadAll()`; backup uses `{full:true}`),
   `players` = the registry (Edit tab). `onEdit` bumps `updatedAt` for hand edits. Real Sheets have a fixed row count and
   throw outside it: `scripts/fake-google.mjs` (shared by tests and `sheet:fake`) mimics that.
+- Instant pages (the sheet takes 4–6 s): `lib/cache.ts` keeps what the sheet last sent in `tt.cache.v1` (per sheet URL; the
+  lite list + up to 20 full tournaments). `store.peek(id)` / `peekAll()` return it synchronously (LocalStore: real data);
+  pages render it first, then load (`since` only when the shown doc is `full`, i.e. has its log). Tournament header:
+  "Updating…" → "Live · updated 12 s ago". Organizer saves are optimistic: `persist` sets `doc` at once and queues the save
+  (`lib/saveQueue.ts`: one at a time, each sent with the last server `version`, waiting for the first load; a failure drops
+  the queue, puts back `queue.confirmed` and reloads). Player report/confirm still wait for the sheet (PIN checks).
+  `SHEET_DELAY=5000 npm run sheet:fake` mimics the slowness; `GET /fail?n=1` on it makes the next save fail.
 - `SheetsStore` POSTs as `text/plain` (no CORS preflight, which Apps Script can't answer). Saves carry a `version`;
   mismatch → `conflict` error → app reloads.
 - Svelte: don't name variables `state` in components (clashes with `$state`); the codebase uses `tstate`.
