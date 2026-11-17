@@ -14,6 +14,7 @@ Free tournament brackets for any game, where any result can be edited later with
 - **Run it together, like Challonge:** anyone can create a tournament and becomes its organizer. Send helpers a link to run it with you, let players sign themselves up, and let them report their own scores with a PIN. No accounts.
 - **At the venue:**
   - **Join code + door poster:** every tournament has a short code (like `K7QM2X`). People type it in "Join with code" on the home page, or scan the QR code on the printable door poster (Edit tab → Door poster).
+  Both open a sign-up page made for phones: type your name, tap Join, and it shows your PIN (or waitlist place), an "I'm here" check-in button, and later your next match and any score your opponent wants you to confirm.
   - **Player limit + waitlist:** set the most players; later sign-ups go on a waitlist (with their PIN) and the organizer moves them up in order.
   - **Check-in:** players tap "I'm here" with their PIN; the organizer sees who came and removes the no-shows in one click.
   - **Drop out:** a player (with their PIN) or the organizer can drop someone mid-event. They keep their results; their remaining matches are walkovers.

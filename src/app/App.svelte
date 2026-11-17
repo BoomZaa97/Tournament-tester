@@ -4,6 +4,7 @@
   import Create from './routes/Create.svelte';
   import Tournament from './routes/Tournament.svelte';
   import Poster from './routes/Poster.svelte';
+  import Join from './routes/Join.svelte';
   import Players from './routes/Players.svelte';
   import PlayerPage from './routes/Player.svelte';
   import Settings from './routes/Settings.svelte';
@@ -18,7 +19,7 @@
       <span><small>Project:</small> Tournament Tester</span>
     </a>
     <nav>
-      <a href="#/" class:on={section === '' || section === 't' || section === 'new'}>Tournaments</a>
+      <a href="#/" class:on={section === '' || section === 't' || section === 'j' || section === 'new'}>Tournaments</a>
       <a href="#/players" class:on={section === 'players' || section === 'p'}>Players</a>
       <a href="#/settings" class:on={section === 'settings'}>Settings</a>
     </nav>
@@ -29,6 +30,8 @@
   {#key app.path.join('/')}
     {#if section === 'new'}
       <Create />
+    {:else if section === 'j' && app.path[1]}
+      <Join id={app.path[1]} />
     {:else if section === 't' && app.path[1] && app.path[2] === 'poster'}
       <Poster id={app.path[1]} />
     {:else if section === 't' && app.path[1]}

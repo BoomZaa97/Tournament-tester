@@ -90,9 +90,9 @@
     {/each}
   </ul>
 
-  {#if canEdit}
+  {#if canEdit && missing.length}
     <div class="row">
-      <button class="danger" disabled={busy || !missing.length || missing.length === doc.entrants.length} onclick={removeNoShows}>
+      <button class="danger" disabled={busy || missing.length === doc.entrants.length} onclick={removeNoShows}>
         Remove {missing.length} no-show{missing.length === 1 ? '' : 's'}
       </button>
       <span class="small muted">Before round 1. Undo from the Log tab.</span>

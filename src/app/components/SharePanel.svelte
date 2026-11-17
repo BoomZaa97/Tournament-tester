@@ -30,6 +30,7 @@
   }
 
   const viewLink = `${location.href.split('#')[0]}#/t/${doc.id}`;
+  const joinLink = `${location.href.split('#')[0]}#/j/${doc.id}`;
   const helper = helperLink(doc.id);
   const started = $derived(Object.keys(doc.results).length > 0);
 
@@ -81,6 +82,8 @@
     {:else}
       <p class="small muted">No join code yet: {UPDATE_SCRIPT} The poster's QR code works already.</p>
     {/if}
+    <p class="small muted">Both open a sign-up page made for phones: name, Join, then their PIN and check-in. Same page as a link:</p>
+    <div class="row"><code>{joinLink}</code><button class="small" onclick={() => copy(joinLink)}>Copy</button></div>
     <a class="btn small" href="#/t/{doc.id}/poster">Door poster (QR code)</a>
   </div>
 

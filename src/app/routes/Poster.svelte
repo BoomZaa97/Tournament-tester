@@ -16,7 +16,8 @@
     .then((d) => (d ? (doc = d) : (error = "This tournament doesn't exist (or was deleted).")))
     .catch((e) => (error = errorText(e)));
 
-  const link = `${location.href.split('#')[0]}#/t/${id}`;
+  // the phone sign-up page; it sends people on to the bracket when there's nothing to do there
+  const link = `${location.href.split('#')[0]}#/j/${id}`;
   const site = location.href.split('#')[0].replace(/^https?:\/\//, '').replace(/\/$/, '');
 </script>
 

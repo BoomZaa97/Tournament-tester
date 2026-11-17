@@ -120,6 +120,10 @@ Push to `main` = deploy. Check UI changes in a real browser (Playwright, desktop
 - Join code: `Tournaments.code`, 6 chars from `CODE_CHARS` (no 0/O/1/I), made by Code.gs on first save, or by `ensureCodes`
   on any GET for older rows. Public lookup `GET action=code&code=…`. LocalStore makes codes too. Poster: `#/t/<id>/poster`
   (`routes/Poster.svelte`, QR drawn by `components/QrCode.svelte` with `qrcode-generator`, always black on white).
+- Phone sign-up page `#/j/<id>` (`routes/Join.svelte`): the poster QR, the home page's code box and the share panel all point
+  here. Name → Join, then PIN / waitlist place, "I'm here", next match and scores to confirm (links to
+  `#/t/<id>/matches/<matchId>`, which opens that match). Nothing to do there (sign-up closed, no check-in, not a player on
+  this device) → `location.replace` to the bracket.
 - Saves now return `assemble(...)` of what was stored (code, waitlist, check-ins), not the posted doc.
 - Waitlist: `Tournaments.maxPlayers`; `signup` puts people on the `Waitlist` tab when full or when anyone is already
   waiting. Waitlisted people are NOT entrants (`doc.waitlist`, ignored on save). Moving up = a normal organizer save that

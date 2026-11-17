@@ -44,7 +44,8 @@
   let players = $state<Player[]>([]);
   let missing = $state(false);
   let error = $state('');
-  let openMatch = $state<string | null>(null);
+  // #/t/<id>/matches/<matchId> opens that match (links from the sign-up page)
+  let openMatch = $state<string | null>(tab === 'matches' && arg ? arg : null);
   let saving = $state(false);
 
   async function load() {

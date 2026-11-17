@@ -26,7 +26,7 @@
     joinError = '';
     try {
       const t = await app.store.findByCode(code);
-      app.go(`t/${t.id}`);
+      app.go(`j/${t.id}`);
     } catch (e) {
       joinError = errorText(e);
     } finally {
