@@ -4,6 +4,7 @@
 // Then in the dev site run: localStorage.setItem("tt.settings.v1", JSON.stringify({source: "sheets", sheetsUrl: "http://localhost:5180/exec", adminKey: ""}))
 // GET /dump shows every tab. SHEET_DELAY=5000 makes every answer as slow as the real Google script;
 // GET /fail?n=1 makes the next n saves (POSTs) fail, to try what the site does then.
+// Nothing goes to the internet: GET /fetched lists what Code.gs would have sent (Discord messages, Challonge requests).
 import http from 'node:http';
 import { fakeGoogle } from './fake-google.mjs';
 
@@ -21,6 +22,7 @@ http
       }, delay);
     const url = new URL(req.url, 'http://x');
     if (url.pathname === '/dump') return send(JSON.stringify(g.sheets.dump()));
+    if (url.pathname === '/fetched') return send(JSON.stringify(g.fetched));
     if (url.pathname === '/fail') return send(JSON.stringify({ failNext: (failNext = Number(url.searchParams.get('n') ?? 1)) }));
     if (req.method === 'GET') return send(g.ctx.doGet({ parameter: Object.fromEntries(url.searchParams) }).text);
     let body = '';

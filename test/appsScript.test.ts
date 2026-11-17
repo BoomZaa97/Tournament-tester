@@ -476,6 +476,76 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(back.playerId).toBe(alice.id);
     });
 
+    it('Discord: organizers connect a webhook; it is never shown; saves and confirmations post the lines', () => {
+      const g = fakeGoogle();
+      create(g);
+      const HOOK = 'https://discord.com/api/webhooks/123456/abc-DEF_9';
+      // only the organizer, only real webhook links
+      expect(g.post({ action: 'discord', id: 'o1', url: HOOK }).error).toMatch(/organizer/i);
+      expect(g.post({ action: 'discord', id: 'o1', orgKey: ORG, url: 'https://evil.example/x' }).error).toMatch(/not a Discord webhook/);
+      expect(g.fetched).toHaveLength(0);
+      // Discord refusing the link: not saved
+      g.onFetch(() => ({ code: 404, body: '' }));
+      expect(g.post({ action: 'discord', id: 'o1', orgKey: ORG, url: HOOK }).error).toMatch(/didn't accept/);
+      g.onFetch(() => ({ code: 204, body: '' }));
+      expect(g.post({ action: 'discord', id: 'o1', orgKey: ORG, url: HOOK })).toEqual({ discord: true });
+      expect(g.fetched).toHaveLength(2);
+      const hello = JSON.parse(g.fetched[1].options.payload!);
+      expect(hello.content).toContain('Connected');
+      expect(hello.allowed_mentions).toEqual({ parse: [] });
+
+      // the link itself never leaves the sheet
+      const t = g.get({ action: 'get', id: 'o1' }).tournament;
+      expect(t.discord).toBe(true);
+      expect(JSON.stringify([g.get({ action: 'get', id: 'o1' }), g.get({ action: 'all' }), g.get({ action: 'all', lite: '1' })])).not.toContain('webhooks');
+
+      // a save with lines posts them once; one without lines posts nothing
+      const lines = ['**Friday**', '**Alice** 2–1 =Bob · Round 1', '<https://example.org/#/t/o1>'];
+      expect(g.post({ action: 'save', orgKey: ORG, tournament: { ...t, version: t.version }, players: [], announce: lines }).error).toBeUndefined();
+      expect(g.fetched).toHaveLength(3);
+      expect(JSON.parse(g.fetched[2].options.payload!).content).toBe(lines.join('\n'));
+      const t2 = g.get({ action: 'get', id: 'o1' }).tournament;
+      g.post({ action: 'save', orgKey: ORG, tournament: t2, players: [] });
+      expect(g.fetched).toHaveLength(3);
+      // Discord down: the save still goes through
+      g.onFetch(() => {
+        throw new Error('offline');
+      });
+      const t3 = g.get({ action: 'get', id: 'o1' }).tournament;
+      expect(g.post({ action: 'save', orgKey: ORG, tournament: t3, players: [], announce: ['x'] }).error).toBeUndefined();
+
+      // disconnect: nothing is posted any more
+      g.onFetch(() => ({ code: 204, body: '' }));
+      expect(g.post({ action: 'discord', id: 'o1', orgKey: ORG, url: '' })).toEqual({ discord: false });
+      const n = g.fetched.length;
+      const t4 = g.get({ action: 'get', id: 'o1' }).tournament;
+      expect(t4.discord).toBe(false);
+      g.post({ action: 'save', orgKey: ORG, tournament: t4, players: [], announce: ['x'] });
+      expect(g.fetched).toHaveLength(n);
+    });
+
+    it('Discord: a confirmed player result is posted, a disputed one is not', () => {
+      const g = fakeGoogle();
+      const two = { ...open, id: 'c1', format: 'single_elim', entrants: open.entrants.slice(0, 2), signup: false };
+      g.post({ action: 'save', orgKey: ORG, tournament: two, players: two.entrants });
+      g.post({ action: 'discord', id: 'c1', orgKey: ORG, url: 'https://discord.com/api/webhooks/1/x' });
+      const pins = g.post({ action: 'pins', id: 'c1', orgKey: ORG }).pins as Record<string, string>;
+      const [a, b] = two.entrants;
+      const report = (pin: string) =>
+        g.post({ action: 'report', id: 'c1', matchId: 'W1-1', pin, result: { winner: 'p1', score1: 2, score2: 0, p1: a.id, p2: b.id } });
+      expect(report(pins[a.id]).error).toBeUndefined();
+      const n = g.fetched.length;
+      expect(g.post({ action: 'confirm', id: 'c1', matchId: 'W1-1', pin: pins[b.id], ok: false, announce: ['no'] }).error).toBeUndefined();
+      expect(g.fetched).toHaveLength(n);
+      // the organizer clears the dispute, the player reports again, the opponent confirms
+      const t = g.get({ action: 'get', id: 'c1' }).tournament;
+      g.post({ action: 'save', orgKey: ORG, tournament: { ...t, results: {} }, players: [] });
+      expect(report(pins[a.id]).error).toBeUndefined();
+      expect(g.post({ action: 'confirm', id: 'c1', matchId: 'W1-1', pin: pins[b.id], ok: true, announce: ['yes'] }).error).toBeUndefined();
+      expect(g.fetched).toHaveLength(n + 1);
+      expect(JSON.parse(g.fetched[n].options.payload!).content).toBe('yes');
+    });
+
     it('a logged-in device gets its PINs and organizer keys; keys it brings are kept for other devices', () => {
       const g = fakeGoogle();
       const { token } = reg(g, { username: 'olga', name: 'Olga' });
@@ -851,9 +921,9 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.sheets.get('Entrants')![0]).not.toContain('tournament');
 
       vm.runInContext(readFileSync('apps-script/Code.gs', 'utf8'), g.ctx as vm.Context); // the owner pastes the new script
-      // newer scripts add fields (an empty category, a small event); everything that was there stays the same
+      // newer scripts add fields (an empty category, a small event, no Discord); everything that was there stays the same
       const after = [1, 2, 3].map((n) => g.get({ action: 'get', id: 'e' + n }).tournament);
-      expect(after).toEqual(before.map((t) => ({ ...t, category: after[0].category, tier: after[0].tier })));
+      expect(after).toEqual(before.map((t) => ({ ...t, category: after[0].category, tier: after[0].tier, discord: false })));
       expect(after[0].category).toBe('');
       expect(after[0].tier).toBe('small');
       for (const tab of ['Entrants', 'Results', 'Log']) {

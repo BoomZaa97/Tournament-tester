@@ -23,6 +23,7 @@
   } from '../lib/model';
   import type { LogEntry, Player, TournamentDoc } from '../lib/model';
   import { createSaveQueue } from '../lib/saveQueue';
+  import { announcements } from '../lib/announce';
   import { myPin, rememberOrgKey, VersionConflictError } from '../lib/store';
 
   interface Props {
@@ -101,8 +102,8 @@
   }
 
   // Organizer changes show at once and go to the sheet in the background, one after another.
-  const queue = createSaveQueue<TournamentDoc, Player[]>({
-    send: (d, created) => app.store.save(d, created ?? []),
+  const queue = createSaveQueue<TournamentDoc, { created: Player[]; announce: string[] }>({
+    send: (d, m) => app.store.save(d, m?.created ?? [], m?.announce),
     onSaved: (saved, left) => {
       checkedAt = Date.now();
       if (!left) doc = saved;
@@ -170,12 +171,39 @@
    * Show a change at once and save it in the background. True = accepted (if the sheet then
    * refuses it, the page goes back to the sheet's copy and says so).
    */
+  /** Lines for the tournament's Discord channel about this change (none if it has no channel). */
+  function news(prev: TournamentDoc | null, next: TournamentDoc): string[] {
+    if (!prev?.discord || app.store.kind !== 'sheets') return [];
+    try {
+      return announcements(prev, next, `${location.href.split('#')[0]}#/t/${next.id}`, players);
+    } catch {
+      return []; // never let an announcement stop a save
+    }
+  }
+
   async function persist(next: TournamentDoc, created: Player[] = []): Promise<boolean> {
+    const announce = news(doc, next);
     doc = next;
     if (created.length) withPlayers(created);
     // changes made on a copy this device had saved wait until the sheet has answered once
-    void queue.push(next, firstLoad, created);
+    void queue.push(next, firstLoad, { created, announce });
     return true;
+  }
+
+  /** Organizer connects (or, with '', disconnects) a Discord channel. */
+  async function setDiscord(url: string) {
+    if (!doc || !app.store.discord) return false;
+    try {
+      await queue.idle();
+      const on = await app.store.discord(id, url);
+      doc = { ...doc, discord: on };
+      if (queue.confirmed) queue.confirmed = { ...queue.confirmed, discord: on };
+      app.notify(on ? 'Discord connected: a test message was posted in the channel' : 'Discord disconnected');
+      return true;
+    } catch (e) {
+      app.notify(errorText(e), 'error');
+      return false;
+    }
   }
 
   /** A tournament the sheet just sent back after a player's action: it's now the sheet's copy. */
@@ -229,7 +257,9 @@
     saving = true;
     try {
       await queue.idle();
-      fromSheet(await app.store.confirm(id, matchId, pin, ok, numbers.get(matchId)));
+      const r0 = doc?.results[matchId];
+      const announce = ok && doc && r0 ? news(doc, { ...doc, results: { ...doc.results, [matchId]: { ...r0, status: 'confirmed' } } }) : [];
+      fromSheet(await app.store.confirm(id, matchId, pin, ok, numbers.get(matchId), announce));
       app.notify(ok ? 'Result confirmed' : 'Result disputed: the organizer will settle it');
       return true;
     } catch (e) {
@@ -462,7 +492,7 @@
 
     <div class="body">
       {#if tab === 'edit' && canEdit}
-        {#if app.store.kind === 'sheets'}<SharePanel {doc} {names} onsignup={setSignup} onmax={setMaxPlayers} oncheckin={setCheckIn} />{/if}
+        {#if app.store.kind === 'sheets'}<SharePanel {doc} {names} onsignup={setSignup} onmax={setMaxPlayers} oncheckin={setCheckIn} ondiscord={setDiscord} />{/if}
         {#if status !== 'setup' && tstate}<DropPanel {doc} {names} ondrop={setDropped} />{/if}
         {#key doc.version}
           <EditTournament {doc} known={players} {names} onapply={applyEditTournament} ondelete={remove} />

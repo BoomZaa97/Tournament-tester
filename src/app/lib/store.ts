@@ -53,8 +53,11 @@ export interface Store {
   saveProfile(playerId: string, profile: Profile): Promise<Profile>;
   /** Can this device change this player's profile? */
   canEditProfile(playerId: string): boolean;
-  /** Saves and returns the doc with its new version. Throws VersionConflictError. */
-  save(doc: TournamentDoc, players: Player[]): Promise<TournamentDoc>;
+  /**
+   * Saves and returns the doc with its new version. Throws VersionConflictError.
+   * `announce`: lines for the tournament's Discord channel, if it has one (shared mode).
+   */
+  save(doc: TournamentDoc, players: Player[], announce?: string[]): Promise<TournamentDoc>;
   remove(id: string): Promise<void>;
   renamePlayer(id: string, name: string): Promise<void>;
   /** The tournament with this join code. Throws if there is none. */
@@ -66,7 +69,9 @@ export interface Store {
   /** Mark someone as arrived (or not): a player with their PIN, or the organizer by player id. */
   checkin?(id: string, who: { pin: string } | { playerId: string }, here: boolean): Promise<TournamentDoc>;
   /** The opponent of whoever reported a result confirms it (ok) or disputes it, with their PIN. */
-  confirm?(id: string, matchId: string, pin: string, ok: boolean, matchNo?: number): Promise<TournamentDoc>;
+  confirm?(id: string, matchId: string, pin: string, ok: boolean, matchNo?: number, announce?: string[]): Promise<TournamentDoc>;
+  /** Organizer: connect the tournament to a Discord channel (webhook link), or disconnect (''). Returns whether it's connected. */
+  discord?(id: string, url: string): Promise<boolean>;
   /** A player drops out of a running tournament with their PIN. */
   drop?(id: string, pin: string): Promise<TournamentDoc>;
   /** Organizer/admin only: every entrant's PIN, by player id. */
@@ -432,7 +437,7 @@ export class SheetsStore implements Store {
     }
   }
 
-  async save(doc: TournamentDoc, players: Player[]) {
+  async save(doc: TournamentDoc, players: Player[], announce?: string[]) {
     let orgKey = orgKeyFor(doc.id);
     if (!orgKey && doc.version === 0) {
       // A new tournament: whoever creates it is its organizer.
@@ -440,7 +445,9 @@ export class SheetsStore implements Store {
       rememberOrgKey(doc.id, orgKey);
     }
     const token = savedAccount()?.token;
-    const r = await this.call<{ tournament: TournamentDoc }>('POST', { action: 'save', tournament: doc, players, orgKey: orgKey ?? '', ...(token ? { token } : {}) });
+    const r = await this.call<{ tournament: TournamentDoc }>('POST', {
+      action: 'save', tournament: doc, players, orgKey: orgKey ?? '', ...(token ? { token } : {}), ...(announce?.length ? { announce } : {}),
+    });
     if (token && doc.version === 0) this.track('keys', doc.id);
     return this.keep(r.tournament);
   }
@@ -551,10 +558,17 @@ export class SheetsStore implements Store {
     return this.keep(r.tournament);
   }
 
-  async confirm(id: string, matchId: string, pin: string, ok: boolean, matchNo?: number) {
-    const r = await this.call<{ tournament: TournamentDoc; playerId: string }>('POST', { action: 'confirm', id, matchId, pin, ok, matchNo });
+  async confirm(id: string, matchId: string, pin: string, ok: boolean, matchNo?: number, announce?: string[]) {
+    const r = await this.call<{ tournament: TournamentDoc; playerId: string }>('POST', {
+      action: 'confirm', id, matchId, pin, ok, matchNo, ...(announce?.length ? { announce } : {}),
+    });
     if (!myPin(id)) rememberPin(id, r.playerId, pin);
     return this.keep(r.tournament);
+  }
+
+  async discord(id: string, url: string) {
+    const r = await this.call<{ discord: boolean }>('POST', { action: 'discord', id, url, orgKey: orgKeyFor(id) ?? '' });
+    return r.discord;
   }
 
   async drop(id: string, pin: string) {

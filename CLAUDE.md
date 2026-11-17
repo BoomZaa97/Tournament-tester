@@ -187,11 +187,16 @@ Push to `main` = deploy. Check UI changes in a real browser (Playwright, desktop
   `lockSwissRounds`: if a round someone reported into (not frozen yet) clashes with the pairing without dropped
   players, it freezes the pairing with everyone instead. Players drop with Code.gs `drop` (needs a result to exist;
   logged with `restore`); organizers via Edit tab → Drop-outs. `report` refuses matches with a dropped player.
+- Discord: organizer pastes a channel webhook in the Share panel → Code.gs `discord` action (validates the link, posts a
+  "Connected" test, stores it in hidden `Tournaments.discordWebhook`; GET only says `discord: true`). Code.gs has no engine, so
+  the app writes the lines (`lib/announce.ts` `announcements(prev, next, link)`: started, newly settled results with round,
+  finals, champion; header + link) and sends them as `announce` with `save` (via the save queue's meta) and with a
+  successful `confirm`; Code.gs `announce()` posts them with `allowed_mentions: {parse: []}` and never fails the save.
+  Fake Google has a recording `UrlFetchApp` (`g.fetched`, `g.onFetch`); `sheet:fake` shows it at GET /fetched.
 - Confirmations: `MatchResult.status` ('reported' | 'confirmed' | 'disputed') + `reportedBy` (Results columns).
   `report` sets 'reported'; `confirm` (opponent's PIN, `ok`) sets confirmed/disputed with a before/after log entry.
   Anything the organizer saves through `applyEdit` has no status (= confirmed). The engine ignores these fields.
 
 ## Next up (agreed roadmap)
 
-1. Discord announcements.
-2. Import from Challonge.
+1. Import from Challonge.

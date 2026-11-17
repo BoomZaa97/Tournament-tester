@@ -56,6 +56,8 @@ export interface TournamentDoc {
   game: string;
   /** Optional division inside the game (Open, U18, Doubles…): rankings can be split by it. */
   category?: string;
+  /** Shared mode: the organizer connected a Discord channel (the webhook link itself stays in the sheet). */
+  discord?: boolean;
   /** How big the event is: majors and semi-majors give more ranking points. Unset = small. */
   tier?: Tier;
   format: Format;

@@ -20,6 +20,7 @@ Free tournament brackets for any game, where any result can be edited later with
   - **Check-in:** players tap "I'm here" with their PIN; the organizer sees who came and removes the no-shows in one click.
   - **Drop out:** a player (with their PIN) or the organizer can drop someone mid-event. They keep their results; their remaining matches are walkovers.
   - **Confirm scores:** after a player reports a score, their opponent confirms or disputes it. Disputes are flagged for the organizer.
+  - **Discord announcements:** paste a channel's webhook link (Edit tab → Discord announcements) and the start, every settled result, the finals and the champion are posted there.
 - **Match history:** player pages show W–L record, win rate, titles, head-to-head, and every match across all tournaments
 - **Works on phones:** big buttons for entering scores, and it can be added to your home screen
 - **Costs nothing:** a static site on GitHub Pages plus a Google Sheet you own. No server to run.
@@ -67,5 +68,5 @@ npm run build     # build the site into dist/
 - [x] Rate-limit PIN guesses
 - [x] Rankings (rating + points, majors / semi-majors), player profiles, verified names
 - [x] Removed players keep their PIN if they're added back
-- [ ] Discord announcements
+- [x] Discord announcements
 - [ ] Import from Challonge

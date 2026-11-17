@@ -37,7 +37,7 @@ var TABLES = {
   Players: ['id', 'name'],
   Tournaments: [
     'id', 'name', 'game', 'category', 'tier', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash',
-    'code', 'maxPlayers', 'checkIn', 'removedPins',
+    'code', 'maxPlayers', 'checkIn', 'removedPins', 'discordWebhook',
   ],
   Entrants: ['tournamentId', 'tournament', 'seed', 'playerId', 'name', 'pin', 'checkedIn'],
   Results: [
@@ -91,7 +91,11 @@ function doPost(e) {
     var lock = LockService.getScriptLock();
     lock.waitLock(20000);
     try {
-      if (body.action === 'save') return { tournament: saveTournament(body.tournament, body.players || [], body, isAdmin) };
+      if (body.action === 'save') {
+        var stored = saveTournament(body.tournament, body.players || [], body, isAdmin);
+        announce(stored.id, body.announce);
+        return { tournament: stored };
+      }
       if (body.action === 'delete') return deleteTournament(body.id, body, isAdmin);
       if (body.action === 'renamePlayer') {
         if (!isAdmin) throw new Error('Only the site admin can rename players');
@@ -102,7 +106,13 @@ function doPost(e) {
       if (body.action === 'pins') return { pins: pinsFor(body.id, body, isAdmin) };
       if (body.action === 'checkin') return checkIn(body, isAdmin);
       if (body.action === 'drop') return dropOut(body.id, body.pin);
-      if (body.action === 'confirm') return confirmResult(body.id, body.matchId, body.pin, body.ok !== false, body.matchNo);
+      if (body.action === 'confirm') {
+        var confirmed = confirmResult(body.id, body.matchId, body.pin, body.ok !== false, body.matchNo);
+        // only a confirmed result is news; a dispute waits for the organizer
+        if (body.ok !== false) announce(body.id, body.announce);
+        return confirmed;
+      }
+      if (body.action === 'discord') return setDiscord(body, isAdmin);
       if (body.action === 'register') return register(body);
       if (body.action === 'login') return logIn(body.username, body.password);
       if (body.action === 'me') return aboutMe(body.token, body.orgKeys);
@@ -285,6 +295,8 @@ function assemble(t, data, lite) {
     maxPlayers: num(t.maxPlayers),
     waitlist: waitlist,
     checkIn: truthy(t.checkIn),
+    // the webhook address itself is a secret: only say whether there is one
+    discord: !!t.discordWebhook,
     checkedIn: checkedIn,
     format: t.format,
     options: json(t.options, {}),
@@ -616,6 +628,68 @@ function newPin(used) {
 
 function newId() {
   return Date.now().toString(36).slice(-5) + Math.random().toString(36).slice(2, 7);
+}
+
+// ------------------------------------------------------------------ Discord announcements
+
+/**
+ * An organizer connects a Discord channel by pasting the channel's webhook link (Discord: channel
+ * settings → Integrations → Webhooks). The link is kept in the hidden `discordWebhook` column and
+ * never sent to anyone; the site only learns `discord: true`. An empty url disconnects.
+ */
+var DISCORD_HOOK = /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/;
+
+function setDiscord(body, isAdmin) {
+  var data = loadOne(body.id);
+  var t = findTournament(data.Tournaments, body.id);
+  if (!t) throw new Error('Tournament not found');
+  if (!isAdmin && !isOrganizer(body, t)) throw new Error(NOT_ORGANIZER);
+  var url = String(body.url || '').trim();
+  if (url && !DISCORD_HOOK.test(url)) {
+    throw new Error('That is not a Discord webhook link. It starts with https://discord.com/api/webhooks/');
+  }
+  if (url) {
+    var sent = postDiscord(url, ['**' + t.name + '**', 'Connected: results from this tournament will be posted here.']);
+    if (!sent) throw new Error("Discord didn't accept that link. Copy it again from the channel's Webhooks settings.");
+  }
+  t.discordWebhook = url;
+  t.updatedAt = new Date().toISOString(); // other open pages pick it up; not a new version of the bracket
+  writeRow('Tournaments', t);
+  return { discord: !!url };
+}
+
+/** Post the lines the app made for this change, if the tournament has a channel. Never fails the save. */
+function announce(id, lines) {
+  if (!lines || !lines.length) return;
+  try {
+    var t = findTournament(readTable('Tournaments'), id);
+    if (t && t.discordWebhook) postDiscord(t.discordWebhook, lines);
+  } catch (e) {
+    // Discord being down must not stop a tournament
+  }
+}
+
+/** true if Discord took it. Plain text, no pings (@everyone etc. stay plain text). */
+function postDiscord(url, lines) {
+  var text = [].concat(lines)
+    .slice(0, 12)
+    .map(function (l) {
+      return String(l).slice(0, 300);
+    })
+    .join('\n')
+    .slice(0, 1900);
+  try {
+    var res = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ content: text, allowed_mentions: { parse: [] } }),
+      muteHttpExceptions: true,
+    });
+    var code = res.getResponseCode();
+    return code >= 200 && code < 300;
+  } catch (e) {
+    return false;
+  }
 }
 
 function bump(t) {

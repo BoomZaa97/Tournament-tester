@@ -105,7 +105,17 @@ export function fakeGoogle({ adminKey = 'secret', codePath = 'apps-script/Code.g
     if (e && e.expires <= clock) cache.delete(k);
     return cache.get(k)?.value ?? null;
   };
+  // UrlFetchApp: never touches the internet; records each request and answers with `reply`
+  const fetched = [];
+  let reply = () => ({ code: 204, body: '' });
   const ctx = {
+    UrlFetchApp: {
+      fetch: (url, options = {}) => {
+        fetched.push({ url, options });
+        const r = reply(url, options);
+        return { getResponseCode: () => r.code, getContentText: () => r.body };
+      },
+    },
     CacheService: {
       getScriptCache: () => ({
         get: (k) => cached(k),
@@ -145,6 +155,10 @@ export function fakeGoogle({ adminKey = 'secret', codePath = 'apps-script/Code.g
     props,
     /** Move the CacheService clock forward. */
     advance: (ms) => void (clock += ms),
+    /** Every UrlFetchApp request Code.gs made, oldest first. */
+    fetched,
+    /** How the fake internet answers: (url, options) => {code, body}. */
+    onFetch: (fn) => void (reply = fn),
     sheets,
     /** A sheet tab as Code.gs sees it (e.g. to call onEdit with one of its ranges). */
     tab: (name) => sheet(name),

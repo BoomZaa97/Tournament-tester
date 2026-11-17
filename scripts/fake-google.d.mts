@@ -3,6 +3,10 @@ export interface FakeGoogle {
   props: Map<string, string>;
   /** Move the CacheService clock forward (cache entries expire). */
   advance(ms: number): void;
+  /** Every UrlFetchApp request Code.gs made, oldest first. */
+  fetched: { url: string; options: { payload?: string; [k: string]: unknown } }[];
+  /** How the fake internet answers. Default: 204 No Content. */
+  onFetch(fn: (url: string, options: Record<string, unknown>) => { code: number; body: string }): void;
   /** Filled rows of each tab (live: changing a cell changes the sheet, like editing it by hand). */
   sheets: {
     get(name: string): string[][] | undefined;

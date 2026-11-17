@@ -10,8 +10,18 @@
     onsignup: (open: boolean) => Promise<boolean>;
     onmax: (max: number) => Promise<boolean>;
     oncheckin: (on: boolean) => Promise<boolean>;
+    ondiscord: (url: string) => Promise<boolean>;
   }
-  let { doc, names, onsignup, onmax, oncheckin }: Props = $props();
+  let { doc, names, onsignup, onmax, oncheckin, ondiscord }: Props = $props();
+
+  // ---- Discord: the webhook link stays in the sheet; the page only knows whether there is one
+  let hook = $state('');
+  const hookOk = $derived(/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(hook.trim()));
+  async function connectDiscord(url: string) {
+    busy = true;
+    if (await ondiscord(url)) hook = '';
+    busy = false;
+  }
 
   async function toggleCheckIn(on: boolean) {
     busy = true;
@@ -129,6 +139,26 @@
   </div>
 
   <div class="item">
+    <div class="label">Discord announcements</div>
+    {#if doc.discord === undefined}
+      <p class="small muted">{UPDATE_SCRIPT}</p>
+    {:else if doc.discord}
+      <p class="small"><b>Connected.</b> <span class="muted">Results (once confirmed), the start, the finals and the champion are posted in your channel.</span></p>
+      <button class="small" disabled={busy} onclick={() => confirm('Stop posting to Discord?') && connectDiscord('')}>Disconnect</button>
+    {:else}
+      <p class="small muted">
+        Post results in a Discord channel. In Discord: channel settings → Integrations → Webhooks → New Webhook → Copy Webhook URL,
+        then paste it here. Nobody else can see the link.
+      </p>
+      <form class="row" onsubmit={(e) => { e.preventDefault(); if (hookOk) connectDiscord(hook.trim()); }}>
+        <input bind:value={hook} placeholder="https://discord.com/api/webhooks/…" inputmode="url" autocomplete="off" aria-label="Discord webhook URL" />
+        <button class="small" type="submit" disabled={busy || !hookOk}>Connect</button>
+      </form>
+      {#if hook.trim() && !hookOk}<p class="small warn">That doesn't look like a Discord webhook link.</p>{/if}
+    {/if}
+  </div>
+
+  <div class="item">
     <div class="label">Player PINs</div>
     <p class="small muted">Each player reports their own scores with their PIN. Give people you added by hand their PIN.</p>
     {#if pins}
@@ -170,6 +200,8 @@
   }
   .pins { max-width: 360px; }
   .max { width: 120px; }
+  .row input:not(.max) { flex: 1; min-width: 0; }
+  .warn { color: var(--warn); }
   .pins td { padding: 6px 8px; }
   .pin { font: 700 17px var(--font-cond); letter-spacing: 0.12em; }
 </style>
