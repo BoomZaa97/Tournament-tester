@@ -23,7 +23,8 @@
 
   async function load() {
     try {
-      const d = await app.store.get(id);
+      const r = await app.store.open(id, doc?.updatedAt);
+      const d = r === 'same' ? doc : r.tournament;
       if (!d) missing = true;
       else if (!doc || d.version !== doc.version || d.updatedAt !== doc.updatedAt) doc = d;
       error = '';

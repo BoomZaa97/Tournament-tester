@@ -12,9 +12,17 @@
     .then((d) => (tournaments = d.tournaments.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))))
     .catch((e) => (error = errorText(e)));
 
-  const rows = $derived(
-    (tournaments ?? []).map((t) => ({ t, status: statusOf(t) })).filter((r) => filter === 'all' || r.status === filter),
-  );
+  let q = $state('');
+  const PAGE = 30;
+  let shown = $state(PAGE);
+  const matches = $derived.by(() => {
+    const needle = q.trim().toLowerCase();
+    return (tournaments ?? [])
+      .map((t) => ({ t, status: statusOf(t) }))
+      .filter((r) => filter === 'all' || r.status === filter)
+      .filter(({ t }) => !needle || [t.name, t.game, t.code].some((s) => s?.toLowerCase().includes(needle)));
+  });
+  const rows = $derived(matches.slice(0, shown));
 
   let code = $state('');
   let joinError = $state('');
@@ -73,8 +81,11 @@
   {:else}
     <div class="filters" role="tablist">
       {#each [['all', 'All'], ['running', 'In progress'], ['setup', 'Not started'], ['finished', 'Finished']] as [k, label]}
-        <button class="ghost small" class:on={filter === k} onclick={() => (filter = k as typeof filter)}>{label}</button>
+        <button class="ghost small" class:on={filter === k} onclick={() => ((filter = k as typeof filter), (shown = PAGE))}>{label}</button>
       {/each}
+      {#if tournaments.length > 8}
+        <input class="search" type="search" placeholder="Search name, game or code" bind:value={q} oninput={() => (shown = PAGE)} aria-label="Search tournaments" />
+      {/if}
     </div>
     <ul class="list">
       {#each rows as { t, status } (t.id)}
@@ -91,9 +102,15 @@
           </a>
         </li>
       {:else}
-        <li class="muted small none">Nothing here.</li>
+        <li class="muted small none">{q.trim() ? `Nothing matches “${q.trim()}”.` : 'Nothing here.'}</li>
       {/each}
     </ul>
+    {#if matches.length > shown}
+      <div class="more">
+        <button class="ghost" onclick={() => (shown += PAGE)}>Show more</button>
+        <span class="small muted">{shown} of {matches.length}</span>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -102,6 +119,9 @@
   .head { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
   .filters { display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
   .filters .on { border-color: var(--ink); }
+  .search { margin-left: auto; flex: 0 1 260px; min-width: 0; }
+  .more { display: flex; align-items: center; gap: 12px; padding-top: 14px; }
+  @media (max-width: 520px) { .search { margin-left: 0; flex: 1 1 100%; } }
   .list { list-style: none; margin: 0; padding: 0; border-top: 2px solid var(--ink); }
   .list li { border-bottom: 1px solid var(--line); }
   .list a {

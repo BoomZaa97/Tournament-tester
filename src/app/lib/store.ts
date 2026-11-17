@@ -20,8 +20,16 @@ export interface Store {
   isAdmin: boolean;
   /** Can this browser change this tournament? Admin, or its organizer/helper key is saved here. */
   canEdit(id: string): boolean;
-  loadAll(): Promise<AllData>;
+  /** Every tournament and player. Shared mode leaves out each tournament's log unless `full` (lists don't need it). */
+  loadAll(opts?: { full?: boolean }): Promise<AllData>;
   get(id: string): Promise<TournamentDoc | null>;
+  /**
+   * One tournament (with its log) and its players, for its page. With `since` (the updatedAt the page
+   * already shows), 'same' when nothing changed: polling stays cheap however many tournaments there are.
+   */
+  open(id: string, since?: string): Promise<{ tournament: TournamentDoc | null; players: Player[] } | 'same'>;
+  /** Every player (to pick existing people when editing entrants). */
+  players(): Promise<Player[]>;
   /** Saves and returns the doc with its new version. Throws VersionConflictError. */
   save(doc: TournamentDoc, players: Player[]): Promise<TournamentDoc>;
   remove(id: string): Promise<void>;
@@ -204,6 +212,15 @@ export class LocalStore implements Store {
     return readLocal().tournaments.find((t) => t.id === id) ?? null;
   }
 
+  async open(id: string) {
+    const d = readLocal();
+    return { tournament: d.tournaments.find((t) => t.id === id) ?? null, players: d.players };
+  }
+
+  async players() {
+    return readLocal().players;
+  }
+
   async save(doc: TournamentDoc, players: Player[]) {
     const data = readLocal();
     const i = data.tournaments.findIndex((t) => t.id === doc.id);
@@ -283,13 +300,32 @@ export class SheetsStore implements Store {
     return body as T;
   }
 
-  loadAll() {
-    return this.call<AllData>('GET', { action: 'all' });
+  loadAll(opts: { full?: boolean } = {}) {
+    return this.call<AllData>('GET', opts.full ? { action: 'all' } : { action: 'all', lite: '1' });
   }
 
   async get(id: string) {
     const r = await this.call<{ tournament: TournamentDoc | null }>('GET', { action: 'get', id });
     return r.tournament;
+  }
+
+  async open(id: string, since?: string) {
+    const r = await this.call<{ tournament?: TournamentDoc | null; players?: Player[]; same?: boolean }>(
+      'GET',
+      since ? { action: 'get', id, since } : { action: 'get', id },
+    );
+    if (r.same) return 'same' as const;
+    // an older Google script sends no players with it
+    return { tournament: r.tournament ?? null, players: r.players ?? (await this.loadAll()).players };
+  }
+
+  async players() {
+    try {
+      return (await this.call<{ players: Player[] }>('GET', { action: 'players' })).players;
+    } catch (e) {
+      if (e instanceof Error && e.message === UPDATE_SCRIPT) return (await this.loadAll()).players;
+      throw e;
+    }
   }
 
   async save(doc: TournamentDoc, players: Player[]) {

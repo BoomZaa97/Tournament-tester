@@ -87,6 +87,14 @@ Other details:
 - Standings: same table as round robin (`roundRobinStandings`), byes = wins, extra `omw` (OMW%, floor 1/3) and `buchholz` tiebreakers
   (default order OMW%, Buchholz, h2h, diff, for). Default rounds = ceil(log2 n), max n−1 (even) / n (odd).
 - Log entries keep `changes` (for undo) or `restore` (previous setup, for tournament edits).
+- Sheet layout (`LAYOUT` = '2'): per-tournament tabs (`PER_TOURNAMENT`: Entrants, Results, Log, Waitlist) keep one
+  contiguous block per tournament, in Tournaments-tab order (newest on top), with a `tournament` name column. Writes go
+  through `writeBlock` / `appendRows` / `writeRow` (only that block or row; never clear-then-write a whole tab);
+  `writeTable` (whole tab) only for Players/Accounts, renames and `tidyOnce` (one-time regroup of old sheets).
+  `loadTables` skips the Log tab; `loadOne(id)` reads only one tournament's blocks. GET `get&since=<updatedAt>` →
+  `{same:true}` when unchanged (`store.open`), `all&lite=1` leaves out logs (`loadAll()`; backup uses `{full:true}`),
+  `players` = the registry (Edit tab). `onEdit` bumps `updatedAt` for hand edits. Real Sheets have a fixed row count and
+  throw outside it: `scripts/fake-google.mjs` (shared by tests and `sheet:fake`) mimics that.
 - `SheetsStore` POSTs as `text/plain` (no CORS preflight, which Apps Script can't answer). Saves carry a `version`;
   mismatch → `conflict` error → app reloads.
 - Svelte: don't name variables `state` in components (clashes with `$state`); the codebase uses `tstate`.

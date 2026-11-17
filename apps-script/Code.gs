@@ -20,6 +20,12 @@
  *
  * Every tab is plain rows, so you can read and fix data by hand. In the Results
  * tab, the `winner` column accepts p1 / p2 / draw, or simply the winner's name.
+ *
+ * Many tournaments in one sheet: in the Entrants, Results, Log and Waitlist tabs each tournament's
+ * rows sit together in one block (newest tournament at the top), with the tournament's name in the
+ * `tournament` column next to its id. A save only rewrites that tournament's block, so the rest of
+ * the sheet doesn't move. Editing a row by hand marks its tournament as changed (onEdit), so open
+ * pages pick the edit up within about 20 seconds.
  */
 
 var TABLES = {
@@ -28,27 +34,35 @@ var TABLES = {
     'id', 'name', 'game', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash',
     'code', 'maxPlayers', 'checkIn',
   ],
-  Entrants: ['tournamentId', 'seed', 'playerId', 'name', 'pin', 'checkedIn'],
+  Entrants: ['tournamentId', 'tournament', 'seed', 'playerId', 'name', 'pin', 'checkedIn'],
   Results: [
-    'tournamentId', 'matchId', 'p1Name', 'p2Name', 'winner', 'score1', 'score2', 'forfeit', 'at', 'p1Id', 'p2Id', 'games',
+    'tournamentId', 'tournament', 'matchId', 'p1Name', 'p2Name', 'winner', 'score1', 'score2', 'forfeit', 'at', 'p1Id', 'p2Id', 'games',
     'status', 'reportedBy',
   ],
-  Log: ['tournamentId', 'time', 'summary', 'undone', 'id', 'changes', 'restore'],
+  Log: ['tournamentId', 'tournament', 'time', 'summary', 'undone', 'id', 'changes', 'restore'],
   // People who signed up after the player limit was reached, in order (oldest first).
-  Waitlist: ['tournamentId', 'playerId', 'name', 'pin', 'at', 'checkedIn'],
+  Waitlist: ['tournamentId', 'tournament', 'playerId', 'name', 'pin', 'at', 'checkedIn'],
   // Player accounts. Delete a row to delete an account (the player and their results stay).
   Accounts: ['id', 'username', 'playerId', 'passHash', 'salt', 'createdAt', 'orgKeys', 'fails', 'lockedUntil'],
 };
 
 var CELL_LIMIT = 45000; // Google Sheets allows 50,000 characters per cell
 
+/** Tabs with a block of rows per tournament (see the top of this file). */
+var PER_TOURNAMENT = ['Entrants', 'Results', 'Log', 'Waitlist'];
+
 // ------------------------------------------------------------------ entry points
 
 function doGet(e) {
   return handle(function () {
-    var action = (e && e.parameter && e.parameter.action) || 'all';
-    if (action === 'all') return readAll();
-    if (action === 'get') return { tournament: readTournament(e.parameter.id) };
+    var p = (e && e.parameter) || {};
+    var action = p.action || 'all';
+    tidyOnce();
+    // lite: without each tournament's log (the biggest part), for lists and player pages
+    if (action === 'all') return readAll(!!p.lite);
+    // since: the updatedAt the page already has; if nothing changed, only { same: true } comes back
+    if (action === 'get') return readTournament(p.id, p.since);
+    if (action === 'players') return { players: readPlayers(readTable('Players'), readTable('Accounts')) };
     if (action === 'code') return findByCode(e.parameter.code);
     throw new Error('Unknown action: ' + action);
   });
@@ -60,6 +74,7 @@ function doPost(e) {
     var adminKey = PropertiesService.getScriptProperties().getProperty('ADMIN_KEY');
     if (!adminKey) throw new Error('ADMIN_KEY is not set. In Apps Script: Project Settings → Script properties.');
     var isAdmin = !!body.key && body.key === adminKey;
+    tidyOnce();
     if (body.action === 'check') {
       var row = body.id ? findTournament(readTable('Tournaments'), body.id) : null;
       return { admin: isAdmin, organizer: !!row && isOrganizer(body, row) };
@@ -108,31 +123,45 @@ function handle(fn) {
 
 // ------------------------------------------------------------------ reads
 
-function readAll() {
+function readAll(lite) {
   var data = loadTables();
+  if (!lite) data.Log = readTable('Log');
   ensureCodes(data);
   var tournaments = data.Tournaments.map(function (t) {
-    return assemble(t, data);
+    return assemble(t, data, lite);
   });
+  return { tournaments: tournaments, players: readPlayers(data.Players, data.Accounts) };
+}
+
+/** Players as the app sees them; `account: true` if they have an account. */
+function readPlayers(players, accounts) {
   var hasAccount = {};
-  data.Accounts.forEach(function (a) {
+  accounts.forEach(function (a) {
     hasAccount[a.playerId] = true;
   });
-  var players = data.Players.map(function (p) {
+  return players.map(function (p) {
     var out = toPlayer(p);
     if (hasAccount[p.id]) out.account = true;
     return out;
   });
-  return { tournaments: tournaments, players: players };
 }
 
-function readTournament(id) {
-  var data = loadTables();
+/** One tournament and its players. Reads only that tournament's rows. */
+function readTournament(id, since) {
+  var data = loadOne(id);
+  var t = findTournament(data.Tournaments, id);
+  if (!t) return { tournament: null };
+  if (since && t.code && String(t.updatedAt) === String(since)) return { same: true };
   ensureCodes(data);
-  var t = data.Tournaments.filter(function (r) {
-    return r.id === id;
-  })[0];
-  return t ? assemble(t, data) : null;
+  t = findTournament(data.Tournaments, id);
+  var ids = {};
+  data.Entrants.concat(data.Waitlist).forEach(function (e) {
+    ids[e.playerId] = true;
+  });
+  var players = data.Players.filter(function (p) {
+    return ids[p.id];
+  }).map(toPlayer);
+  return { tournament: assemble(t, data), players: players };
 }
 
 // ------------------------------------------------------------------ join codes
@@ -181,7 +210,7 @@ function ensureCodes(data) {
 function findByCode(raw) {
   var code = cleanCode(raw);
   if (!code) throw new Error('Type a code');
-  var data = loadTables();
+  var data = { Tournaments: readTable('Tournaments') };
   ensureCodes(data);
   var t = data.Tournaments.filter(function (r) {
     return cleanCode(r.code) === code;
@@ -194,7 +223,8 @@ function toPlayer(r) {
   return { id: r.id, name: r.name };
 }
 
-function assemble(t, data) {
+/** A tournament as the app's doc. lite: without its log. */
+function assemble(t, data, lite) {
   var mine = function (r) {
     return r.tournamentId === t.id;
   };
@@ -224,7 +254,8 @@ function assemble(t, data) {
     results[r.matchId] = toResult(r);
   });
 
-  var log = data.Log.filter(mine).map(function (l) {
+  var logRows = lite ? [] : data.Log ? data.Log.filter(mine) : readBlock('Log', t.id);
+  var log = logRows.map(function (l) {
     var entry = { id: l.id, time: l.time, summary: l.summary, changes: json(l.changes, []) };
     if (truthy(l.undone)) entry.undone = true;
     if (l.restore) entry.restore = json(l.restore, undefined);
@@ -285,7 +316,7 @@ function parseWinner(r) {
 
 function saveTournament(doc, players, body, isAdmin) {
   if (!doc || !doc.id) throw new Error('Missing tournament');
-  var data = loadTables();
+  var data = loadOne(doc.id);
   var existing = findTournament(data.Tournaments, doc.id);
   if (existing) {
     if (!isAdmin && !isOrganizer(body, existing)) throw new Error(NOT_ORGANIZER);
@@ -308,21 +339,24 @@ function saveTournament(doc, players, body, isAdmin) {
   data.Players.forEach(function (p) {
     byId[p.id] = p;
   });
+  var playersChanged = false;
   (players || []).forEach(function (p) {
     // the player list is shared by every tournament: only the site admin renames people
-    if (isAdmin || !byId[p.id]) byId[p.id] = { id: p.id, name: p.name };
+    if (byId[p.id] && (!isAdmin || byId[p.id].name === p.name)) return;
+    if (byId[p.id]) byId[p.id].name = p.name;
+    else data.Players.push((byId[p.id] = { id: p.id, name: p.name }));
+    playersChanged = true;
   });
   saved.entrants.forEach(function (e) {
-    if (!byId[e.id]) byId[e.id] = { id: e.id, name: e.name };
+    if (byId[e.id]) return;
+    data.Players.push((byId[e.id] = { id: e.id, name: e.name }));
+    playersChanged = true;
   });
   var names = {};
   Object.keys(byId).forEach(function (id) {
     names[id] = byId[id].name;
   });
 
-  var others = function (r) {
-    return r.tournamentId !== doc.id;
-  };
   var tRow = {
     id: saved.id,
     name: saved.name,
@@ -339,17 +373,17 @@ function saveTournament(doc, players, body, isAdmin) {
     maxPlayers: num(saved.maxPlayers) > 0 ? Math.round(num(saved.maxPlayers)) : '',
     checkIn: saved.checkIn ? 'yes' : '',
   };
-  var tournaments = data.Tournaments.filter(function (r) {
-    return r.id !== doc.id;
-  });
-  tournaments.push(tRow);
+  // keep any columns added to the Tournaments tab by hand
+  if (existing) {
+    Object.keys(existing).forEach(function (k) {
+      if (!(k in tRow)) tRow[k] = existing[k];
+    });
+  }
 
   // keep each player's PIN (and check-in) across saves; new entrants get a PIN
   var oldPins = {};
   var arrived = {};
-  data.Entrants.filter(function (r) {
-    return r.tournamentId === doc.id;
-  }).forEach(function (r) {
+  data.Entrants.forEach(function (r) {
     if (r.pin) oldPins[r.playerId] = r.pin;
     if (r.checkedIn) arrived[r.playerId] = r.checkedIn;
   });
@@ -362,30 +396,28 @@ function saveTournament(doc, players, body, isAdmin) {
     inBracket[e.id] = true;
   });
   var waitlist = data.Waitlist.filter(function (w) {
-    if (w.tournamentId !== doc.id) return true;
     if (w.pin) usedPins.push(w.pin);
     if (!inBracket[w.playerId]) return true;
     if (w.pin && !oldPins[w.playerId]) oldPins[w.playerId] = w.pin;
     if (w.checkedIn && !arrived[w.playerId]) arrived[w.playerId] = w.checkedIn;
     return false;
   });
-  var entrants = data.Entrants.filter(others).concat(
-    saved.entrants.map(function (e, i) {
-      var pin = oldPins[e.id] || newPin(usedPins);
-      usedPins.push(pin);
-      return {
-        tournamentId: doc.id,
-        seed: i + 1,
-        playerId: e.id,
-        name: names[e.id] || e.name,
-        pin: pin,
-        checkedIn: arrived[e.id] || '',
-      };
-    }),
-  );
+  var entrants = saved.entrants.map(function (e, i) {
+    var pin = oldPins[e.id] || newPin(usedPins);
+    usedPins.push(pin);
+    return {
+      tournamentId: doc.id,
+      seed: i + 1,
+      playerId: e.id,
+      name: names[e.id] || e.name,
+      pin: pin,
+      checkedIn: arrived[e.id] || '',
+    };
+  });
 
-  var results = data.Results.filter(others).concat(
-    Object.keys(saved.results).map(function (matchId) {
+  // in the order they were played, so the newest result is at the bottom of the block
+  var results = Object.keys(saved.results)
+    .map(function (matchId) {
       var r = saved.results[matchId];
       return {
         tournamentId: doc.id,
@@ -403,35 +435,33 @@ function saveTournament(doc, players, body, isAdmin) {
         status: r.status || '',
         reportedBy: r.reportedBy || '',
       };
-    }),
-  );
+    })
+    .sort(function (a, b) {
+      return String(a.at).localeCompare(String(b.at));
+    });
 
-  var log = data.Log.filter(others).concat(
-    (saved.log || []).map(function (l) {
-      var restore = l.restore ? JSON.stringify(l.restore) : '';
-      if (restore.length > CELL_LIMIT) restore = ''; // too big for one cell: that edit just can't be undone
-      var changes = JSON.stringify(l.changes || []);
-      if (changes.length > CELL_LIMIT) changes = '[]';
-      return {
-        tournamentId: doc.id,
-        time: l.time,
-        summary: l.summary,
-        undone: l.undone ? 'yes' : '',
-        id: l.id,
-        changes: changes,
-        restore: restore,
-      };
-    }),
-  );
+  var log = (saved.log || []).map(function (l) {
+    var restore = l.restore ? JSON.stringify(l.restore) : '';
+    if (restore.length > CELL_LIMIT) restore = ''; // too big for one cell: that edit just can't be undone
+    var changes = JSON.stringify(l.changes || []);
+    if (changes.length > CELL_LIMIT) changes = '[]';
+    return {
+      tournamentId: doc.id,
+      time: l.time,
+      summary: l.summary,
+      undone: l.undone ? 'yes' : '',
+      id: l.id,
+      changes: changes,
+      restore: restore,
+    };
+  });
 
-  writeTable('Players', Object.keys(byId).map(function (id) {
-    return byId[id];
-  }));
-  writeTable('Tournaments', tournaments);
-  writeTable('Entrants', entrants);
-  writeTable('Results', results);
-  writeTable('Log', log);
-  writeTable('Waitlist', waitlist);
+  if (playersChanged) writeTable('Players', data.Players);
+  writeRow('Tournaments', tRow);
+  writeBlock('Entrants', tRow, entrants);
+  writeBlock('Results', tRow, results);
+  writeBlock('Log', tRow, log);
+  writeBlock('Waitlist', tRow, waitlist);
   // Made while logged in: the account keeps the organizer key, so every device it logs in on can edit it.
   if (!existing && body.token && body.orgKey) {
     var owner = accountFromToken(body.token, data);
@@ -447,19 +477,12 @@ function saveTournament(doc, players, body, isAdmin) {
 }
 
 function deleteTournament(id, body, isAdmin) {
-  var data = loadTables();
-  var row = findTournament(data.Tournaments, id);
+  var row = findTournament(readTable('Tournaments'), id);
   if (row && !isAdmin && !isOrganizer(body, row)) throw new Error(NOT_ORGANIZER);
-  var others = function (r) {
-    return r.tournamentId !== id;
-  };
-  writeTable('Tournaments', data.Tournaments.filter(function (r) {
-    return r.id !== id;
-  }));
-  writeTable('Entrants', data.Entrants.filter(others));
-  writeTable('Results', data.Results.filter(others));
-  writeTable('Log', data.Log.filter(others));
-  writeTable('Waitlist', data.Waitlist.filter(others));
+  PER_TOURNAMENT.forEach(function (name) {
+    writeBlock(name, { id: id }, []);
+  });
+  replaceRows('Tournaments', 'id', id, []);
   return { ok: true };
 }
 
@@ -561,7 +584,7 @@ function cleanName(raw) {
  * by name, or (with an account token) as the account's player.
  */
 function signUp(id, rawName, token) {
-  var data = loadTables();
+  var data = loadOne(id);
   var account = null;
   var name;
   if (token) {
@@ -592,6 +615,7 @@ function signUp(id, rawName, token) {
     : data.Players.filter(function (p) {
         return String(p.name).trim().toLowerCase() === lower;
       })[0];
+  var newPlayer = !player;
   if (!account && player && accountOf(player.id, data)) {
     throw new Error(player.name + ' has an account. Log in to join as ' + player.name + ', or use another name.');
   }
@@ -613,20 +637,19 @@ function signUp(id, rawName, token) {
   var waitlisted = cap > 0 && (mine.length >= cap || waiting.length > 0);
   if (waitlisted) {
     data.Waitlist.push({ tournamentId: id, playerId: player.id, name: player.name, pin: pin, at: new Date().toISOString() });
-    data.Log.push(logRow(id, player.name + ' joined the waitlist'));
+    appendRows('Log', t, [logRow(id, player.name + ' joined the waitlist')]);
   } else {
     var seed = mine.reduce(function (m, e) {
       return Math.max(m, num(e.seed));
     }, 0);
     data.Entrants.push({ tournamentId: id, seed: seed + 1, playerId: player.id, name: player.name, pin: pin });
-    data.Log.push(logRow(id, player.name + ' signed up'));
+    appendRows('Log', t, [logRow(id, player.name + ' signed up')]);
   }
   bump(t);
-  writeTable('Players', data.Players);
-  writeTable('Tournaments', data.Tournaments);
-  if (waitlisted) writeTable('Waitlist', data.Waitlist);
-  else writeTable('Entrants', data.Entrants);
-  writeTable('Log', data.Log);
+  if (newPlayer) writeRow('Players', player);
+  writeRow('Tournaments', t);
+  if (waitlisted) writeBlock('Waitlist', t, data.Waitlist);
+  else writeBlock('Entrants', t, data.Entrants);
   return { playerId: player.id, pin: pin, waitlisted: waitlisted, tournament: assemble(t, data) };
 }
 
@@ -651,7 +674,7 @@ function byPin(id, rawPin, data, waitlistToo) {
  * stays the same (an organizer busy editing isn't interrupted); only updatedAt moves.
  */
 function checkIn(body, isAdmin) {
-  var data = loadTables();
+  var data = loadOne(body.id);
   var t = findTournament(data.Tournaments, body.id);
   if (!t) throw new Error('Tournament not found');
   var organizer = isAdmin || isOrganizer(body, t);
@@ -673,9 +696,9 @@ function checkIn(body, isAdmin) {
   }
   who.checkedIn = body.here === false ? '' : new Date().toISOString();
   t.updatedAt = new Date().toISOString();
-  writeTable('Tournaments', data.Tournaments);
-  writeTable('Entrants', data.Entrants);
-  writeTable('Waitlist', data.Waitlist);
+  writeRow('Tournaments', t);
+  writeBlock('Entrants', t, data.Entrants);
+  writeBlock('Waitlist', t, data.Waitlist);
   return { playerId: who.playerId, tournament: assemble(t, data) };
 }
 
@@ -700,7 +723,7 @@ function droppedSeeds(t) {
  * Logged with the previous setup, so the organizer can undo it from the Log tab.
  */
 function dropOut(id, rawPin) {
-  var data = loadTables();
+  var data = loadOne(id);
   var t = findTournament(data.Tournaments, id);
   if (!t) throw new Error('Tournament not found');
   var me = byPin(id, rawPin, data, false);
@@ -713,7 +736,7 @@ function dropOut(id, rawPin) {
   var dropped = droppedSeeds(t).slice();
   if (dropped.indexOf(seed) >= 0) throw new Error('You have already dropped out');
 
-  var before = assemble(t, data);
+  var before = assemble(t, data, true);
   var restore = JSON.stringify({
     name: before.name, game: before.game, format: before.format, options: before.options,
     scoring: before.scoring, entrants: before.entrants, results: before.results,
@@ -727,10 +750,9 @@ function dropOut(id, rawPin) {
   t.options = JSON.stringify(options);
   var row = logRow(id, me.name + ' dropped out');
   row.restore = restore.length > CELL_LIMIT ? '' : restore;
-  data.Log.push(row);
+  appendRows('Log', t, [row]);
   bump(t);
-  writeTable('Tournaments', data.Tournaments);
-  writeTable('Log', data.Log);
+  writeRow('Tournaments', t);
   return { playerId: me.playerId, tournament: assemble(t, data) };
 }
 
@@ -757,7 +779,7 @@ function waitlistOf(id, data) {
  * the app shows the match as "needs checking" to the organizer.
  */
 function report(id, matchId, rawPin, result, matchNo) {
-  var data = loadTables();
+  var data = loadOne(id);
   var t = findTournament(data.Tournaments, id);
   if (!t) throw new Error('Tournament not found');
   var pin = String(rawPin || '').trim();
@@ -827,11 +849,10 @@ function report(id, matchId, rawPin, result, matchNo) {
   var label = Number(matchNo) > 0 ? 'Match ' + Math.round(Number(matchNo)) + ': ' : '';
   var middle = clean.score1 !== undefined ? ' ' + clean.score1 + '–' + clean.score2 + ' ' : ' vs ';
   var summary = label + n1 + middle + n2 + (clean.winner === 'draw' ? ' (draw)' : '') + ' (reported by ' + me.name + ')';
-  data.Log.push(logRow(id, summary, [{ matchId: matchId, after: clean }]));
+  appendRows('Log', t, [logRow(id, summary, [{ matchId: matchId, after: clean }])]);
   bump(t);
-  writeTable('Tournaments', data.Tournaments);
-  writeTable('Results', data.Results);
-  writeTable('Log', data.Log);
+  writeRow('Tournaments', t);
+  writeBlock('Results', t, data.Results);
   return { tournament: assemble(t, data), playerId: me.playerId };
 }
 
@@ -840,7 +861,7 @@ function report(id, matchId, rawPin, result, matchNo) {
  * Disputed results are flagged for the organizer, who settles them by saving the right result.
  */
 function confirmResult(id, matchId, rawPin, ok, matchNo) {
-  var data = loadTables();
+  var data = loadOne(id);
   var t = findTournament(data.Tournaments, id);
   if (!t) throw new Error('Tournament not found');
   var me = byPin(id, rawPin, data, false);
@@ -859,17 +880,16 @@ function confirmResult(id, matchId, rawPin, ok, matchNo) {
   row.status = ok ? 'confirmed' : 'disputed';
   var label = Number(matchNo) > 0 ? 'Match ' + Math.round(Number(matchNo)) + ': ' : '';
   var summary = label + me.name + (ok ? ' confirmed the result' : ' disputed the result: the organizer needs to settle it');
-  data.Log.push(logRow(id, summary, [{ matchId: matchId, before: before, after: toResult(row) }]));
+  appendRows('Log', t, [logRow(id, summary, [{ matchId: matchId, before: before, after: toResult(row) }])]);
   bump(t);
-  writeTable('Tournaments', data.Tournaments);
-  writeTable('Results', data.Results);
-  writeTable('Log', data.Log);
+  writeRow('Tournaments', t);
+  writeBlock('Results', t, data.Results);
   return { tournament: assemble(t, data), playerId: me.playerId };
 }
 
 /** Every entrant's PIN, for the organizer to hand out. Fills in any that are missing. */
 function pinsFor(id, body, isAdmin) {
-  var data = loadTables();
+  var data = loadOne(id);
   var t = findTournament(data.Tournaments, id);
   if (!t) throw new Error('Tournament not found');
   if (!isAdmin && !isOrganizer(body, t)) throw new Error(NOT_ORGANIZER);
@@ -894,7 +914,7 @@ function pinsFor(id, body, isAdmin) {
   waitlistOf(id, data).forEach(function (w) {
     if (w.pin) out[w.playerId] = w.pin;
   });
-  if (changed) writeTable('Entrants', data.Entrants);
+  if (changed) writeBlock('Entrants', t, data.Entrants);
   return out;
 }
 
@@ -1175,12 +1195,28 @@ function resetPassword(playerId) {
 
 // ------------------------------------------------------------------ sheet helpers
 
+/**
+ * Every tab except Log, which is the biggest (it keeps old setups for undo): read one
+ * tournament's log with readBlock('Log', id).
+ */
 function loadTables() {
   var out = {};
   Object.keys(TABLES).forEach(function (name) {
-    out[name] = readTable(name);
+    if (name !== 'Log') out[name] = readTable(name);
   });
   return out;
+}
+
+/** The shared tabs, plus only this tournament's rows of the per-tournament tabs (except Log). */
+function loadOne(id) {
+  return {
+    Tournaments: readTable('Tournaments'),
+    Players: readTable('Players'),
+    Accounts: readTable('Accounts'),
+    Entrants: readBlock('Entrants', id),
+    Results: readBlock('Results', id),
+    Waitlist: readBlock('Waitlist', id),
+  };
 }
 
 function sheetFor(name) {
@@ -1195,7 +1231,59 @@ function sheetFor(name) {
   return sheet;
 }
 
-/** Rows as objects keyed by the header row. Columns can be reordered by hand. */
+/** The header row as it is in the sheet (columns can be reordered or added by hand). */
+function headerRow(sheet) {
+  var n = sheet.getLastColumn();
+  if (!n) return [];
+  var h = sheet.getRange(1, 1, 1, n).getValues()[0].map(function (v) {
+    return String(v).trim();
+  });
+  while (h.length && !h[h.length - 1]) h.pop();
+  return h;
+}
+
+/**
+ * The header row, after adding any column this script needs that the tab doesn't have yet.
+ * A new column goes right after the one before it in TABLES (so `tournament` sits next to
+ * `tournamentId`); columns added by hand are kept.
+ */
+function headersFor(sheet, name) {
+  var current = headerRow(sheet);
+  var wanted = TABLES[name];
+  var changed = false;
+  wanted.forEach(function (h, i) {
+    if (current.indexOf(h) >= 0) return;
+    var prev = i > 0 ? current.indexOf(wanted[i - 1]) : -1;
+    if (prev >= 0 && prev < current.length - 1) {
+      sheet.insertColumnAfter(prev + 1);
+      current.splice(prev + 1, 0, h);
+    } else {
+      current.push(h);
+    }
+    changed = true;
+  });
+  if (changed) sheet.getRange(1, 1, 1, current.length).setValues([current]).setFontWeight('bold');
+  return current;
+}
+
+/** Sheet values as objects keyed by the header row. Empty rows are skipped. */
+function toObjects(headers, values) {
+  var rows = [];
+  values.forEach(function (row) {
+    if (row.every(function (v) { return v === '' || v === null; })) return;
+    var obj = {};
+    headers.forEach(function (h, j) {
+      if (!h) return;
+      var v = row[j];
+      var s = v instanceof Date ? v.toISOString() : v === null || v === undefined ? '' : String(v);
+      obj[h] = /^'[=+\-@]/.test(s) ? s.slice(1) : s; // undo safe()
+    });
+    rows.push(obj);
+  });
+  return rows;
+}
+
+/** Every row of a tab. */
 function readTable(name) {
   var sheet = sheetFor(name);
   var values = sheet.getDataRange().getValues();
@@ -1203,42 +1291,262 @@ function readTable(name) {
   var headers = values[0].map(function (h) {
     return String(h).trim();
   });
-  var rows = [];
-  for (var i = 1; i < values.length; i++) {
-    var row = values[i];
-    if (row.every(function (v) { return v === '' || v === null; })) continue;
-    var obj = {};
-    headers.forEach(function (h, j) {
-      var v = row[j];
-      var s = v instanceof Date ? v.toISOString() : v === null || v === undefined ? '' : String(v);
-      obj[h] = /^'[=+\-@]/.test(s) ? s.slice(1) : s; // undo safe()
-    });
-    rows.push(obj);
-  }
-  return rows;
+  return toObjects(headers, values.slice(1));
 }
 
-function writeTable(name, rows) {
-  var sheet = sheetFor(name);
-  var headers = TABLES[name];
-  // Keep any extra columns the user added, in their order.
-  var current = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0].map(String).filter(String);
-  headers.forEach(function (h) {
-    if (current.indexOf(h) < 0) current.push(h);
-  });
-  sheet.getRange(1, 1, 1, current.length).setValues([current]).setFontWeight('bold');
-
+/** Row numbers (2 = the first row under the header) whose `key` column is `value`. Reads only that column. */
+function rowsWith(sheet, headers, key, value) {
+  var c = headers.indexOf(key);
   var last = sheet.getLastRow();
-  if (last > 1) sheet.getRange(2, 1, last - 1, Math.max(sheet.getLastColumn(), current.length)).clearContent();
+  if (c < 0 || last < 2) return [];
+  var col = sheet.getRange(2, c + 1, last - 1, 1).getValues();
+  var out = [];
+  for (var i = 0; i < col.length; i++) if (String(col[i][0]).trim() === String(value)) out.push(i + 2);
+  return out;
+}
+
+/**
+ * Where a tournament's rows are in a per-tournament tab: `at` = their row numbers, `start` = the
+ * first of them or, if it has none yet, where its block goes: above the blocks of tournaments that
+ * come after it in the Tournaments tab (so every tab is in the same order).
+ */
+function blockOf(sheet, headers, id) {
+  var c = headers.indexOf('tournamentId');
+  var last = sheet.getLastRow();
+  var col = c >= 0 && last >= 2 ? sheet.getRange(2, c + 1, last - 1, 1).getValues() : [];
+  var at = [];
+  col.forEach(function (v, i) {
+    if (String(v[0]).trim() === id) at.push(i + 2);
+  });
+  if (at.length) return { at: at, start: at[0] };
+  var order = columnOf(sheetFor('Tournaments'), 'id');
+  var later = {};
+  if (order.indexOf(id) >= 0) {
+    order.slice(order.indexOf(id) + 1).forEach(function (t) {
+      later[t] = true;
+    });
+  }
+  for (var i = 0; i < col.length; i++) if (later[String(col[i][0]).trim()]) return { at: [], start: i + 2 };
+  return { at: [], start: Math.max(last, 1) + 1 };
+}
+
+/** The values of one column, by header name, top to bottom. */
+function columnOf(sheet, name) {
+  var c = headerRow(sheet).indexOf(name);
+  var last = sheet.getLastRow();
+  if (c < 0 || last < 2) return [];
+  return sheet.getRange(2, c + 1, last - 1, 1).getValues().map(function (v) {
+    return String(v[0]).trim();
+  });
+}
+
+/** One tournament's rows of a per-tournament tab. */
+function readBlock(name, id) {
+  var sheet = sheetFor(name);
+  var headers = headerRow(sheet);
+  var at = rowsWith(sheet, headers, 'tournamentId', id);
+  if (!at.length) return [];
+  var values = sheet.getRange(at[0], 1, at[at.length - 1] - at[0] + 1, headers.length).getValues();
+  return toObjects(headers, values).filter(function (r) {
+    return String(r.tournamentId).trim() === id;
+  });
+}
+
+/** Write rows starting at sheet row `row` (as plain text, so "007" stays "007"). */
+function putRows(sheet, row, headers, rows) {
   if (!rows.length) return;
   var values = rows.map(function (r) {
-    return current.map(function (h) {
-      return safe(r[h]);
+    return headers.map(function (h) {
+      return h ? safe(r[h]) : '';
     });
   });
-  var range = sheet.getRange(2, 1, values.length, current.length);
-  range.setNumberFormat('@'); // store as plain text: "007" stays "007", dates stay ISO text
+  var range = sheet.getRange(row, 1, values.length, headers.length);
+  range.setNumberFormat('@').setFontWeight('normal');
   range.setValues(values);
+}
+
+/** Sheets refuses to delete every row under a frozen header, so keep one empty row if needed. */
+function deleteRows(sheet, row, n) {
+  if (n <= 0) return;
+  if (sheet.getMaxRows() - n < 2) sheet.insertRowsAfter(sheet.getMaxRows(), 1);
+  sheet.deleteRows(row, n);
+}
+
+/**
+ * Make the rows `at` (ascending) one block starting at at[0]: rows of the same key further down
+ * (an old sheet, or rows moved by hand) are removed. Returns the block's size.
+ */
+function gather(sheet, at) {
+  if (!at.length) return 0;
+  var run = 1;
+  while (run < at.length && at[run] === at[0] + run) run++;
+  // delete from the bottom up so the row numbers above stay right
+  var i = at.length - 1;
+  while (i >= run) {
+    var j = i;
+    while (j > run && at[j - 1] === at[j] - 1) j--;
+    deleteRows(sheet, at[j], i - j + 1);
+    i = j - 1;
+  }
+  return run;
+}
+
+/**
+ * Replace the rows whose `key` column is `value` with `rows`, as one block where the first of them
+ * was (new ones: at the top, under the header). Every other row stays where it is.
+ */
+function replaceRows(name, key, value, rows) {
+  var sheet = sheetFor(name);
+  var headers = headersFor(sheet, name);
+  var place = key === 'tournamentId' ? blockOf(sheet, headers, value) : { at: rowsWith(sheet, headers, key, value), start: 2 };
+  var at = place.at;
+  var start = at.length ? at[0] : place.start;
+  var count = gather(sheet, at);
+  if (rows.length > count) sheet.insertRowsAfter(start + count - 1, rows.length - count);
+  putRows(sheet, start, headers, rows);
+  if (rows.length < count) deleteRows(sheet, start + rows.length, count - rows.length);
+}
+
+/** Replace one tournament's rows in a per-tournament tab (t: its Tournaments row). */
+function writeBlock(name, t, rows) {
+  rows.forEach(function (r) {
+    r.tournamentId = t.id;
+    r.tournament = t.name || '';
+  });
+  replaceRows(name, 'tournamentId', t.id, rows);
+}
+
+/** Add rows at the end of one tournament's block, without reading the rows already there. */
+function appendRows(name, t, rows) {
+  var sheet = sheetFor(name);
+  var headers = headersFor(sheet, name);
+  var place = blockOf(sheet, headers, t.id);
+  var at = place.at;
+  if (at.length && at[at.length - 1] - at[0] !== at.length - 1) {
+    // scattered (moved by hand): tidy this tournament's rows into one block
+    return writeBlock(name, t, readBlock(name, t.id).concat(rows));
+  }
+  rows.forEach(function (r) {
+    r.tournamentId = t.id;
+    r.tournament = t.name || '';
+  });
+  var after = at.length ? at[at.length - 1] : place.start - 1;
+  sheet.insertRowsAfter(after, rows.length);
+  putRows(sheet, after + 1, headers, rows);
+}
+
+/** Update one row by its id, or add it (new tournaments at the top, other new rows at the bottom). */
+function writeRow(name, row) {
+  var sheet = sheetFor(name);
+  var headers = headersFor(sheet, name);
+  var at = rowsWith(sheet, headers, 'id', row.id);
+  var r;
+  if (at.length) {
+    r = at[0];
+  } else if (name === 'Tournaments') {
+    sheet.insertRowsAfter(1, 1);
+    r = 2;
+  } else {
+    r = sheet.getLastRow() + 1;
+    if (r > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), 1);
+  }
+  putRows(sheet, r, headers, [row]);
+}
+
+/** Rewrite a whole tab (shared tabs like Players and Accounts, or a full tidy). */
+function writeTable(name, rows) {
+  var sheet = sheetFor(name);
+  var headers = headersFor(sheet, name);
+  var last = sheet.getLastRow();
+  // a sheet has a fixed number of rows: add more first if needed
+  var need = rows.length + 1 - sheet.getMaxRows();
+  if (need > 0) sheet.insertRowsAfter(sheet.getMaxRows(), need);
+  // write first, then clear what's left below, so a failure never leaves the tab empty
+  putRows(sheet, 2, headers, rows);
+  var extra = last - 1 - rows.length;
+  if (extra > 0) sheet.getRange(rows.length + 2, 1, extra, Math.max(sheet.getLastColumn(), headers.length)).clearContent();
+}
+
+// ------------------------------------------------------------------ keeping the sheet tidy
+
+var LAYOUT = '2'; // bump to run tidyOnce again after a layout change
+
+/**
+ * Once (the first request after this script is updated): group every per-tournament tab into one
+ * block per tournament, newest tournament first, and fill in the `tournament` name column.
+ */
+function tidyOnce() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('LAYOUT') === LAYOUT) return;
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    if (props.getProperty('LAYOUT') === LAYOUT) return;
+    var tournaments = readTable('Tournaments').sort(function (a, b) {
+      return String(b.createdAt).localeCompare(String(a.createdAt));
+    });
+    writeTable('Tournaments', tournaments);
+    var order = {};
+    var names = {};
+    tournaments.forEach(function (t, i) {
+      order[t.id] = i;
+      names[t.id] = t.name;
+    });
+    PER_TOURNAMENT.forEach(function (name) {
+      var rows = readTable(name);
+      var place = function (r) {
+        return r.tournamentId in order ? order[r.tournamentId] : tournaments.length;
+      };
+      var sorted = rows
+        .map(function (r, i) {
+          if (r.tournamentId in names) r.tournament = names[r.tournamentId];
+          return { r: r, i: i };
+        })
+        .sort(function (a, b) {
+          return place(a.r) - place(b.r) || a.i - b.i;
+        })
+        .map(function (x) {
+          return x.r;
+        });
+      writeTable(name, sorted);
+    });
+    props.setProperty('LAYOUT', LAYOUT);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Runs by itself when someone edits the sheet by hand: marks the tournament(s) of the edited rows
+ * as changed, so pages that have them open load the edit.
+ */
+function onEdit(e) {
+  try {
+    var sheet = e.range.getSheet();
+    var name = sheet.getName();
+    if (name !== 'Tournaments' && PER_TOURNAMENT.indexOf(name) < 0) return;
+    var headers = headerRow(sheet);
+    var c = headers.indexOf(name === 'Tournaments' ? 'id' : 'tournamentId');
+    var first = Math.max(e.range.getRow(), 2);
+    var last = Math.min(e.range.getRow() + e.range.getNumRows() - 1, sheet.getLastRow());
+    if (c < 0 || last < first) return;
+    var ids = {};
+    sheet.getRange(first, c + 1, last - first + 1, 1).getValues().forEach(function (v) {
+      if (String(v[0]).trim()) ids[String(v[0]).trim()] = true;
+    });
+    var ts = sheetFor('Tournaments');
+    var th = headerRow(ts);
+    var u = th.indexOf('updatedAt');
+    if (u < 0) return;
+    var now = new Date().toISOString();
+    Object.keys(ids).forEach(function (id) {
+      rowsWith(ts, th, 'id', id).forEach(function (r) {
+        ts.getRange(r, u + 1, 1, 1).setNumberFormat('@').setValues([[now]]);
+      });
+    });
+  } catch (err) {
+    // never get in the way of editing
+  }
 }
 
 /** Stop names like "=SUM(...)" from becoming formulas. */

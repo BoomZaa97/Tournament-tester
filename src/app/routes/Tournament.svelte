@@ -54,19 +54,38 @@
   let openMatch = $state<string | null>(tab === 'matches' && arg ? arg : null);
   let saving = $state(false);
 
+  /** Add or update players by id (the page keeps every player it has been sent). */
+  const withPlayers = (list: Player[]) => {
+    const byId = new Map(players.map((p) => [p.id, p]));
+    for (const p of list) byId.set(p.id, p);
+    players = [...byId.values()];
+  };
+
   async function load() {
     try {
-      const [d, all] = await Promise.all([app.store.get(id), app.store.loadAll()]);
-      players = all.players;
-      if (!d) missing = true;
-      // check-ins change updatedAt but not the version (they don't touch the bracket)
-      else if (!doc || d.version !== doc.version || d.updatedAt !== doc.updatedAt) doc = d;
+      // only this tournament, and nothing at all when it hasn't changed
+      const r = await app.store.open(id, doc?.updatedAt);
+      if (r !== 'same') {
+        withPlayers(r.players);
+        const d = r.tournament;
+        if (!d) missing = true;
+        // check-ins change updatedAt but not the version (they don't touch the bracket)
+        else if (!doc || d.version !== doc.version || d.updatedAt !== doc.updatedAt) doc = d;
+      }
       error = '';
     } catch (e) {
       error = errorText(e);
     }
   }
   load();
+
+  // The Edit tab matches typed names to people who played before: it needs every player.
+  let allPlayers = false;
+  $effect(() => {
+    if (tab !== 'edit' || !canEdit || allPlayers) return;
+    allPlayers = true;
+    app.store.players().then(withPlayers, () => (allPlayers = false));
+  });
 
   // Viewers of a shared sheet see updates without refreshing.
   const poll = app.store.kind === 'sheets' ? setInterval(() => !openMatch && !saving && tab !== 'edit' && load(), 20000) : undefined;
@@ -94,7 +113,7 @@
     saving = true;
     try {
       doc = await app.store.save(next, created);
-      if (created.length) players = [...players, ...created];
+      if (created.length) withPlayers(created);
       return true;
     } catch (e) {
       if (e instanceof VersionConflictError) {

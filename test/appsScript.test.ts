@@ -2,88 +2,16 @@
  * Runs apps-script/Code.gs in Node against a fake in-memory spreadsheet,
  * so the Google Sheets backend is tested without a Google account.
  */
-import { createHash, createHmac, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
+import { fakeGoogle as fake } from '../scripts/fake-google.mjs';
 
 function fakeGoogle(adminKey = 'secret') {
-  const props = new Map<string, string>([['ADMIN_KEY', adminKey]]);
-  const sheets = new Map<string, string[][]>();
-  const sheet = (name: string) => {
-    const grid = () => sheets.get(name)!;
-    const ensure = (r: number, c: number) => {
-      const g = grid();
-      while (g.length < r) g.push([]);
-      for (const row of g) while (row.length < c) row.push('');
-    };
-    const api = {
-      getDataRange: () => ({ getValues: () => grid().map((r) => [...r]) }),
-      getLastRow: () => grid().length,
-      getLastColumn: () => Math.max(0, ...grid().map((r) => r.length)),
-      setFrozenRows: () => {},
-      getRange: (r: number, c: number, nr: number, nc: number) => {
-        const range = {
-          setValues: (vals: unknown[][]) => {
-            ensure(r + nr - 1, c + nc - 1);
-            vals.forEach((row, i) => row.forEach((v, j) => (grid()[r - 1 + i][c - 1 + j] = String(v))));
-            return range;
-          },
-          getValues: () => {
-            ensure(r + nr - 1, c + nc - 1);
-            return grid().slice(r - 1, r - 1 + nr).map((row) => row.slice(c - 1, c - 1 + nc));
-          },
-          clearContent: () => {
-            for (let i = r - 1; i < r - 1 + nr && i < grid().length; i++) for (let j = c - 1; j < c - 1 + nc; j++) grid()[i][j] = '';
-            // trim fully empty trailing rows, like Sheets' getLastRow does
-            while (grid().length > 1 && grid()[grid().length - 1].every((v) => v === '')) grid().pop();
-            return range;
-          },
-          setNumberFormat: () => range,
-          setFontWeight: () => range,
-        };
-        return range;
-      },
-    };
-    return api;
-  };
-  const ctx = {
-    SpreadsheetApp: {
-      getActiveSpreadsheet: () => ({
-        getSheetByName: (n: string) => (sheets.has(n) ? sheet(n) : null),
-        insertSheet: (n: string) => (sheets.set(n, []), sheet(n)),
-      }),
-    },
-    ContentService: {
-      MimeType: { JSON: 'json' },
-      createTextOutput: (text: string) => ({ setMimeType: () => ({ text }) }),
-    },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: (k: string) => props.get(k) ?? null, setProperty: (k: string, v: string) => void props.set(k, v) }) },
-    LockService: { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) },
-    Utilities: {
-      DigestAlgorithm: { SHA_256: 'sha256' },
-      Charset: { UTF_8: 'utf8' },
-      // Apps Script returns signed bytes (-128..127)
-      computeHmacSha256Signature: (v: string, k: string) => [...createHmac('sha256', k).update(v, 'utf8').digest()].map((b) => (b > 127 ? b - 256 : b)),
-      getUuid: () => randomUUID(),
-      computeDigest: (_alg: string, s: string) => [...createHash('sha256').update(s, 'utf8').digest()].map((b) => (b > 127 ? b - 256 : b)),
-    },
-    JSON,
-    Date,
-    Object,
-    String,
-    Number,
-    Math,
-    isNaN,
-  };
-  vm.createContext(ctx);
-  vm.runInContext(readFileSync('apps-script/Code.gs', 'utf8'), ctx);
-  const g = ctx as unknown as { doGet: (e: unknown) => { text: string }; doPost: (e: unknown) => { text: string } };
-  return {
-    sheets,
-    get: (params: Record<string, string>) => JSON.parse(g.doGet({ parameter: params }).text),
-    post: (body: Record<string, unknown>) => JSON.parse(g.doPost({ postData: { contents: JSON.stringify(body) } }).text),
-  };
+  return fake({ adminKey });
 }
 
 const doc = {
@@ -281,7 +209,8 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(moved.tournament.waitlist.map((w: { name: string }) => w.name)).toEqual(['Fay', 'Gus']);
       expect(pins(g)[eve.playerId]).toBe(eve.pin);
       // seeds stay 1..n: the waitlist never shows up among the entrants
-      const seeds = g.sheets.get('Entrants')!.slice(1).map((r) => r[1]);
+      const tab = g.sheets.get('Entrants')!;
+      const seeds = tab.slice(1).map((r) => r[tab[0].indexOf('seed')]);
       expect(seeds).toEqual(['1', '2', '3', '4', '5']);
 
       g.post({ action: 'delete', id: 'o1', orgKey: ORG });
@@ -588,5 +517,177 @@ describe('Google Sheets backend (Code.gs)', () => {
     const t = g.get({ action: 'get', id: 't1' }).tournament;
     expect(t.entrants[2].name).toBe('Charlie');
     expect(g.sheets.get('Results')!.flat()).toContain('Charlie');
+  });
+
+  describe('many tournaments in one sheet', () => {
+    const TAB_THIRD: Record<string, string> = { Entrants: 'seed', Results: 'matchId', Log: 'time' };
+    const ev = (n: number, players = 4) => ({
+      ...doc,
+      id: 'e' + n,
+      name: 'Event ' + n,
+      createdAt: `2026-11-${String(n).padStart(2, '0')}T09:00:00.000Z`,
+      entrants: Array.from({ length: players }, (_, i) => ({ id: `e${n}p${i}`, name: `P${n}-${i}` })),
+      results: { 'W1-1': { winner: 'p1', p1: `e${n}p0`, p2: `e${n}p${players - 1}`, at: '2026-11-16T10:00:00.000Z' } },
+      log: [{ id: 'l' + n, time: '2026-11-16T10:00:00.000Z', summary: 'Match 1', changes: [] }],
+    });
+    const col = (g: ReturnType<typeof fakeGoogle>, tab: string, name: string) => {
+      const rows = g.sheets.get(tab)!;
+      const c = rows[0].indexOf(name);
+      return rows.slice(1).map((r) => r[c]);
+    };
+    /** The tournament ids of a tab's blocks, top to bottom. */
+    const blocks = (g: ReturnType<typeof fakeGoogle>, tab: string) =>
+      col(g, tab, 'tournamentId').filter((id, i, all) => id !== all[i - 1]);
+    const rowsOf = (g: ReturnType<typeof fakeGoogle>, tab: string, id: string) => {
+      const rows = g.sheets.get(tab)!;
+      const c = rows[0].indexOf('tournamentId');
+      return rows.filter((r) => r[c] === id).map((r) => r.join('|'));
+    };
+
+    it('keeps each tournament in one block, newest on top, with its name, and only rewrites that block', () => {
+      const g = fakeGoogle(); // tabs start with 30 rows: these outgrow them
+      for (let n = 1; n <= 6; n++) expect(g.post({ key: 'secret', action: 'save', tournament: ev(n, 8) }).error).toBeUndefined();
+      for (const tab of ['Entrants', 'Results', 'Log']) {
+        expect(blocks(g, tab)).toEqual(['e6', 'e5', 'e4', 'e3', 'e2', 'e1']);
+        expect(g.sheets.get(tab)![0].slice(0, 2)).toEqual(['tournamentId', 'tournament']);
+      }
+      expect(col(g, 'Tournaments', 'id')).toEqual(['e6', 'e5', 'e4', 'e3', 'e2', 'e1']);
+      expect(new Set(col(g, 'Entrants', 'tournament'))).toEqual(new Set(['Event 1', 'Event 2', 'Event 3', 'Event 4', 'Event 5', 'Event 6']));
+      expect(col(g, 'Entrants', 'tournamentId')).toHaveLength(48);
+
+      // edit event 3: more players, renamed. Nothing else moves or changes.
+      const others = ['e1', 'e2', 'e4', 'e5', 'e6'].map((id) => rowsOf(g, 'Entrants', id));
+      const t3 = g.get({ action: 'get', id: 'e3' }).tournament;
+      const more = [...t3.entrants, { id: 'x1', name: 'Late' }, { id: 'x2', name: 'Later' }];
+      g.post({ key: 'secret', action: 'save', tournament: { ...t3, name: 'Event 3 (final)', entrants: more } });
+      expect(blocks(g, 'Entrants')).toEqual(['e6', 'e5', 'e4', 'e3', 'e2', 'e1']);
+      expect(['e1', 'e2', 'e4', 'e5', 'e6'].map((id) => rowsOf(g, 'Entrants', id))).toEqual(others);
+      expect(rowsOf(g, 'Entrants', 'e3')).toHaveLength(10);
+      expect(rowsOf(g, 'Results', 'e3')[0]).toContain('Event 3 (final)');
+
+      // a player report adds a row at the end of that block only
+      const pins = g.post({ key: 'secret', action: 'pins', id: 'e5' }).pins;
+      const r = g.post({ action: 'report', id: 'e5', matchId: 'W1-2', pin: pins.e5p1, result: { winner: 'p1', p1: 'e5p1', p2: 'e5p6' } });
+      expect(r.error).toBeUndefined();
+      expect(blocks(g, 'Results')).toEqual(['e6', 'e5', 'e4', 'e3', 'e2', 'e1']);
+      expect(blocks(g, 'Log')).toEqual(['e6', 'e5', 'e4', 'e3', 'e2', 'e1']);
+      expect(r.tournament.log.map((l: { summary: string }) => l.summary)).toEqual(['Match 1', expect.stringContaining('reported by P5-1')]);
+
+      // delete takes out exactly its rows
+      g.post({ key: 'secret', action: 'delete', id: 'e4' });
+      for (const tab of ['Entrants', 'Results', 'Log']) expect(blocks(g, tab)).toEqual(['e6', 'e5', 'e3', 'e2', 'e1']);
+      expect(['e1', 'e2', 'e6'].map((id) => rowsOf(g, 'Entrants', id))).toEqual([others[0], others[1], others[4]]);
+      expect(g.get({ action: 'all' }).tournaments).toHaveLength(5);
+    });
+
+    it('a big sign-up grows its block past the sheet size', () => {
+      const g = fakeGoogle();
+      g.post({ key: 'secret', action: 'save', tournament: { ...ev(1, 2), results: {}, log: [], signup: true } });
+      g.post({ key: 'secret', action: 'save', tournament: ev(2) });
+      for (let i = 0; i < 40; i++) expect(g.post({ action: 'signup', id: 'e1', name: 'Walk-in ' + i }).error).toBeUndefined();
+      expect(g.get({ action: 'get', id: 'e1' }).tournament.entrants).toHaveLength(42);
+      expect(blocks(g, 'Entrants')).toEqual(['e2', 'e1']);
+      expect(blocks(g, 'Log')).toEqual(['e2', 'e1']);
+      expect(g.get({ action: 'get', id: 'e2' }).tournament.entrants).toHaveLength(4);
+    });
+
+    it('rows moved by hand are gathered back on the next save, without losing any', () => {
+      const g = fakeGoogle();
+      g.post({ key: 'secret', action: 'save', tournament: ev(1) });
+      g.post({ key: 'secret', action: 'save', tournament: ev(2) });
+      // swap the first row of each block (e2 rows are on top)
+      const rows = g.sheets.get('Entrants')!;
+      const top = rows[1];
+      const bottom = rows[rows.length - 1];
+      const copy = [...top];
+      top.splice(0, top.length, ...bottom);
+      bottom.splice(0, bottom.length, ...copy);
+      expect(blocks(g, 'Entrants')).toEqual(['e1', 'e2', 'e1', 'e2']);
+      // readers still see everyone
+      expect(g.get({ action: 'get', id: 'e1' }).tournament.entrants).toHaveLength(4);
+      const t1 = g.get({ action: 'get', id: 'e1' }).tournament;
+      g.post({ key: 'secret', action: 'save', tournament: t1 });
+      expect(blocks(g, 'Entrants')).toEqual(['e1', 'e2']);
+      expect(g.get({ action: 'get', id: 'e1' }).tournament.entrants).toEqual(t1.entrants);
+      expect(g.get({ action: 'get', id: 'e2' }).tournament.entrants).toHaveLength(4);
+    });
+
+    it('pages poll cheaply: unchanged tournaments answer { same: true }; lists can skip logs', () => {
+      const g = fakeGoogle();
+      g.post({ key: 'secret', action: 'save', tournament: ev(1) });
+      const first = g.get({ action: 'get', id: 'e1' });
+      expect(first.players.map((p: { name: string }) => p.name)).toEqual(['P1-0', 'P1-1', 'P1-2', 'P1-3']);
+      expect(g.get({ action: 'get', id: 'e1', since: first.tournament.updatedAt })).toEqual({ same: true });
+      expect(g.get({ action: 'get', id: 'nope', since: 'x' })).toEqual({ tournament: null });
+      expect(g.get({ action: 'all', lite: '1' }).tournaments[0].log).toEqual([]);
+      expect(g.get({ action: 'players' }).players).toHaveLength(4);
+      expect(g.get({ action: 'all' }).tournaments[0].log).toHaveLength(1);
+
+      // a result fixed by hand in the sheet: onEdit marks the tournament as changed
+      const rows = g.sheets.get('Results')!;
+      const w = rows[0].indexOf('winner');
+      rows[1][w] = 'p2';
+      (g.ctx.onEdit as (e: unknown) => void)({ range: g.tab('Results').getRange(2, w + 1) });
+      const after = g.get({ action: 'get', id: 'e1', since: first.tournament.updatedAt });
+      expect(after.same).toBeUndefined();
+      expect(after.tournament.results['W1-1'].winner).toBe('p2');
+    });
+
+    it('tidies a mixed-up sheet without the name column once, keeping every tournament the same', () => {
+      const g = fakeGoogle();
+      for (let n = 1; n <= 3; n++) g.post({ key: 'secret', action: 'save', tournament: ev(n) });
+      const before = [1, 2, 3].map((n) => g.get({ action: 'get', id: 'e' + n }).tournament);
+      // as an older script left it: no `tournament` column, rows of different tournaments interleaved
+      for (const tab of ['Entrants', 'Results', 'Log']) {
+        const rows = g.sheets.get(tab)!;
+        for (const r of rows) r.splice(1, 1);
+        const body = rows.slice(1).map((r) => [...r]);
+        const mixed = body.filter((_, i) => i % 2).concat(body.filter((_, i) => !(i % 2)));
+        mixed.forEach((r, i) => rows[i + 1].splice(0, rows[i + 1].length, ...r));
+      }
+      g.props.delete('LAYOUT');
+      expect(blocks(g, 'Entrants').length).toBeGreaterThan(3);
+
+      const after = [1, 2, 3].map((n) => g.get({ action: 'get', id: 'e' + n }).tournament);
+      expect(after).toEqual(before);
+      for (const tab of ['Entrants', 'Results', 'Log']) {
+        expect(blocks(g, tab)).toEqual(['e3', 'e2', 'e1']);
+        expect(g.sheets.get(tab)![0].slice(0, 3)).toEqual(['tournamentId', 'tournament', TAB_THIRD[tab]]);
+      }
+      expect(g.props.get('LAYOUT')).toBe('2');
+    });
+
+    // the real previous script, when git history is there (CI checks out only the latest commit)
+    const hasOld = (() => {
+      try {
+        execSync('git cat-file -e dfa95ed:apps-script/Code.gs', { stdio: 'ignore' });
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    it.skipIf(!hasOld)('tidies a sheet written by the previous script once, keeping every tournament the same', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'tt-'));
+      const old = join(dir, 'Code.gs');
+      writeFileSync(old, execSync('git show dfa95ed:apps-script/Code.gs', { encoding: 'utf8' }));
+      const g = fake({ adminKey: 'secret', codePath: old, rows: 200 });
+      for (let n = 1; n <= 3; n++) g.post({ key: 'secret', action: 'save', tournament: ev(n) });
+      // the old script moves a tournament's rows to the bottom on every save: mixed up
+      const pins = g.post({ key: 'secret', action: 'pins', id: 'e1' }).pins;
+      g.post({ action: 'report', id: 'e1', matchId: 'W1-2', pin: pins.e1p1, result: { winner: 'p1', p1: 'e1p1', p2: 'e1p2' } });
+      g.post({ key: 'secret', action: 'save', tournament: g.get({ action: 'get', id: 'e2' }).tournament });
+      const before = [1, 2, 3].map((n) => g.get({ action: 'get', id: 'e' + n }).tournament);
+      expect(g.sheets.get('Entrants')![0]).not.toContain('tournament');
+
+      vm.runInContext(readFileSync('apps-script/Code.gs', 'utf8'), g.ctx as vm.Context); // the owner pastes the new script
+      const after = [1, 2, 3].map((n) => g.get({ action: 'get', id: 'e' + n }).tournament);
+      expect(after).toEqual(before);
+      for (const tab of ['Entrants', 'Results', 'Log']) {
+        expect(blocks(g, tab)).toEqual(['e3', 'e2', 'e1']);
+        expect(g.sheets.get(tab)![0][1]).toBe('tournament');
+      }
+      expect(col(g, 'Results', 'tournament')).toContain('Event 1');
+      expect(g.props.get('LAYOUT')).toBe('2');
+    });
   });
 });

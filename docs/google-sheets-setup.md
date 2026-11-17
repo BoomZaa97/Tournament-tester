@@ -78,19 +78,36 @@ The URL stays the same. New columns are added to the tabs by themselves on the n
 | Results | `status`, `reportedBy` | For scores players reported: `reported` → `confirmed` or `disputed`; empty = entered by the organizer |
 | Waitlist (new tab) | `playerId`, `name`, `pin`, `at`, `checkedIn` | People waiting for a spot, oldest first. Not in the bracket. |
 | Accounts (new tab) | `username`, `playerId`, `passHash`, `salt`, `orgKeys`, `fails`, `lockedUntil` | Player accounts. `orgKeys` holds the organizer keys of the account's tournaments. Delete a row to delete an account (the player and their results stay). |
+| Entrants, Results, Log, Waitlist | `tournament` | The tournament's name, next to its id, so you can tell the rows apart. |
 
 Players who dropped out are in the Tournaments `options` column (`"dropped": [seed, …]`).
 
 Until the new script is deployed, the site still works: join codes, the player limit, check-in, drop-outs and score
 confirmation just show "The site owner needs to update the Google script for this".
 
+## How the sheet stays readable with many tournaments
+
+- Every tab is in the same order: **newest tournament at the top**. In the Entrants, Results, Log and Waitlist tabs each
+  tournament's rows sit together in one block, with its name in the `tournament` column. Inside a block: entrants by
+  seed, results and log in the order they happened.
+- A save only rewrites that tournament's block. Other rows stay where they are, so you can keep a tab open on one
+  tournament while people play another.
+- The first time the new script runs, it sorts the existing rows into these blocks once (nothing is lost; the
+  `LAYOUT` script property records that it's done).
+- To look at one tournament only: select the `tournament` column → **Data → Create a filter**, or just use Ctrl+F.
+- Open pages ask the sheet "anything new since …?" every 20 seconds, which costs almost nothing, and only load a
+  tournament again when it changed. Lists (Tournaments, Players) leave out the logs, the biggest part of the sheet.
+
 ## Fixing things by hand
 
-You can edit the sheet directly:
+You can edit the sheet directly. Editing a row marks its tournament as changed (the script's `onEdit`), so pages that
+have it open show your fix within about 20 seconds.
 
 - **Results** tab: change `winner` to `p1`, `p2`, `draw`, or just type the winner's name. Change `score1` and `score2` as needed.
   Delete a row to un-play a match.
 - **Players** tab: rename a player (or use Rename on their page in the app).
+- Keep the `tournamentId` column as it is: it's how rows find their tournament. If you move rows around, the next save
+  of that tournament puts them back together.
 - **Forgotten password:** open the player's page with your admin key and tap **Reset password**; give them the new one.
   5 wrong passwords in a row lock an account for 10 minutes.
 
@@ -104,4 +121,6 @@ If a manual edit makes later matches wrong, the app marks them **Check** and let
 
 
 Google's free limits are far more than a tournament needs (about 20,000 requests a day).
-Each save takes 1–2 seconds. Viewers' pages refresh every 20 seconds.
+Each save takes 1–2 seconds and doesn't get slower as tournaments pile up. Viewers' pages refresh every 20 seconds.
+A Google Sheet holds 10 million cells: thousands of tournaments. If it ever gets slow, download a backup
+(Settings → Download backup), then delete old tournaments on the site.

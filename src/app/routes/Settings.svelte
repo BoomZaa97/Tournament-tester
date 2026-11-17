@@ -45,7 +45,7 @@
   }
 
   async function exportBackup() {
-    const data = await app.store.loadAll();
+    const data = await app.store.loadAll({ full: true });
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
