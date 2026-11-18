@@ -23,6 +23,33 @@
     );
   });
 
+  // ---- clean-up: players left over from deleted (test) tournaments
+  let unused = $state<Player[] | null>(null);
+  let pruning = $state(false);
+  async function findUnused() {
+    pruning = true;
+    try {
+      unused = (await app.store.prunePlayers(true)).sort((a, b) => a.name.localeCompare(b.name));
+    } catch (e) {
+      app.notify(errorText(e), 'error');
+    } finally {
+      pruning = false;
+    }
+  }
+  async function removeUnused() {
+    if (!unused?.length || !confirm(`Remove ${unused.length} unused ${unused.length === 1 ? 'player' : 'players'}? This can't be undone.`)) return;
+    pruning = true;
+    try {
+      const gone = await app.store.prunePlayers(false);
+      app.notify(`Removed ${gone.length} ${gone.length === 1 ? 'player' : 'players'}`);
+      unused = null;
+    } catch (e) {
+      app.notify(errorText(e), 'error');
+    } finally {
+      pruning = false;
+    }
+  }
+
   async function test() {
     testing = true;
     testResult = '';
@@ -160,7 +187,7 @@
     <p class="small muted">No sign-up needed to view. Rights come from keys and PINs kept on each device.</p>
     <div class="roles" role="table" aria-label="Roles">
       <div class="rhead" role="row"><span role="columnheader">Role</span><span role="columnheader">How someone gets it</span><span role="columnheader">What they can do</span></div>
-      <div role="row"><b role="cell">Site admin</b><span role="cell" class="rgets">The admin key, typed on this page (per device)</span><span role="cell">Everything: every tournament, rename players, reset account passwords, import backups</span></div>
+      <div role="row"><b role="cell">Site admin</b><span role="cell" class="rgets">The admin key, typed on this page (per device)</span><span role="cell">Everything: every tournament, rename and clean up players, reset account passwords, import backups</span></div>
       <div role="row"><b role="cell">Organizer</b><span role="cell" class="rgets">Creating a tournament on their device, or logging in to the account that made it</span><span role="cell">Edit that tournament: results, entrants, format, finals, check-in, players' PINs</span></div>
       <div role="row"><b role="cell">Helper</b><span role="cell" class="rgets">The helper link from the tournament's Share panel</span><span role="cell">Same as the organizer, for that one tournament</span></div>
       <div role="row"><b role="cell">Player</b><span role="cell" class="rgets">Joining (they get a 6-digit PIN), or logging in to their account</span><span role="cell">Report and confirm their own matches, check in, drop out, edit their own profile</span></div>
@@ -185,6 +212,29 @@
   </section>
 
   <hr class="rule" />
+
+  {#if app.store.isAdmin}
+    <section>
+      <h2>Clean up players</h2>
+      <p class="small muted">
+        Players who are in no tournament and have no account: test names, typos, or people whose tournaments were deleted.
+        Removing them clears them from the player list and suggestions. Players with an account are always kept.
+      </p>
+      {#if unused === null}
+        <div class="row"><button onclick={findUnused} disabled={pruning}>{pruning ? 'Looking…' : 'Find unused players'}</button></div>
+      {:else if unused.length === 0}
+        <p class="small">Nothing to clean up: every player is in a tournament or has an account.</p>
+      {:else}
+        <p class="small"><b>{unused.length}</b> {unused.length === 1 ? 'player' : 'players'}: {unused.map((p) => p.name).join(', ')}</p>
+        <div class="row">
+          <button class="danger" onclick={removeUnused} disabled={pruning}>{pruning ? 'Removing…' : `Remove ${unused.length}`}</button>
+          <button class="ghost" onclick={() => (unused = null)} disabled={pruning}>Cancel</button>
+        </div>
+      {/if}
+    </section>
+
+    <hr class="rule" />
+  {/if}
 
   <section>
     <h2>Backup</h2>

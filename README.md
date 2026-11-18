@@ -71,3 +71,4 @@ npm run build     # build the site into dist/
 - [x] Removed players keep their PIN if they're added back
 - [x] Discord announcements
 - [x] Import from Challonge
+- [x] Admin: clean up unused players (test names, people whose tournaments were deleted)

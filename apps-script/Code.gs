@@ -104,6 +104,10 @@ function doPost(e) {
         if (!isAdmin) throw new Error('Only the site admin can rename players');
         return renamePlayer(body.id, body.name);
       }
+      if (body.action === 'prunePlayers') {
+        if (!isAdmin) throw new Error('Only the site admin can remove players');
+        return pruneUnusedPlayers(!!body.dryRun);
+      }
       if (body.action === 'signup') return signUp(body.id, body.name, body.token);
       if (body.action === 'report') return report(body.id, body.matchId, body.pin, body.result, body.matchNo);
       if (body.action === 'pins') return { pins: pinsFor(body.id, body, isAdmin) };
@@ -591,6 +595,47 @@ function renamePlayer(id, name) {
   writeTable('Waitlist', data.Waitlist);
   writeTable('Results', data.Results);
   return { ok: true };
+}
+
+/**
+ * Admin clean-up: removes players who are in no tournament (entrant, waitlist or result) and have
+ * no account, with their profile. Test or typo names left over after tournaments were deleted.
+ * `dryRun` only lists them.
+ */
+function pruneUnusedPlayers(dryRun) {
+  var data = loadTables();
+  var used = {};
+  data.Entrants.forEach(function (e) {
+    used[e.playerId] = true;
+  });
+  data.Waitlist.forEach(function (w) {
+    used[w.playerId] = true;
+  });
+  data.Results.forEach(function (r) {
+    used[r.p1Id] = true;
+    used[r.p2Id] = true;
+  });
+  (data.Accounts || []).forEach(function (a) {
+    used[a.playerId] = true;
+  });
+  var gone = data.Players.filter(function (p) {
+    return !used[p.id];
+  });
+  if (!dryRun && gone.length) {
+    writeTable('Players', data.Players.filter(function (p) {
+      return used[p.id];
+    }));
+    var profiles = readTable('Profiles');
+    var kept = profiles.filter(function (r) {
+      return used[r.id];
+    });
+    if (kept.length !== profiles.length) writeTable('Profiles', kept);
+  }
+  return {
+    removed: gone.map(function (p) {
+      return { id: p.id, name: p.name };
+    }),
+  };
 }
 
 function conflict() {

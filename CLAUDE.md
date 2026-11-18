@@ -31,7 +31,7 @@ Made because Challonge made fixing wrong results hard.
 
 | Role | Proof sent to Code.gs | Rights |
 |---|---|---|
-| Site admin | `key` = `ADMIN_KEY` | Everything; only one who can rename players or import backups |
+| Site admin | `key` = `ADMIN_KEY` | Everything; only one who can rename players, clean up unused players (`prunePlayers`: no tournament, no account; Admin page) or import backups |
 | Organizer / helper | `orgKey` (random, made by the creator's browser, `tt.keys.v1`); sheet stores only `Tournaments.orgKeyHash` (SHA-256) | Save/delete that tournament, `pins`. Helper link = `#/t/<id>/org/<key>` |
 | Player | 6-digit `Entrants.pin` (`tt.pins.v1`); never in GET responses; guessing limited per tournament (`pinOwner` / `PIN_LIMIT`: 10 wrong in 10 min or 40 in 6 h → all PINs refused, counts in CacheService; account `claims` count too, max 50) | `signup` (only while `signup` is on and no results), `report` (own match, no result yet) |
 

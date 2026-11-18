@@ -444,6 +444,30 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.post({ action: 'renamePlayer', key: 'secret', id: other.id, name: 'Dana' }).error).toBeUndefined();
     });
 
+    it('admin clean-up removes players in no tournament and without an account (with their profile)', () => {
+      const g = fakeGoogle();
+      const { account } = reg(g, { username: 'dana', name: 'Dana' });
+      create(g);
+      const ghost = { id: 'ghost', name: 'Ghost' };
+      const t = g.get({ action: 'get', id: 'o1' }).tournament;
+      g.post({ action: 'save', orgKey: ORG, tournament: { ...t, entrants: [...t.entrants, ghost] }, players: [ghost] });
+      g.post({ action: 'profile', id: 'ghost', key: 'secret', bio: 'test' });
+      // still in a tournament: kept
+      expect(g.post({ action: 'prunePlayers', key: 'secret', dryRun: true }).removed).toEqual([]);
+      g.post({ key: 'secret', action: 'delete', id: 'o1' });
+      // admin only; a dry run changes nothing
+      expect(g.post({ action: 'prunePlayers', orgKey: ORG }).error).toMatch(/site admin/);
+      const names = (r: { removed: { name: string }[] }) => r.removed.map((p) => p.name).sort();
+      const all = open.entrants.map((e) => e.name).concat('Ghost').sort();
+      expect(names(g.post({ action: 'prunePlayers', key: 'secret', dryRun: true }))).toEqual(all);
+      expect(g.get({ action: 'players' }).players).toHaveLength(all.length + 1);
+      expect(names(g.post({ action: 'prunePlayers', key: 'secret' }))).toEqual(all);
+      // only the account holder is left, and their login still works
+      expect(g.get({ action: 'players' }).players).toEqual([{ id: account.playerId, name: 'Dana', account: true }]);
+      expect(g.get({ action: 'profile', id: 'ghost' }).profile).toBeNull();
+      expect(g.post({ action: 'login', username: 'dana', password: 'hunter22' }).error).toBeUndefined();
+    });
+
     it('a removed player keeps their PIN: adding them back or them signing up again gives the same one', () => {
       const g = fakeGoogle();
       create(g);

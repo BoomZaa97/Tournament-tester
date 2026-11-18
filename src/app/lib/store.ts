@@ -61,6 +61,8 @@ export interface Store {
   save(doc: TournamentDoc, players: Player[], announce?: string[]): Promise<TournamentDoc>;
   remove(id: string): Promise<void>;
   renamePlayer(id: string, name: string): Promise<void>;
+  /** Site admin: players in no tournament and without an account (`dryRun` only lists them). Returns who goes. */
+  prunePlayers(dryRun: boolean): Promise<Player[]>;
   /** The tournament with this join code. Throws if there is none. */
   findByCode(code: string): Promise<{ id: string; name: string }>;
   /** Shared (Google Sheet) mode only: players join and report their own scores. */
@@ -315,6 +317,21 @@ export class LocalStore implements Store {
     const data = readLocal();
     data.players = upsertPlayers(data.players, [{ id, name }]);
     writeLocal(data);
+  }
+
+  async prunePlayers(dryRun: boolean) {
+    const data = readLocal();
+    const used = new Set<string>();
+    for (const t of data.tournaments) {
+      for (const e of t.entrants) used.add(e.id);
+      for (const r of Object.values(t.results)) used.add(r.p1), used.add(r.p2);
+    }
+    const gone = data.players.filter((p) => !used.has(p.id));
+    if (!dryRun && gone.length) {
+      data.players = data.players.filter((p) => used.has(p.id));
+      writeLocal(data);
+    }
+    return gone;
   }
 
   async findByCode(code: string) {
@@ -591,6 +608,11 @@ export class SheetsStore implements Store {
 
   async renamePlayer(id: string, name: string) {
     await this.call('POST', { action: 'renamePlayer', id, name });
+  }
+
+  async prunePlayers(dryRun: boolean) {
+    const r = await this.call<{ removed: Player[] }>('POST', { action: 'prunePlayers', dryRun });
+    return r.removed;
   }
 
   findByCode(code: string) {
