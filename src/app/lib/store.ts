@@ -612,7 +612,12 @@ export class SheetsStore implements Store {
       // your own (or, for staff, anyone's) profile even when it's private
       const token = savedAccount()?.token;
       if (this.canEditProfile(playerId)) {
-        return (await this.call<{ profile: Profile | null }>('POST', { action: 'readProfile', id: playerId, ...(token ? { token } : {}) })).profile;
+        try {
+          return (await this.call<{ profile: Profile | null }>('POST', { action: 'readProfile', id: playerId, ...(token ? { token } : {}) })).profile;
+        } catch (e) {
+          // a script from before private profiles: every profile is public there, read it the old way
+          if (!(e instanceof Error && e.message === UPDATE_SCRIPT)) throw e;
+        }
       }
       return (await this.call<{ profile: Profile | null }>('GET', { action: 'profile', id: playerId })).profile;
     } catch (e) {

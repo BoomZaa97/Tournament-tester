@@ -250,6 +250,8 @@
       app.notify('Saved');
     } catch (err) {
       error = errorText(err);
+      app.notify(error, 'error');
+      app.refreshAccount(); // the checkbox shows what's really saved
     } finally {
       busy = false;
     }
