@@ -171,6 +171,7 @@ function doPost(e) {
       if (body.action === 'suspend') return suspend(body, actor);
       if (body.action === 'audit') return readAudit(body, actor);
       if (body.action === 'site') return setSite(body, actor);
+      if (body.action === 'news') return setNews(body, actor);
       throw new Error('Unknown action: ' + body.action);
     } finally {
       lock.releaseLock();
@@ -2155,7 +2156,59 @@ function siteSettings() {
 }
 
 function publicSite() {
-  return { lockCreate: truthy(siteSettings().lockCreate) };
+  var site = siteSettings();
+  return { lockCreate: truthy(site.lockCreate), news: site.news || [] };
+}
+
+/**
+ * Announcements on the home page, newest first, kept in the SITE script property (so at most
+ * NEWS_MAX of them: a script property holds about 9 KB). Staff (moderators and up) post and remove them.
+ */
+var NEWS_MAX = 8;
+var NEWS_LINK = /^(https?:\/\/\S+|#\/\S*)$/;
+
+function setNews(body, actor) {
+  need(actor, 'tournaments');
+  var site = siteSettings();
+  var news = site.news || [];
+  if (body.remove) {
+    var gone = news.filter(function (n) {
+      return n.id === body.remove;
+    })[0];
+    if (!gone) throw new Error('That announcement is already gone');
+    news = news.filter(function (n) {
+      return n.id !== body.remove;
+    });
+    audit(actor, 'Removed announcement', gone.title, '');
+  } else {
+    var p = body.post || {};
+    var title = String(p.title || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    var text = String(p.text || '').replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 400);
+    var link = String(p.link || '').trim().slice(0, 300);
+    if (!title) throw new Error('Give the announcement a title');
+    if (link && !NEWS_LINK.test(link)) throw new Error('The link must start with https:// (or #/ for a page on this site)');
+    var item = { id: newId(), title: title, text: text, link: link, important: !!p.important, at: new Date().toISOString() };
+    if (p.id) {
+      // edit: keep its place and date
+      var found = false;
+      news = news.map(function (n) {
+        if (n.id !== p.id) return n;
+        found = true;
+        item.id = n.id;
+        item.at = n.at;
+        return item;
+      });
+      if (!found) throw new Error('That announcement is already gone');
+      audit(actor, 'Edited announcement', title, '');
+    } else {
+      news.unshift(item);
+      news = news.slice(0, NEWS_MAX);
+      audit(actor, 'Posted announcement', title, text.slice(0, 200));
+    }
+  }
+  site.news = news;
+  PropertiesService.getScriptProperties().setProperty('SITE', JSON.stringify(site));
+  return { site: publicSite() };
 }
 
 function setSite(body, actor) {

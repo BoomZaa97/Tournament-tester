@@ -6,20 +6,24 @@
   import { categoryOf, FORMAT_LABEL, STATUS_LABEL, summaryOf, tierOf } from '../lib/model';
   import type { Player, TournamentDoc } from '../lib/model';
   import { ranked, rankings } from '../lib/ranking';
+  import { siteSettings } from '../lib/store';
+  import type { NewsItem, NewsPost } from '../lib/store';
 
   const newestFirst = (list: TournamentDoc[]) => [...list].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   // what this device saw last time, until the sheet answers
   const seen = app.store.peekAll();
   let tournaments = $state<TournamentDoc[] | null>(seen ? newestFirst(seen.tournaments) : null);
   let players = $state<Player[]>(seen?.players ?? []);
+  let news = $state<NewsItem[]>(siteSettings().news ?? []);
   let error = $state('');
-  let filter = $state<'all' | 'running' | 'setup' | 'finished'>('all');
+  let filter = $state<'all' | 'running' | 'setup' | 'finished' | 'official'>('all');
 
   app.store
     .loadAll()
     .then((d) => {
       tournaments = newestFirst(d.tournaments);
       players = d.players;
+      news = siteSettings().news ?? [];
       app.noteVerified(d.players);
       error = '';
     })
@@ -33,15 +37,16 @@
   const matches = $derived.by(() => {
     const needle = q.trim().toLowerCase();
     return summaries
-      .filter((r) => filter === 'all' || r.status === filter)
+      .filter((r) => filter === 'all' || (filter === 'official' ? r.t.official === 'yes' : r.status === filter))
       .filter(({ t }) => !needle || [t.name, t.game, t.category, t.code].some((s) => s?.toLowerCase().includes(needle)));
   });
   const rows = $derived(matches.slice(0, shown));
 
-  // ---- front page: what's on now, sign-ups, champions, top players
-  const live = $derived(summaries.filter((r) => r.status === 'running').slice(0, 4));
-  const openSignup = $derived(summaries.filter((r) => r.status === 'setup' && r.t.signup).slice(0, 4));
-  const champions = $derived(summaries.filter((r) => r.champion).slice(0, 4));
+  // ---- front page
+  const live = $derived(summaries.filter((r) => r.status === 'running').slice(0, 5));
+  const openSignup = $derived(summaries.filter((r) => r.status === 'setup' && r.t.signup).slice(0, 5));
+  const results = $derived(summaries.filter((r) => r.champion).slice(0, 5));
+  const officials = $derived(summaries.filter((r) => r.t.official === 'yes'));
   const counts = $derived({
     tournaments: summaries.length,
     running: summaries.filter((r) => r.status === 'running').length,
@@ -63,10 +68,10 @@
   });
   const shared = app.store.kind === 'sheets';
 
+  // ---- join code
   let code = $state('');
   let joinError = $state('');
   let joining = $state(false);
-
   async function join() {
     if (!code.trim()) return;
     joining = true;
@@ -81,97 +86,199 @@
     }
   }
 
+  // ---- notices (staff write them)
+  const canPost = $derived((void app.account, app.store.can('tournaments')));
+  const NEWS_SHOWN = 3;
+  let allNews = $state(false);
+  let draft = $state<NewsPost | null>(null);
+  let posting = $state(false);
+  const blank = (): NewsPost => ({ title: '', text: '', link: '', important: false });
+  async function saveNews() {
+    if (!draft) return;
+    posting = true;
+    try {
+      news = (await app.store.setNews({ post: draft })).news ?? [];
+      app.notify(draft.id ? 'Notice updated' : 'Notice posted');
+      draft = null;
+    } catch (e) {
+      app.notify(errorText(e), 'error');
+    } finally {
+      posting = false;
+    }
+  }
+  async function removeNews(n: NewsItem) {
+    if (!confirm(`Remove the notice "${n.title}"?`)) return;
+    try {
+      news = (await app.store.setNews({ remove: n.id })).news ?? [];
+      app.notify('Notice removed');
+    } catch (e) {
+      app.notify(errorText(e), 'error');
+    }
+  }
+  const external = (link: string) => /^https?:/.test(link);
+
   // "only organizers can create" (site security setting); re-read when the account changes
   const canCreate = $derived((void app.account, app.store.can('create')));
 
+  function showOfficial() {
+    filter = 'official';
+    shown = PAGE;
+    requestAnimationFrame(() => document.getElementById('all-tournaments')?.scrollIntoView({ behavior: 'smooth' }));
+  }
+
+  const today = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   const date = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  const short = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  const plural = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`;
 </script>
 
 <div class="wrap page">
-  <section class="hero">
-    <div class="pitch">
-      <p class="kicker">Free brackets for any game</p>
-      <h1>Run the bracket.<br /><span class="hl">Fix any result.</span></h1>
-      <p class="lede">
-        Single and double elimination, round robin, Swiss, groups and finals. Players join with a code, report their own
-        scores and climb the rankings. Wrong score? Change it and everything after it updates.
+  <header class="mast">
+    <div class="title">
+      <p class="dateline num">{today}</p>
+      <h1>Tournaments &amp; results</h1>
+      <p class="sub">
+        {#if counts.tournaments}
+          {plural(counts.tournaments, 'tournament')}, {plural(counts.players, 'player')}{#if counts.running}, <b>{counts.running} on now</b>{/if}.
+        {:else}
+          Brackets, scores and rankings for any game.
+        {/if}
       </p>
-      <div class="ctas">
-        {#if canCreate}<a class="btn primary big" href="#/new">+ New tournament</a>{/if}
-        <a class="btn big" href="#/players">See the rankings</a>
-        {#if shared && !app.account}<a class="small acct" href="#/account">Log in or make an account</a>{/if}
-      </div>
     </div>
+    <div class="mast-actions">
+      {#if canCreate}<a class="btn primary" href="#/new">New tournament</a>{/if}
+      {#if shared && !app.account}<a class="btn" href="#/account">Log in</a>{/if}
+    </div>
+  </header>
 
-    <form class="join panel" onsubmit={(e) => { e.preventDefault(); join(); }}>
-      <label class="field">
-        <span class="jlabel">Got a join code?</span>
-        <span class="row">
-          <input bind:value={code} placeholder="e.g. K7QM2X" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+  <div class="front">
+    <!-- right column on wide screens; first on phones -->
+    <aside class="side top-side">
+      <form class="joinbox" onsubmit={(e) => { e.preventDefault(); join(); }}>
+        <label for="join-code" class="sec-label">Join with a code</label>
+        <div class="row">
+          <input id="join-code" bind:value={code} placeholder="K7QM2X" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" />
           <button class="primary" type="submit" disabled={!code.trim() || joining}>{joining ? 'Looking…' : 'Join'}</button>
-        </span>
-      </label>
-      {#if joinError}<p class="small err">{joinError}</p>{/if}
-      <p class="small muted">It's on the poster at the venue or in the organizer's message. You'll get a PIN to report your scores.</p>
-    </form>
-  </section>
+        </div>
+        {#if joinError}<p class="small err">{joinError}</p>{/if}
+        <p class="small muted">The 6-letter code is on the poster or in the organizer's message.</p>
+      </form>
 
-  {#if counts.tournaments}
-    <div class="stats" aria-label="On this site">
-      <div><b class="num">{counts.tournaments}</b><span>tournaments</span></div>
-      <div><b class="num">{counts.running}</b><span>live now</span></div>
-      <div><b class="num">{counts.players}</b><span>players</span></div>
-    </div>
-  {/if}
-
-  {#if live.length || openSignup.length || champions.length || top.length}
-    <div class="board">
-      {#if live.length}
-        <section class="box">
-          <h2><span class="dot" aria-hidden="true"></span>Live now</h2>
+      {#if news.length || canPost}
+        <section class="sec notices">
+          <div class="sec-head">
+            <h2>Notices</h2>
+            {#if canPost && !draft}<button class="small ghost" onclick={() => (draft = blank())}>+ Post</button>{/if}
+          </div>
+          {#if draft}
+            <form class="draft" onsubmit={(e) => { e.preventDefault(); saveNews(); }}>
+              <label class="field"><span>Title</span><input bind:value={draft.title} maxlength="80" required /></label>
+              <label class="field"><span>Text <span class="muted">(optional)</span></span><textarea bind:value={draft.text} maxlength="400" rows="3"></textarea></label>
+              <label class="field"><span>Link <span class="muted">(optional: https://… or #/t/…)</span></span><input bind:value={draft.link} maxlength="300" /></label>
+              <label class="check small"><input type="checkbox" bind:checked={draft.important} /> Important (shown in orange)</label>
+              <div class="row">
+                <button class="primary small" type="submit" disabled={posting || !draft.title.trim()}>{posting ? 'Saving…' : draft.id ? 'Save' : 'Post'}</button>
+                <button class="ghost small" type="button" onclick={() => (draft = null)} disabled={posting}>Cancel</button>
+              </div>
+            </form>
+          {/if}
+          {#if !news.length && !draft}<p class="small muted none">No notices. Staff can post news here: dates, rule changes, results.</p>{/if}
           <ul>
+            {#each allNews ? news : news.slice(0, NEWS_SHOWN) as n (n.id)}
+              <li class:important={n.important}>
+                <span class="when num">{short(n.at)}</span>
+                <div class="what">
+                  <b>{n.title}</b>
+                  {#if n.text}<p>{n.text}</p>{/if}
+                  {#if n.link}
+                    <a class="small" href={n.link} target={external(n.link) ? '_blank' : undefined} rel={external(n.link) ? 'noopener noreferrer' : undefined}>
+                      {external(n.link) ? 'Open link' : 'Go there'} →
+                    </a>
+                  {/if}
+                  {#if canPost}
+                    <span class="staff">
+                      <button class="link small" onclick={() => (draft = { id: n.id, title: n.title, text: n.text, link: n.link, important: n.important })}>Edit</button>
+                      <button class="link small danger" onclick={() => removeNews(n)}>Remove</button>
+                    </span>
+                  {/if}
+                </div>
+              </li>
+            {/each}
+          </ul>
+          {#if news.length > NEWS_SHOWN}
+            <button class="link small" onclick={() => (allNews = !allNews)}>{allNews ? 'Show fewer' : `All ${news.length} notices`}</button>
+          {/if}
+        </section>
+      {/if}
+    </aside>
+
+    <div class="main">
+      {#if live.length}
+        <section class="sec">
+          <h2><span class="dot" aria-hidden="true"></span>On now</h2>
+          <ul class="lines">
             {#each live as r (r.t.id)}
               <li>
-                <a href="#/t/{r.t.id}">{r.t.name}</a>
-                <span class="small muted">{r.t.game || FORMAT_LABEL[r.t.format]} · {r.played} of {r.total} matches</span>
-                <span class="bar" aria-hidden="true"><span style="width: {r.total ? (100 * r.played) / r.total : 0}%"></span></span>
-              </li>
-            {/each}
-          </ul>
-        </section>
-      {/if}
-      {#if openSignup.length}
-        <section class="box">
-          <h2>Sign-up open</h2>
-          <ul>
-            {#each openSignup as r (r.t.id)}
-              <li class="withbtn">
-                <a href="#/j/{r.t.id}">{r.t.name}</a>
-                <span class="small muted">
-                  {[r.t.game, r.t.entrants.length + (r.t.maxPlayers ? ' / ' + r.t.maxPlayers : '') + ' joined'].filter(Boolean).join(' · ')}
+                <a class="tname" href="#/t/{r.t.id}">{r.t.name}</a>
+                <span class="small muted">{[r.t.game, FORMAT_LABEL[r.t.format]].filter(Boolean).join(' · ')}</span>
+                <span class="prog small num">
+                  <span class="bar" aria-hidden="true"><span style="width: {r.total ? (100 * r.played) / r.total : 0}%"></span></span>
+                  {r.played}/{r.total}
                 </span>
-                <a class="btn small joinbtn" href="#/j/{r.t.id}">Join</a>
               </li>
             {/each}
           </ul>
         </section>
       {/if}
-      {#if champions.length}
-        <section class="box">
-          <h2>Latest champions</h2>
-          <ul>
-            {#each champions as r (r.t.id)}
+
+      {#if openSignup.length}
+        <section class="sec">
+          <h2>Taking sign-ups</h2>
+          <ul class="lines">
+            {#each openSignup as r (r.t.id)}
               <li>
-                <b class="champ">{r.champion}</b>
-                <span class="small muted">won <a href="#/t/{r.t.id}">{r.t.name}</a></span>
+                <a class="tname" href="#/j/{r.t.id}">{r.t.name}</a>
+                <span class="small muted">
+                  {[r.t.game, `${r.t.entrants.length}${r.t.maxPlayers ? ` of ${r.t.maxPlayers}` : ''} signed up`].filter(Boolean).join(' · ')}
+                </span>
+                <a class="btn small" href="#/j/{r.t.id}">Sign up</a>
               </li>
             {/each}
           </ul>
         </section>
       {/if}
+
+      {#if results.length}
+        <section class="sec">
+          <h2>Latest results</h2>
+          <ul class="lines">
+            {#each results as r (r.t.id)}
+              <li>
+                <span><b class="champ">{r.champion}</b> won <a href="#/t/{r.t.id}">{r.t.name}</a></span>
+                <span class="small muted">{[r.t.game, plural(r.t.entrants.length, 'player'), short(r.t.updatedAt)].filter(Boolean).join(' · ')}</span>
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
+
+      {#if !summaries.length && tournaments !== null}
+        <section class="sec start">
+          <h2>Nothing here yet</h2>
+          <p>
+            <b>Organizers:</b> make a tournament, pick the format and share its join code. Players can sign up themselves.
+            Results can be changed at any time and the bracket follows.
+          </p>
+          <p><b>Players:</b> type the code from the organizer in the box, sign up and report your own scores with your PIN.</p>
+          {#if canCreate}<a class="btn primary" href="#/new">Make the first tournament</a>{/if}
+        </section>
+      {/if}
+    </div>
+
+    <aside class="side low-side">
       {#if top.length}
-        <section class="box">
-          <h2>Top players{#if topGame}<span class="muted"> · {topGame}</span>{/if}</h2>
+        <section class="sec">
+          <h2>Top players{#if topGame}<span class="g">&nbsp;· {topGame}</span>{/if}</h2>
           <ol class="top">
             {#each top as r (r.player.id)}
               <li>
@@ -181,27 +288,33 @@
               </li>
             {/each}
           </ol>
-          <a class="small" href={topGame ? `#/players/${encodeURIComponent(topGame)}` : '#/players'}>Full rankings →</a>
+          <a class="small more-link" href={topGame ? `#/players/${encodeURIComponent(topGame)}` : '#/players'}>Full rankings →</a>
         </section>
       {/if}
+
+      {#if officials.length}
+        <section class="sec">
+          <h2>Official</h2>
+          <ul class="lines tight">
+            {#each officials.slice(0, 4) as r (r.t.id)}
+              <li>
+                <a href="#/t/{r.t.id}">{r.t.name}</a>
+                <span class="small muted">{[r.t.game, STATUS_LABEL[r.status]].filter(Boolean).join(' · ')}</span>
+              </li>
+            {/each}
+          </ul>
+          <p class="small muted">Checked by staff; these count towards the confirmed rating.</p>
+          {#if officials.length > 4}<button class="link small" onclick={showOfficial}>All {officials.length} →</button>{/if}
+        </section>
+      {/if}
+    </aside>
+  </div>
+
+  {#if summaries.length || error || tournaments === null}
+    <div class="head">
+      <h2 class="listhead" id="all-tournaments">All tournaments</h2>
     </div>
   {/if}
-
-  {#if (tournaments?.length ?? 0) < 6}
-    <section class="how">
-      <h2>How it works</h2>
-      <ol>
-        <li><b>Make a tournament.</b> Pick the format and scoring. Adding players is optional.</li>
-        <li><b>Share the join code.</b> Print the QR poster or send the link. Players sign up and get a PIN.</li>
-        <li><b>Play.</b> Players report scores, opponents confirm, and the bracket fills in by itself.</li>
-        <li><b>Fix anything.</b> Change a result, a player or even the format; every change can be undone.</li>
-      </ol>
-    </section>
-  {/if}
-
-  <div class="head">
-    <h2 class="listhead">All tournaments</h2>
-  </div>
 
   {#if app.store.kind === 'local'}
     <p class="notice small">
@@ -217,16 +330,14 @@
     <p class="notice">Couldn't load tournaments: {error}</p>
   {:else if tournaments === null}
     <p class="muted">Loading…</p>
-  {:else if tournaments.length === 0}
-    <div class="empty">
-      <p>No tournaments yet. Be the first.</p>
-      {#if canCreate}<a class="btn primary" href="#/new">Make a bracket</a>{/if}
-    </div>
-  {:else}
+  {:else if tournaments.length}
     <div class="filters" role="tablist">
       {#each [['all', 'All'], ['running', 'In progress'], ['setup', 'Not started'], ['finished', 'Finished']] as [k, label]}
         <button class="ghost small" class:on={filter === k} onclick={() => ((filter = k as typeof filter), (shown = PAGE))}>{label}</button>
       {/each}
+      {#if officials.length}
+        <button class="ghost small" class:on={filter === 'official'} onclick={() => ((filter = 'official'), (shown = PAGE))}>Official</button>
+      {/if}
       {#if tournaments.length > 8}
         <input class="search" type="search" placeholder="Search name, game or code" bind:value={q} oninput={() => (shown = PAGE)} aria-label="Search tournaments" />
       {/if}
@@ -270,52 +381,87 @@
 </div>
 
 <style>
-  .page { padding-top: 28px; }
-  .hero { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 32px; align-items: center; padding-bottom: 28px; border-bottom: 2px solid var(--ink); }
-  .kicker { margin: 0 0 6px; font: 600 14px var(--font-cond); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
-  .hero h1 { font-size: clamp(40px, 7vw, 68px); line-height: 0.95; margin: 0 0 14px; }
-  .hl { color: var(--accent); }
-  .lede { margin: 0 0 20px; max-width: 560px; font-size: 17px; color: var(--ink-2); }
-  .ctas { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .big { min-height: 48px; padding: 0 20px; font-size: 16px; display: inline-flex; align-items: center; }
-  .acct { margin-left: 4px; }
-  .join.panel { padding: 18px; display: grid; gap: 8px; border-color: var(--ink); }
-  .join.panel p { margin: 0; }
-  .jlabel { font: 700 20px var(--font-cond); text-transform: uppercase; letter-spacing: 0.02em; }
-  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--line); margin-bottom: 26px; }
-  .stats > div { display: flex; align-items: baseline; gap: 8px; padding: 12px 4px; }
-  .stats b { font: 700 30px var(--font-cond); }
-  .stats span { color: var(--muted); font-size: 14px; }
-  .board { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px 24px; margin: 26px 0 30px; }
-  .box h2 { display: flex; align-items: center; gap: 8px; font-size: 20px; margin: 0 0 6px; padding-bottom: 6px; border-bottom: 2px solid var(--ink); }
-  .box ul, .box ol { list-style: none; margin: 0 0 8px; padding: 0; }
-  .box li { display: grid; gap: 2px; padding: 9px 0; border-bottom: 1px solid var(--line); position: relative; }
-  .box li a:not(.btn) { font-weight: 600; text-decoration: none; }
-  .box li a:not(.btn):hover { text-decoration: underline; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
-  .withbtn { padding-right: 64px !important; }
-  .joinbtn { position: absolute; right: 0; top: 50%; transform: translateY(-50%); min-height: 30px; padding: 0 10px; }
-  .champ { font: 700 18px var(--font-cond); text-transform: uppercase; overflow-wrap: anywhere; }
-  .top li { grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+  .page { padding-top: 24px; }
+
+  /* masthead: like the top of a printed results sheet */
+  .mast { display: flex; justify-content: space-between; align-items: end; gap: 12px 24px; flex-wrap: wrap; padding-bottom: 12px; border-bottom: 3px solid var(--ink); }
+  .dateline { margin: 0 0 2px; font: 600 13px var(--font-cond); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .mast h1 { margin: 0; font-size: clamp(32px, 5vw, 46px); line-height: 1; }
+  .sub { margin: 6px 0 0; color: var(--ink-2); }
+  .sub b { color: var(--accent); font-weight: 600; }
+  .mast-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* main on the left; join + notices, then rankings, on the right */
+  .front { display: grid; grid-template-columns: minmax(0, 1fr) 320px; column-gap: 36px; margin: 22px 0 34px; }
+  .main { grid-column: 1; grid-row: 1 / span 2; min-width: 0; display: grid; gap: 22px; align-content: start; }
+  .top-side { grid-column: 2; grid-row: 1; }
+  .low-side { grid-column: 2; grid-row: 2; margin-top: 22px; }
+  .side { display: grid; gap: 22px; align-content: start; min-width: 0; }
+
+  .sec h2, .sec-label {
+    display: flex; align-items: center; gap: 8px; margin: 0; padding: 6px 0;
+    font: 700 15px var(--font-cond); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink);
+  }
+  .sec h2 { border-bottom: 1px solid var(--ink); }
+  .sec h2 .g { color: var(--muted); letter-spacing: 0.04em; }
+  .sec-head { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--ink); }
+  .sec-head h2 { border-bottom: 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+
+  .joinbox { display: grid; gap: 6px; padding: 12px 14px 14px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--card); }
+  .joinbox .sec-label { padding: 0; }
+  .joinbox p { margin: 0; }
+  .joinbox .row { flex-wrap: nowrap; }
+  .joinbox input { flex: 1; min-width: 0; font: 700 20px var(--font-cond); letter-spacing: 0.16em; text-transform: uppercase; }
+  .joinbox input::placeholder { color: var(--line-strong); }
+
+  .lines, .notices ul, .top { list-style: none; margin: 0; padding: 0; }
+  .lines li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 14px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .lines li > :nth-child(2) { grid-column: 1; }
+  .lines li > :nth-child(3) { grid-column: 2; grid-row: 1 / span 2; }
+  .lines.tight li { padding: 7px 0; }
+  .lines a:not(.btn) { font-weight: 600; text-decoration: none; }
+  .lines a:not(.btn):hover { text-decoration: underline; }
+  .lines a.tname { font: 700 19px/1.15 var(--font-cond); text-transform: uppercase; }
+  .champ { font: 700 17px var(--font-cond); text-transform: uppercase; }
+  .prog { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); }
+
+  .notices li { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .notices li.important { box-shadow: inset 3px 0 0 var(--accent); padding-left: 10px; }
+  .notices li.important b { color: var(--accent); }
+  .when { font: 600 14px var(--font-cond); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); padding-top: 1px; }
+  .what { display: grid; gap: 3px; justify-items: start; min-width: 0; }
+  .what p { margin: 0; white-space: pre-line; color: var(--ink-2); font-size: 15px; overflow-wrap: anywhere; }
+  .what b { overflow-wrap: anywhere; }
+  .staff { display: flex; gap: 12px; }
+  .none { margin: 10px 0 0; }
+  .draft { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  button.link { background: none; border: 0; padding: 0; min-height: 0; color: var(--ink); text-decoration: underline; font-weight: 400; cursor: pointer; justify-self: start; }
+  button.link.danger { color: var(--danger); }
+  .notices > button.link { margin-top: 8px; }
+
+  .top li { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); }
   .top .pl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .top .rk { font: 700 18px var(--font-cond); color: var(--muted); }
+  .top .pl a { font-weight: 600; text-decoration: none; }
+  .top .rk { font: 700 17px var(--font-cond); color: var(--muted); }
   .top li:first-child .rk { color: var(--accent); }
   .top .rt { font-weight: 600; }
-  .how { margin: 26px 0 30px; }
-  .how h2 { font-size: 20px; margin: 0 0 10px; }
-  .how ol { margin: 0; padding: 0; list-style: none; counter-reset: step; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px 20px; }
-  .how li { counter-increment: step; padding-top: 8px; border-top: 1px solid var(--line-strong); color: var(--ink-2); font-size: 15px; }
-  .how li::before { content: counter(step, decimal-leading-zero); display: block; font: 700 26px var(--font-cond); color: var(--accent); }
-  .how b { color: var(--ink); }
-  .listhead { margin: 0; font-size: 26px; }
-  @media (max-width: 760px) {
-    .hero { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .more-link { display: inline-block; margin-top: 8px; }
+  .sec > p.small { margin: 8px 0 4px; }
+
+  .start p { margin: 10px 0; max-width: 560px; color: var(--ink-2); }
+  .start b { color: var(--ink); }
+
+  @media (max-width: 860px) {
+    .front { grid-template-columns: minmax(0, 1fr); }
+    .main, .top-side, .low-side { grid-column: 1; grid-row: auto; }
+    .main:not(:empty) { margin-top: 22px; }
   }
-  @media (max-width: 520px) {
-    .stats b { font-size: 24px; }
-    .stats > div { flex-direction: column; gap: 0; }
-  }
+
+  /* all tournaments */
   .head { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .listhead { margin: 0; font-size: 26px; }
   .filters { display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
   .filters .on { border-color: var(--ink); }
   .search { margin-left: auto; flex: 0 1 260px; min-width: 0; }
@@ -345,10 +491,7 @@
   }
   .s-running { border-color: var(--accent); color: var(--accent); }
   .s-finished { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-  .none { padding: 14px 4px; }
+  .list .none { padding: 14px 4px; }
   .notice { margin-bottom: 20px; }
-  .join .row { flex-wrap: nowrap; }
-  .join input { flex: 1; min-width: 0; font: 700 18px var(--font-cond); letter-spacing: 0.14em; text-transform: uppercase; }
-  .join input::placeholder { letter-spacing: 0.05em; font-weight: 500; text-transform: none; }
-  .err { color: var(--danger); margin: 6px 0 0; }
+  .err { color: var(--danger); margin: 0; }
 </style>

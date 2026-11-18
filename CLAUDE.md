@@ -93,8 +93,15 @@ Made because Challonge made fixing wrong results hard.
   looks like an age group (`DIVISION_LIKE`: Open, U18…) counts as the division until the tournament is edited.
   Rankings filter by both; with no filters, verified players without matches are listed as not ranked yet.
 - Create: sign-up is on by default in shared mode and no entrants are required (the page waits for 2).
-- Home (`routes/Home.svelte`, `#/`): hero + join-code box, site counts, Live now / Sign-up open / Latest champions /
-  Top players boxes (only those with content), "How it works" while there are < 6 tournaments, then All tournaments.
+- Home (`routes/Home.svelte`, `#/`): plain "results sheet" front page, no marketing hero / step lists / stat cards.
+  Masthead (date line, "Tournaments & results", counts, New tournament). Left: On now, Taking sign-ups, Latest results
+  (or a short "Nothing here yet" text). Right: join-code box, Notices, Top players (most played game), Official. Then All
+  tournaments (filter chips incl. Official). Phones: join + notices first.
+- Notices (announcements): `site.news` in the SITE script property (≤ 8, newest first; title ≤ 80, text ≤ 400, link
+  https:// or #/…, `important`). Code.gs `news` action (perm 'tournaments', audited): `post` (with `id` = edit) or
+  `remove`. Sent with `GET all` as `site.news`; `store.setNews`; staff post/edit/remove inline on the home page.
+- Footer (App.svelte, not on the poster): about line, Players / Organizers links, © year, back to top. Its link lists are
+  `div.links`, not `nav` (App's header `nav a` styles would apply).
 - Player page stats start with the overall rating (all games) and place.
 - Settings are split: `#/settings` (`routes/Settings.svelte`, everyone) = this device's look (`lib/prefs.ts`, `tt.prefs.v1`:
   theme auto/light/dark → `data-theme` on <html>, text size → `data-size=large` = `zoom: 1.12` on body; Bracket divides its

@@ -71,6 +71,7 @@ npm run build     # build the site into dist/
 - [x] Rate-limit PIN guesses
 - [x] Rankings per game (rating, confirmed rating from official tournaments, points; majors / semi-majors), player profiles, verified names
 - [x] Official tournaments: organizers ask, staff approve
+- [x] Home page notices (announcements) and a site footer
 - [x] Removed players keep their PIN if they're added back
 - [x] Discord announcements
 - [x] Import from Challonge

@@ -29,6 +29,10 @@
   // bring a logged-in account's PINs and organizer keys onto this device
   app.syncAccount();
   watchForUpdates();
+  const canCreate = $derived((void app.account, app.store.can('create')));
+  // the door poster is printed: no footer
+  const bare = $derived(section === 't' && app.path[2] === 'poster');
+  const year = new Date().getFullYear();
 </script>
 
 <header class="top no-print">
@@ -88,6 +92,35 @@
     {/if}
   {/key}
 </main>
+
+{#if !bare}
+  <footer class="foot no-print">
+    <div class="wrap">
+      <div class="cols">
+        <div class="about">
+          <a class="brand small-brand" href="#/"><span class="mark" aria-hidden="true"></span><span>Tournament Tester</span></a>
+          <p>Brackets and results for any game, solo or teams. Wrong score? Fix it, and everything after it updates.</p>
+        </div>
+        <div class="links" role="navigation" aria-label="Players">
+          <h2>Players</h2>
+          <a href="#/">Tournaments</a>
+          <a href="#/players">Rankings</a>
+          <a href={app.account ? `#/p/${app.account.playerId}` : '#/account'}>{app.account ? 'Your profile' : 'Log in or sign up'}</a>
+        </div>
+        <div class="links" role="navigation" aria-label="Organizers">
+          <h2>Organizers</h2>
+          {#if canCreate}<a href="#/new">New tournament</a>{/if}
+          <a href="#/settings">Settings</a>
+          {#if staff}<a href="#/admin">Admin</a>{/if}
+        </div>
+      </div>
+      <div class="legal">
+        <span>© {year} Tournament Tester · Free to use</span>
+        <button class="totop" onclick={() => scrollTo({ top: 0, behavior: 'smooth' })}>Back to top ↑</button>
+      </div>
+    </div>
+  </footer>
+{/if}
 
 {#if app.toast}
   <div class="toast {app.toast.kind}" role="status">{app.toast.text}</div>
@@ -172,6 +205,23 @@
   .updated { background: var(--ink); color: var(--paper); padding: 8px 0; font-size: 15px; }
   .updated .row { justify-content: space-between; flex-wrap: wrap; gap: 8px; }
   .updated button { background: var(--paper); color: var(--ink); border-color: var(--paper); }
+  .foot { margin-top: 56px; border-top: 3px solid var(--ink); padding: 24px 0 28px; font-size: 15px; }
+  .cols { display: grid; grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr)); gap: 20px 32px; }
+  .about p { margin: 10px 0 0; max-width: 380px; color: var(--ink-2); }
+  .small-brand { font-size: 18px; }
+  .foot .links { display: grid; gap: 6px; align-content: start; }
+  .foot h2 { font: 700 13px var(--font-cond); letter-spacing: 0.1em; color: var(--muted); margin-bottom: 2px; }
+  .foot .links a { text-decoration: none; color: var(--ink); }
+  .foot .links a:hover { text-decoration: underline; }
+  .legal {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px 16px; flex-wrap: wrap;
+    margin-top: 22px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px;
+  }
+  .totop { background: none; border: 0; padding: 0; min-height: 0; color: var(--muted); font-size: 13px; text-decoration: underline; cursor: pointer; }
+  @media (max-width: 600px) {
+    .cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .about { grid-column: 1 / -1; }
+  }
   .viewas { background: var(--accent); color: #fff; padding: 8px 0; font-size: 15px; }
   .viewas .row { justify-content: space-between; flex-wrap: wrap; gap: 8px; }
   .viewas button { background: #fff; color: #16181d; border-color: #fff; }

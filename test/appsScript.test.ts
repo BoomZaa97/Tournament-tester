@@ -551,6 +551,37 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.post({ action: 'requestOfficial', id: 'o1', orgKey: ORG }).official).toBe('pending');
     });
 
+    it('announcements: staff post, edit and remove them; everyone reads them with the site settings', () => {
+      const g = fakeGoogle();
+      const joe = reg(g, { username: 'joe', name: 'Joe' });
+      const mod = reg(g, { username: 'mod', name: 'Mod' });
+      g.post({ action: 'setRole', key: 'secret', playerId: mod.account.playerId, role: 'moderator' });
+      expect(g.post({ action: 'news', post: { title: 'Hi' } }).error).toMatch(/staff/);
+      expect(g.post({ action: 'news', auth: joe.token, post: { title: 'Hi' } }).error).toMatch(/staff/);
+      expect(g.post({ action: 'news', auth: mod.token, post: { title: '  ' } }).error).toMatch(/title/);
+      expect(g.post({ action: 'news', auth: mod.token, post: { title: 'X', link: 'javascript:alert(1)' } }).error).toMatch(/link/);
+      const first = g.post({ action: 'news', auth: mod.token, post: { title: ' Season  2 ', text: 'Starts Friday', link: '#/players', important: true } });
+      expect(first.error).toBeUndefined();
+      expect(first.site.news[0]).toMatchObject({ title: 'Season 2', text: 'Starts Friday', link: '#/players', important: true });
+      const id = first.site.news[0].id;
+      for (let i = 0; i < 9; i++) g.post({ action: 'news', key: 'secret', post: { title: 'N' + i } });
+      let news = g.get({ action: 'all', lite: '1' }).site.news;
+      expect(news).toHaveLength(8);
+      expect(news[0].title).toBe('N8'); // newest first, oldest dropped
+      expect(news.some((n: { id: string }) => n.id === id)).toBe(false);
+      // edit keeps the place; remove
+      const keep = news[3];
+      news = g.post({ action: 'news', auth: mod.token, post: { id: keep.id, title: 'Fixed' } }).site.news;
+      expect(news[3]).toMatchObject({ id: keep.id, title: 'Fixed', at: keep.at });
+      news = g.post({ action: 'news', auth: mod.token, remove: keep.id }).site.news;
+      expect(news).toHaveLength(7);
+      expect(g.post({ action: 'news', auth: mod.token, remove: keep.id }).error).toMatch(/gone/);
+      expect(g.post({ action: 'audit', key: 'secret' }).audit[0]).toMatchObject({ action: 'Removed announcement', target: 'Fixed' });
+      // other site settings are kept
+      g.post({ action: 'site', key: 'secret', lockCreate: true });
+      expect(g.get({ action: 'all', lite: '1' }).site).toMatchObject({ lockCreate: true, news: expect.any(Array) });
+    });
+
     it('roles: the owner makes admins, admins make moderators and organizers; nobody acts above their rank', () => {
       const g = fakeGoogle();
       const boss = reg(g, { username: 'boss', name: 'Boss' });
@@ -636,8 +667,8 @@ describe('Google Sheets backend (Code.gs)', () => {
       g.post({ action: 'setRole', key: 'secret', playerId: org.account.playerId, role: 'organizer' });
       create(g); // made before the lock
       expect(g.post({ action: 'site', auth: org.token, lockCreate: true }).error).toBeDefined();
-      expect(g.post({ action: 'site', key: 'secret', lockCreate: true })).toEqual({ site: { lockCreate: true } });
-      expect(g.get({ action: 'all', lite: '1' }).site).toEqual({ lockCreate: true });
+      expect(g.post({ action: 'site', key: 'secret', lockCreate: true })).toEqual({ site: { lockCreate: true, news: [] } });
+      expect(g.get({ action: 'all', lite: '1' }).site).toEqual({ lockCreate: true, news: [] });
       const fresh = { ...open, id: 'n1', name: 'New' };
       expect(g.post({ action: 'save', orgKey: ORG, tournament: fresh, players: fresh.entrants }).error).toMatch(/Only organizers/);
       expect(g.post({ action: 'save', orgKey: ORG, auth: org.token, tournament: fresh, players: fresh.entrants }).error).toBeUndefined();

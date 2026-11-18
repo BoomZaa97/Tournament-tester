@@ -34,7 +34,20 @@ export interface AllData {
 export interface SiteSettings {
   /** Only organizers and staff may create tournaments. */
   lockCreate: boolean;
+  /** Announcements on the home page, newest first (staff post them). */
+  news?: NewsItem[];
 }
+
+export interface NewsItem {
+  id: string;
+  title: string;
+  text: string;
+  /** https://… or a page on this site (#/…). */
+  link: string;
+  important: boolean;
+  at: string;
+}
+export type NewsPost = Pick<NewsItem, 'title' | 'text' | 'link' | 'important'> & { id?: string };
 
 /**
  * Roles. owner = the admin key on this device; the rest are given to accounts by the site admin.
@@ -83,6 +96,7 @@ export function siteSettings(): SiteSettings {
     return { lockCreate: false };
   }
 }
+const newsId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 function rememberSite(site: SiteSettings | undefined) {
   if (!site) return;
   try {
@@ -191,6 +205,8 @@ export interface Store {
   logoutAll?(playerId?: string): Promise<void>;
   audit?(limit?: number): Promise<AuditRow[]>;
   setSite?(site: Partial<SiteSettings>): Promise<SiteSettings>;
+  /** Staff: post (or, with an id, edit) an announcement, or remove one. */
+  setNews(change: { post: NewsPost } | { remove: string }): Promise<SiteSettings>;
   /** The logged-in player's privacy choices. */
   setPrivacy?(p: { privateProfile?: boolean; unranked?: boolean }): Promise<Account>;
 }
@@ -473,6 +489,26 @@ export class LocalStore implements Store {
     data.players = upsertPlayers(data.players, players);
     writeLocal(data);
     return saved;
+  }
+
+  async setNews(change: { post: NewsPost } | { remove: string }) {
+    const site = siteSettings();
+    let news = site.news ?? [];
+    if ('remove' in change) {
+      news = news.filter((n) => n.id !== change.remove);
+    } else {
+      const p = change.post;
+      const title = p.title.replace(/\s+/g, ' ').trim().slice(0, 80);
+      if (!title) throw new Error('Give the announcement a title');
+      const link = p.link.trim();
+      if (link && !/^(https?:\/\/\S+|#\/\S*)$/.test(link)) throw new Error('The link must start with https:// (or #/ for a page on this site)');
+      const item: NewsItem = { id: p.id ?? newsId(), title, text: p.text.trim().slice(0, 400), link, important: p.important, at: new Date().toISOString() };
+      const old = p.id ? news.find((n) => n.id === p.id) : undefined;
+      news = old ? news.map((n) => (n.id === p.id ? { ...item, at: old.at } : n)) : [item, ...news].slice(0, 8);
+    }
+    const next = { ...site, news };
+    rememberSite(next);
+    return next;
   }
 
   async setOfficial(id: string, status: Official, note: string) {
@@ -854,6 +890,12 @@ export class SheetsStore implements Store {
 
   async audit(limit = 300) {
     return (await this.call<{ audit: AuditRow[] }>('POST', { action: 'audit', limit })).audit;
+  }
+
+  async setNews(change: { post: NewsPost } | { remove: string }) {
+    const r = await this.call<{ site: SiteSettings }>('POST', { action: 'news', ...change });
+    rememberSite(r.site);
+    return r.site;
   }
 
   async setSite(site: Partial<SiteSettings>) {
