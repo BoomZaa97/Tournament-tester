@@ -1,7 +1,8 @@
 <script lang="ts">
   import { app, errorText } from '../lib/app.svelte';
-  import { forgetAccount, orgKeyIds } from '../lib/store';
+  import { ROLE_LABEL, TWO_STEP, forgetAccount, orgKeyIds } from '../lib/store';
   import type { TournamentDoc } from '../lib/model';
+  import QrCode from '../components/QrCode.svelte';
 
   interface Props {
     /** Where to go after logging in (e.g. "j/abc123"), from #/account/<path>. */
@@ -23,6 +24,9 @@
   /** A recovery code to show once (after sign-up, recovery, or making a new one). */
   let shownCode = $state('');
   let savedIt = $state(false);
+  /** Two-step login is on for this account: the login form asks for the code. */
+  let needCode = $state(false);
+  let loginCode = $state('');
 
   async function submit(e: SubmitEvent) {
     e.preventDefault();
@@ -32,7 +36,7 @@
       const claim = showClaim && claimPin.trim() ? { code: claimCode.trim(), pin: claimPin.trim() } : undefined;
       const a =
         mode === 'login'
-          ? await app.store.login!(username.trim(), password)
+          ? await app.store.login!(username.trim(), password, needCode ? loginCode.trim() : undefined)
           : mode === 'recover'
             ? await app.store.recover!(username.trim(), recoveryInput, password)
             : await app.store.register!({ username: username.trim(), password, name: name.trim(), claim });
@@ -40,8 +44,11 @@
       app.refreshAccount();
       password = '';
       recoveryInput = '';
+      needCode = false;
+      loginCode = '';
+      const offNote = 'twoStepOff' in a && a.twoStepOff ? ' Two-step login is off now: turn it on again below.' : '';
       app.notify(
-        mode === 'login' ? `Logged in as ${a.name}` : mode === 'recover' ? 'New password set. Other devices are logged out.' : `Welcome, ${a.name}`,
+        mode === 'login' ? `Logged in as ${a.name}` : mode === 'recover' ? 'New password set. Other devices are logged out.' + offNote : `Welcome, ${a.name}`,
       );
       if (code) {
         // show it before going anywhere: it's the only way back in without the site admin
@@ -52,6 +59,11 @@
       error = errorText(err);
       // name used by a player who played before: offer the join code + PIN fields
       if (/join code and your PIN/.test(error)) showClaim = true;
+      // two-step login: the password was right, now the code
+      if (error === TWO_STEP) {
+        needCode = true;
+        error = '';
+      }
     } finally {
       busy = false;
     }
@@ -156,6 +168,113 @@
     if (next) app.go(next);
   }
 
+  // ---- two-step login
+  let tsPass = $state('');
+  let tsSetup = $state<{ secret: string; uri: string } | null>(null);
+  let tsCode = $state('');
+  let tsOff = $state(false);
+
+  async function startTwoStep(e: SubmitEvent) {
+    e.preventDefault();
+    busy = true;
+    error = '';
+    try {
+      tsSetup = await app.store.twoStepSetup!(tsPass);
+      tsPass = '';
+      tsCode = '';
+    } catch (err) {
+      error = errorText(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function finishTwoStep(e: SubmitEvent) {
+    e.preventDefault();
+    busy = true;
+    error = '';
+    try {
+      await app.store.twoStepOn!(tsCode.trim());
+      tsSetup = null;
+      tsCode = '';
+      app.refreshAccount();
+      app.notify('Two-step login is on');
+    } catch (err) {
+      error = errorText(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function stopTwoStep(e: SubmitEvent) {
+    e.preventDefault();
+    busy = true;
+    error = '';
+    try {
+      await app.store.twoStepOff!(tsPass, tsCode.trim());
+      tsPass = tsCode = '';
+      tsOff = false;
+      app.refreshAccount();
+      app.notify('Two-step login is off');
+    } catch (err) {
+      error = errorText(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  // ---- privacy and sessions
+  async function setPrivacy(p: { privateProfile?: boolean; unranked?: boolean }) {
+    busy = true;
+    error = '';
+    try {
+      await app.store.setPrivacy!(p);
+      app.refreshAccount();
+      app.notify('Saved');
+    } catch (err) {
+      error = errorText(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function logOutOthers() {
+    if (!confirm('Log out on every other phone and computer? This device stays logged in.')) return;
+    busy = true;
+    error = '';
+    try {
+      await app.store.logoutAll!();
+      app.notify('Logged out everywhere else');
+    } catch (err) {
+      error = errorText(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  // ---- delete account
+  let delOpen = $state(false);
+  let delPass = $state('');
+  let delCode = $state('');
+  async function deleteMe(e: SubmitEvent) {
+    e.preventDefault();
+    if (!confirm('Delete your account for good? This can\'t be undone.')) return;
+    busy = true;
+    error = '';
+    try {
+      const r = await app.store.deleteMe!(delPass, delCode.trim() || undefined);
+      delPass = delCode = '';
+      delOpen = false;
+      mode = 'login';
+      app.refreshAccount();
+      app.notify(r.playerRemoved ? 'Account deleted' : 'Account deleted. Your past results stay under your name.');
+    } catch (err) {
+      error = errorText(err);
+    } finally {
+      busy = false;
+    }
+  }
+
   function logOut() {
     forgetAccount();
     mode = 'login';
@@ -178,7 +297,7 @@
           (a note, a photo, a password manager).
         </p>
         <p class="code num">{shownCode}</p>
-        <div class="row wrap">
+        <div class="row flow">
           <button class="small" onclick={copyCode}>Copy</button>
           <button class="small" onclick={downloadCode}>Download as a file</button>
         </div>
@@ -189,7 +308,10 @@
 
     <p class="label">Logged in</p>
     <h1>{app.account.name}</h1>
-    <p class="muted user">@{app.account.username} · <a href="#/p/{app.account.playerId}">Your results</a></p>
+    <p class="muted user">
+      @{app.account.username}{#if app.account.role} · <b class="rolename">{ROLE_LABEL[app.account.role]}</b>{/if} ·
+      <a href="#/p/{app.account.playerId}">Your results</a>{#if app.account.role} · <a href="#/admin">Admin</a>{/if}
+    </p>
 
     <section>
       <h2>Playing in</h2>
@@ -254,6 +376,70 @@
       </form>
     </section>
 
+    <section>
+      <h2>Two-step login</h2>
+      {#if app.account.twoStep}
+        <p class="small"><b class="on">On.</b> Logging in needs your password and a 6-digit code from your authenticator app.</p>
+        {#if tsOff}
+          <form class="grid" onsubmit={stopTwoStep}>
+            <label class="field"><span>Password</span><input bind:value={tsPass} type="password" autocomplete="current-password" /></label>
+            <label class="field"><span>Code from the app</span><input bind:value={tsCode} inputmode="numeric" autocomplete="one-time-code" maxlength="6" /></label>
+            <div class="row flow">
+              <button type="submit" disabled={busy || !tsPass || tsCode.trim().length !== 6}>Turn off</button>
+              <button type="button" class="ghost" onclick={() => (tsOff = false)}>Cancel</button>
+            </div>
+          </form>
+        {:else}
+          <div><button class="small" onclick={() => ((tsOff = true), (tsPass = ''), (tsCode = ''))}>Turn off…</button></div>
+        {/if}
+        <p class="small muted">Lost your phone? "Forgot your password?" with your recovery code gets you in and turns two-step off.</p>
+      {:else if tsSetup}
+        <ol class="steps small">
+          <li>Open an authenticator app (Google Authenticator, Microsoft Authenticator, Authy, 1Password…) and add an account.</li>
+          <li>
+            Scan this code. On this phone? Tap <a href={tsSetup.uri}>add to authenticator</a>, or type the key by hand.
+            <div class="qr"><QrCode text={tsSetup.uri} label="Two-step login QR code" /></div>
+            <span class="key num">{tsSetup.secret.match(/.{4}/g)?.join(' ')}</span>
+          </li>
+          <li>Type the 6-digit code the app shows.</li>
+        </ol>
+        <form class="row" onsubmit={finishTwoStep}>
+          <input bind:value={tsCode} inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" aria-label="Code from the app" />
+          <button type="submit" class="primary" disabled={busy || tsCode.trim().length !== 6}>Turn on</button>
+        </form>
+        <div><button class="small ghost" onclick={() => (tsSetup = null)}>Cancel</button></div>
+      {:else}
+        <p class="small muted">
+          Extra protection: logging in also needs a code from an authenticator app on your phone, so a stolen password isn't
+          enough. Recommended for staff.
+        </p>
+        <form class="row" onsubmit={startTwoStep}>
+          <input bind:value={tsPass} type="password" autocomplete="current-password" placeholder="Current password" aria-label="Current password" />
+          <button type="submit" disabled={busy || !tsPass}>Set up</button>
+        </form>
+      {/if}
+    </section>
+
+    <section>
+      <h2>Privacy</h2>
+      <label class="check">
+        <input type="checkbox" checked={!!app.account.privateProfile} disabled={busy} onchange={(e) => setPrivacy({ privateProfile: e.currentTarget.checked })} />
+        <span>Private profile <span class="small muted">(only you and staff see your photo, bio and links)</span></span>
+      </label>
+      <label class="check">
+        <input type="checkbox" checked={!!app.account.unranked} disabled={busy} onchange={(e) => setPrivacy({ unranked: e.currentTarget.checked })} />
+        <span>Hide me from the rankings <span class="small muted">(your results still count in brackets and for opponents)</span></span>
+      </label>
+    </section>
+
+    <section>
+      <h2>Devices</h2>
+      <div class="row flow">
+        <button onclick={logOutOthers} disabled={busy}>Log out everywhere else</button>
+        <span class="small muted">For a lost phone or a shared computer.</span>
+      </div>
+    </section>
+
     {#if error}<p class="small err">{error}</p>{/if}
 
     <hr class="rule" />
@@ -261,6 +447,28 @@
       <button onclick={logOut}>Log out</button>
       <span class="small muted">Also removes your PINs and organizer keys from this device. Log in again to get them back.</span>
     </div>
+
+    <section class="danger-zone">
+      {#if delOpen}
+        <h2>Delete account</h2>
+        <p class="small">
+          Your login, PINs on other devices and verified mark go. If you never played in a tournament, your name is removed too;
+          otherwise your past results stay under your name.
+        </p>
+        <form class="grid" onsubmit={deleteMe}>
+          <label class="field"><span>Password</span><input bind:value={delPass} type="password" autocomplete="current-password" /></label>
+          {#if app.account.twoStep}
+            <label class="field"><span>Code from the app</span><input bind:value={delCode} inputmode="numeric" autocomplete="one-time-code" maxlength="6" /></label>
+          {/if}
+          <div class="row flow">
+            <button type="submit" class="danger" disabled={busy || !delPass || (app.account.twoStep && delCode.trim().length !== 6)}>Delete my account</button>
+            <button type="button" class="ghost" onclick={() => (delOpen = false)}>Cancel</button>
+          </div>
+        </form>
+      {:else}
+        <div><button class="small ghost danger" onclick={() => ((delOpen = true), (delPass = ''), (delCode = ''))}>Delete account…</button></div>
+      {/if}
+    </section>
   {:else}
     <h1>{mode === 'login' ? 'Log in' : mode === 'recover' ? 'Forgot your password?' : 'Create an account'}</h1>
     {#if mode === 'recover'}
@@ -296,6 +504,14 @@
         <span>{mode === 'recover' ? 'New password' : 'Password'}{#if mode !== 'login'} <span class="muted">(6 or more characters)</span>{/if}</span>
         <input bind:value={password} type="password" autocomplete={mode === 'login' ? 'current-password' : 'new-password'} />
       </label>
+      {#if mode === 'login' && needCode}
+        <label class="field">
+          <span>Code from your authenticator app</span>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input bind:value={loginCode} inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" autofocus />
+        </label>
+        <p class="small muted hint">Lost your phone? Use "Forgot your password?" with your recovery code.</p>
+      {/if}
 
       {#if mode === 'register'}
         {#if showClaim}
@@ -319,7 +535,7 @@
       <button
         class="accent big"
         type="submit"
-        disabled={busy || !username.trim() || !password || (mode === 'register' && !name.trim()) || (mode === 'recover' && !recoveryInput.trim())}
+        disabled={busy || !username.trim() || !password || (mode === 'register' && !name.trim()) || (mode === 'recover' && !recoveryInput.trim()) || (mode === 'login' && needCode && loginCode.trim().length !== 6)}
       >
         {busy ? 'One moment…' : mode === 'login' ? 'Log in' : mode === 'recover' ? 'Set new password' : 'Create account'}
       </button>
@@ -327,7 +543,7 @@
 
     <p class="switch">
       {#if mode === 'login'}
-        No account yet? <button class="linkish" onclick={() => ((mode = 'register'), (error = ''))}>Create one</button>
+        No account yet? <button class="linkish" onclick={() => ((mode = 'register'), (error = ''), (needCode = false))}>Create one</button>
       {:else}
         {mode === 'recover' ? 'Remembered it?' : 'Have an account?'} <button class="linkish" onclick={() => ((mode = 'login'), (error = ''))}>Log in</button>
       {/if}
@@ -365,7 +581,16 @@
   .codebox { padding: 14px; margin-bottom: 24px; border-color: var(--accent); }
   .codebox p { margin: 0; }
   .code { font: 700 26px var(--font-cond); letter-spacing: 0.08em; overflow-wrap: anywhere; user-select: all; }
-  .row.wrap { flex-wrap: wrap; justify-content: flex-start; }
+  .row.flow { flex-wrap: wrap; justify-content: flex-start; }
   .codebox > div { justify-self: start; }
   @media (max-width: 520px) { .row:not(form) { flex-wrap: wrap; } }
+  .rolename { color: var(--accent); font-weight: 600; }
+  .on { color: var(--ok, var(--ink)); }
+  .check { display: flex; gap: 10px; align-items: start; }
+  .check input { width: 18px; min-height: 0; margin-top: 3px; accent-color: var(--accent); flex: none; }
+  .steps { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+  .qr { width: 180px; margin: 8px 0 4px; background: #fff; padding: 6px; border: 1px solid var(--line); }
+  .key { display: block; font: 600 16px var(--font-cond); letter-spacing: 0.08em; overflow-wrap: anywhere; user-select: all; }
+  .hint { margin: -4px 0 0; }
+  .danger-zone { margin-top: 26px; }
 </style>

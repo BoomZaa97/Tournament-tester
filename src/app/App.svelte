@@ -12,6 +12,8 @@
   import Account from './routes/Account.svelte';
 
   const section = $derived(app.path[0] ?? '');
+  // staff (site owner, admins, moderators) get the Admin menu; re-read when the account changes
+  const staff = $derived((void app.account, app.store.kind === 'sheets' && app.store.can('audit')));
   // bring a logged-in account's PINs and organizer keys onto this device
   app.syncAccount();
 </script>
@@ -25,8 +27,8 @@
     <nav>
       <a href="#/" class:on={section === '' || section === 't' || section === 'j' || section === 'new'}>Tournaments</a>
       <a href="#/players" class:on={section === 'players' || section === 'p'}>Rankings</a>
-      {#if app.store.isAdmin && app.store.kind === 'sheets'}<a href="#/admin" class:on={section === 'admin'}>Admin</a>{/if}
-      <a href="#/settings" class:on={section === 'settings' || (section === 'admin' && !(app.store.isAdmin && app.store.kind === 'sheets'))}>Settings</a>
+      {#if staff}<a href="#/admin" class:on={section === 'admin'}>Admin</a>{/if}
+      <a href="#/settings" class:on={section === 'settings' || (section === 'admin' && !staff)}>Settings</a>
       {#if app.store.kind === 'sheets'}
         <a href="#/account" class="acct" class:on={section === 'account'}>{app.account ? app.account.name : 'Log in'}</a>
       {/if}

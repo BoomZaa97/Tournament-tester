@@ -50,13 +50,16 @@
     }
   }
 
+  // "only organizers can create" (site security setting); re-read when the account changes
+  const canCreate = $derived((void app.account, app.store.can('create')));
+
   const date = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 </script>
 
 <div class="wrap page">
   <div class="head">
     <h1>Tournaments</h1>
-    <a class="btn primary" href="#/new">+ New tournament</a>
+    {#if canCreate}<a class="btn primary" href="#/new">+ New tournament</a>{/if}
   </div>
 
   <form class="join" onsubmit={(e) => { e.preventDefault(); join(); }}>
@@ -87,7 +90,7 @@
   {:else if tournaments.length === 0}
     <div class="empty">
       <p>No tournaments yet.</p>
-      <a class="btn primary" href="#/new">Make your first bracket</a>
+      {#if canCreate}<a class="btn primary" href="#/new">Make your first bracket</a>{/if}
     </div>
   {:else}
     <div class="filters" role="tablist">

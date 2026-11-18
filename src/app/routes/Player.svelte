@@ -183,7 +183,7 @@
     return [...m.values()].sort((a, b) => b.w + b.l + b.d - (a.w + a.l + a.d));
   });
 
-  let reset = $state<{ username: string; password: string } | null>(null);
+  let reset = $state<{ username: string; password: string; twoStepOff?: boolean } | null>(null);
   async function resetPassword() {
     if (!stats || !confirm(`Give ${stats.player.name}'s account a new password? Their old one stops working.`)) return;
     try {
@@ -194,19 +194,33 @@
   }
 
   async function deleteAccount() {
-    if (!stats || !confirm(`Remove ${stats.player.name}'s account? They're logged out everywhere and lose the verified mark. Their results stay.`)) return;
+    if (!stats || !confirm(`Remove ${stats.player.name}'s account? They're logged out everywhere and lose the verified mark. If they never played, their name goes too; otherwise their results stay.`)) return;
     try {
-      await app.store.deleteAccount!(id);
+      const r = await app.store.deleteAccount!(id);
       app.verified.delete(id);
       if (app.account?.playerId === id) {
         // this device was logged in to that account
         forgetAccount();
         app.refreshAccount();
       }
+      if (r.playerRemoved) {
+        app.notify('Account and player removed');
+        app.go('players');
+        return;
+      }
       stats = { ...stats, player: { ...stats.player, account: undefined } };
       app.notify('Account removed');
     } catch (err) {
       app.notify(errorText(err), 'error');
+    }
+  }
+
+  async function copyId() {
+    try {
+      await navigator.clipboard.writeText(id);
+      app.notify('Player ID copied');
+    } catch {
+      prompt('Player ID:', id);
     }
   }
 
@@ -246,21 +260,22 @@
         </form>
       {:else}
         <h1>{stats.player.name}</h1>
-        {#if app.store.isAdmin}
+        {#if app.store.can('players')}
           <button class="small ghost" onclick={() => { newName = stats!.player.name; renaming = true; }}>Rename</button>
-          {#if stats.player.account && app.store.resetPassword}
-            <button class="small ghost" onclick={resetPassword}>Reset password</button>
-          {/if}
-          {#if stats.player.account && app.store.deleteAccount}
-            <button class="small ghost danger" onclick={deleteAccount}>Remove account</button>
-          {/if}
+        {/if}
+        {#if app.store.can('accounts') && stats.player.account && app.account?.playerId !== id}
+          {#if app.store.resetPassword}<button class="small ghost" onclick={resetPassword}>Reset password</button>{/if}
+          {#if app.store.deleteAccount}<button class="small ghost danger" onclick={deleteAccount}>Remove account</button>{/if}
         {/if}
         {#if canEditProfile && !editing}
           <button class="small ghost" onclick={startEdit}>Edit profile</button>
         {/if}
       {/if}
     </div>
+    <p class="pid small muted">Player ID <code class="num">{stats.player.id}</code> <button class="linkish" onclick={copyId}>Copy</button></p>
     {#if stats.player.account}<p class="acct"><Verified id={stats.player.id} label /> <span class="small muted">This name belongs to the player's own account. Nobody else can use it.</span></p>{/if}
+    {#if stats.player.privateProfile && !profile}<p class="small muted">This player's profile is private.</p>{/if}
+    {#if stats.player.unranked}<p class="small muted">Hidden from the rankings at the player's request.</p>{/if}
     {#if profile?.bio}<p class="bio">{profile.bio}</p>{/if}
     {#if profile?.links.length}
       <ul class="links">
@@ -299,8 +314,8 @@
         <div class="row">
           <button class="primary" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save profile'}</button>
           <button type="button" class="ghost" onclick={() => (editing = false)}>Cancel</button>
-          {#if app.store.kind === 'sheets' && !app.store.isAdmin}
-            <span class="small muted">Everyone can see this.</span>
+          {#if app.store.kind === 'sheets' && app.account?.playerId === id}
+            <span class="small muted">{app.account.privateProfile ? 'Private: only you and staff see this.' : 'Everyone can see this.'}</span>
           {/if}
         </div>
       </form>
@@ -490,6 +505,9 @@
   .back { display: inline-block; margin-bottom: 8px; color: var(--muted); text-decoration: none; }
   .titlebar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .acct { margin: 2px 0 0; }
+  .pid { margin: 2px 0 0; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+  .pid code { font-size: 13px; background: var(--card); border: 1px solid var(--line); padding: 1px 5px; border-radius: 3px; user-select: all; color: var(--ink); }
+  .pid .linkish { background: none; border: 0; padding: 0; min-height: 0; color: var(--ink); text-decoration: underline; font: inherit; cursor: pointer; }
   .pw { font: 700 18px var(--font-cond); letter-spacing: 0.08em; color: var(--accent); }
   .titlebar input { max-width: 260px; }
   .head { display: flex; gap: 18px; align-items: flex-start; }

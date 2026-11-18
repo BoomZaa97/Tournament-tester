@@ -13,6 +13,8 @@ Free tournament brackets for any game, where any result can be edited later with
   - Every change goes in the log and can be undone.
 - **Run it together, like Challonge:** anyone can create a tournament and becomes its organizer. Send helpers a link to run it with you, let players sign themselves up, and let them report their own scores with a PIN. No account needed.
   - **Player accounts (optional):** a username and password that bring your PINs and the tournaments you run to any device, and let you join with one tap. Forgot your password? Use the one-time recovery code you got when you signed up, or ask the site admin.
+    Optional two-step login (codes from an authenticator app), a private profile, "hide me from the rankings", log out everywhere, and delete your own account.
+  - **Staff roles and an admin menu:** the site owner gives accounts the Admin, Moderator or Organizer role (no sharing the admin key). The Admin page has an overview, users and roles (suspend, log out everywhere, reset password, remove), all tournaments, an audit log of everything staff do, and a switch to let only organizers create tournaments.
 - **At the venue:**
   - **Join code + door poster:** every tournament has a short code (like `K7QM2X`). People type it in "Join with code" on the home page, or scan the QR code on the printable door poster (Edit tab → Door poster).
   Both open a sign-up page made for phones: type your name, tap Join, and it shows your PIN (or waitlist place), an "I'm here" check-in button, and later your next match and any score your opponent wants you to confirm.

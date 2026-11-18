@@ -48,9 +48,15 @@ var TABLES = {
   // People who signed up after the player limit was reached, in order (oldest first).
   Waitlist: ['tournamentId', 'tournament', 'playerId', 'name', 'pin', 'at', 'checkedIn'],
   // Player accounts. Delete a row to delete an account (the player and their results stay).
-  Accounts: ['id', 'username', 'playerId', 'passHash', 'salt', 'createdAt', 'orgKeys', 'fails', 'lockedUntil', 'recoveryHash'],
+  Accounts: [
+    'id', 'username', 'playerId', 'passHash', 'salt', 'createdAt', 'orgKeys', 'fails', 'lockedUntil', 'recoveryHash',
+    'role', 'bannedUntil', 'banReason', 'sessionNonce', 'lastLogin', 'lastSeen', 'privateProfile', 'unranked',
+    'totpSecret', 'totpPending', 'totpLast',
+  ],
   // Player profiles: id = the player's id. Read only by the player page (photos are big).
   Profiles: ['id', 'name', 'photo', 'bio', 'links', 'updatedAt'],
+  // What staff did (and security events), newest first. Read only by staff, from the admin menu.
+  Audit: ['time', 'actor', 'role', 'action', 'target', 'detail'],
 };
 
 var CELL_LIMIT = 45000; // Google Sheets allows 50,000 characters per cell
@@ -71,7 +77,7 @@ function doGet(e) {
     if (action === 'get') return readTournament(p.id, p.since);
     if (action === 'players') return { players: readPlayers(readTable('Players'), readTable('Accounts')) };
     if (action === 'code') return findByCode(e.parameter.code);
-    if (action === 'profile') return { profile: readProfile(p.id) };
+    if (action === 'profile') return readProfile(p.id, false);
     throw new Error('Unknown action: ' + action);
   });
 }
@@ -81,11 +87,11 @@ function doPost(e) {
     var body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     var adminKey = PropertiesService.getScriptProperties().getProperty('ADMIN_KEY');
     if (!adminKey) throw new Error('ADMIN_KEY is not set. In Apps Script: Project Settings → Script properties.');
-    var isAdmin = !!body.key && body.key === adminKey;
     tidyOnce();
+    var actor = whoIs(body, adminKey);
     if (body.action === 'check') {
       var row = body.id ? findTournament(readTable('Tournaments'), body.id) : null;
-      return { admin: isAdmin, organizer: !!row && isOrganizer(body, row) };
+      return { admin: actor.role === 'owner', role: actor.role, organizer: !!row && isOrganizer(body, row) };
     }
 
     // reads nothing from the sheet: no need to wait for the lock
@@ -95,23 +101,32 @@ function doPost(e) {
     lock.waitLock(20000);
     try {
       if (body.action === 'save') {
-        var stored = saveTournament(body.tournament, body.players || [], body, isAdmin);
+        var stored = saveTournament(body.tournament, body.players || [], body, actor);
         announce(stored.id, body.announce);
         return { tournament: stored };
       }
-      if (body.action === 'delete') return deleteTournament(body.id, body, isAdmin);
+      if (body.action === 'delete') return deleteTournament(body.id, body, actor);
       if (body.action === 'renamePlayer') {
-        if (!isAdmin) throw new Error('Only the site admin can rename players');
-        return renamePlayer(body.id, body.name);
+        need(actor, 'players');
+        var renamedFrom = (findById(readTable('Players'), body.id) || {}).name || '';
+        var renamed = renamePlayer(body.id, body.name);
+        audit(actor, 'Renamed player', renamedFrom, 'to ' + body.name);
+        return renamed;
       }
       if (body.action === 'prunePlayers') {
-        if (!isAdmin) throw new Error('Only the site admin can remove players');
-        return pruneUnusedPlayers(!!body.dryRun);
+        need(actor, 'players');
+        var pruned = pruneUnusedPlayers(!!body.dryRun);
+        if (!body.dryRun && pruned.removed.length) {
+          audit(actor, 'Cleaned up players', pruned.removed.length + ' removed', pruned.removed.map(function (p) {
+            return p.name;
+          }).join(', '));
+        }
+        return pruned;
       }
       if (body.action === 'signup') return signUp(body.id, body.name, body.token);
       if (body.action === 'report') return report(body.id, body.matchId, body.pin, body.result, body.matchNo);
-      if (body.action === 'pins') return { pins: pinsFor(body.id, body, isAdmin) };
-      if (body.action === 'checkin') return checkIn(body, isAdmin);
+      if (body.action === 'pins') return { pins: pinsFor(body.id, body, can(actor, 'tournaments')) };
+      if (body.action === 'checkin') return checkIn(body, can(actor, 'tournaments'));
       if (body.action === 'drop') return dropOut(body.id, body.pin);
       if (body.action === 'confirm') {
         var confirmed = confirmResult(body.id, body.matchId, body.pin, body.ok !== false, body.matchNo);
@@ -119,23 +134,39 @@ function doPost(e) {
         if (body.ok !== false) announce(body.id, body.announce);
         return confirmed;
       }
-      if (body.action === 'discord') return setDiscord(body, isAdmin);
+      if (body.action === 'discord') return setDiscord(body, can(actor, 'tournaments'));
       if (body.action === 'register') return register(body);
-      if (body.action === 'login') return logIn(body.username, body.password);
+      if (body.action === 'login') return logIn(body.username, body.password, body.code);
+      if (body.action === 'twoStepSetup') return twoStepSetup(body.token, body.password);
+      if (body.action === 'twoStepOn') return twoStepOn(body.token, body.code);
+      if (body.action === 'twoStepOff') return twoStepOff(body.token, body.password, body.code);
+      if (body.action === 'deleteMe') return deleteMe(body.token, body.password, body.code);
       if (body.action === 'me') return aboutMe(body.token, body.orgKeys);
       if (body.action === 'password') return changePassword(body.token, body.password, body.newPassword);
       if (body.action === 'recover') return recoverAccount(body.username, body.code, body.newPassword);
       if (body.action === 'recoveryCode') return newRecoveryCode(body.token, body.password);
       if (body.action === 'rename') return renameSelf(body.token, body.name);
-      if (body.action === 'profile') return { profile: saveProfile(body, isAdmin) };
+      if (body.action === 'profile') return { profile: saveProfile(body, actor) };
+      if (body.action === 'readProfile') return readOwnProfile(body, actor);
+      if (body.action === 'privacy') return setPrivacy(body);
+      if (body.action === 'logoutAll') return logOutEverywhere(body, actor);
       if (body.action === 'resetPassword') {
-        if (!isAdmin) throw new Error('Only the site admin can reset passwords');
-        return resetPassword(body.playerId);
+        var resetFor = staffTarget(actor, body.playerId);
+        var reset = resetPassword(body.playerId);
+        audit(actor, 'Reset password', accountLabel(resetFor), reset.twoStepOff ? 'two-step login turned off' : '');
+        return reset;
       }
       if (body.action === 'deleteAccount') {
-        if (!isAdmin) throw new Error('Only the site admin can remove accounts');
-        return deleteAccount(body.playerId);
+        var removing = staffTarget(actor, body.playerId);
+        var removed = deleteAccount(body.playerId);
+        audit(actor, 'Removed account', accountLabel(removing), removed.playerRemoved ? 'and the player (no tournaments)' : '');
+        return removed;
       }
+      if (body.action === 'accounts') return listAccounts(actor);
+      if (body.action === 'setRole') return setRole(body, actor);
+      if (body.action === 'suspend') return suspend(body, actor);
+      if (body.action === 'audit') return readAudit(body, actor);
+      if (body.action === 'site') return setSite(body, actor);
       throw new Error('Unknown action: ' + body.action);
     } finally {
       lock.releaseLock();
@@ -162,18 +193,22 @@ function readAll(lite) {
   var tournaments = data.Tournaments.map(function (t) {
     return assemble(t, data, lite);
   });
-  return { tournaments: tournaments, players: readPlayers(data.Players, data.Accounts) };
+  return { tournaments: tournaments, players: readPlayers(data.Players, data.Accounts), site: publicSite() };
 }
 
 /** Players as the app sees them; `account: true` if they have an account. */
 function readPlayers(players, accounts) {
   var hasAccount = {};
   accounts.forEach(function (a) {
-    hasAccount[a.playerId] = true;
+    hasAccount[a.playerId] = a;
   });
   return players.map(function (p) {
     var out = toPlayer(p);
-    if (hasAccount[p.id]) out.account = true;
+    var a = hasAccount[p.id];
+    if (a) out.account = true;
+    // privacy choices of the account holder
+    if (a && truthy(a.privateProfile)) out.privateProfile = true;
+    if (a && truthy(a.unranked)) out.unranked = true;
     return out;
   });
 }
@@ -353,15 +388,21 @@ function parseWinner(r) {
 
 // ------------------------------------------------------------------ writes
 
-function saveTournament(doc, players, body, isAdmin) {
+function saveTournament(doc, players, body, actor) {
   if (!doc || !doc.id) throw new Error('Missing tournament');
+  actor = actor || { role: '', rank: 0 };
+  var isAdmin = can(actor, 'tournaments');
   var data = loadOne(doc.id);
   var existing = findTournament(data.Tournaments, doc.id);
+  var organizer = existing && isOrganizer(body, existing);
   if (existing) {
-    if (!isAdmin && !isOrganizer(body, existing)) throw new Error(NOT_ORGANIZER);
-  } else if (!isAdmin && String(body.orgKey || '').length < 16) {
-    throw new Error('Missing organizer key');
+    if (!isAdmin && !organizer) throw new Error(NOT_ORGANIZER);
+  } else {
+    if (truthy(siteSettings().lockCreate) && actor.rank < ROLE_RANK.organizer) throw new Error(CREATE_LOCKED);
+    if (!isAdmin && String(body.orgKey || '').length < 16) throw new Error('Missing organizer key');
   }
+  // staff changing someone else's tournament is written down (not the owner's own backups and fixes)
+  if (existing && !organizer && actor.role !== 'owner') audit(actor, 'Edited tournament', existing.name, 'as staff');
   if (existing && num(existing.version) !== num(doc.version)) return conflict();
   var orgKeyHash = existing && existing.orgKeyHash ? existing.orgKeyHash : body.orgKey ? sha256(String(body.orgKey)) : '';
   var code = existing && existing.code ? existing.code : newCode(data.Tournaments);
@@ -382,7 +423,7 @@ function saveTournament(doc, players, body, isAdmin) {
   var verified = verifiedNames(data);
   (players || []).forEach(function (p) {
     // the player list is shared by every tournament: only the site admin renames people
-    if (byId[p.id] && (!isAdmin || byId[p.id].name === p.name)) return;
+    if (byId[p.id] && (!can(actor, 'players') || byId[p.id].name === p.name)) return;
     notVerifiedName(p.id, p.name, verified);
     if (byId[p.id]) byId[p.id].name = p.name;
     else data.Players.push((byId[p.id] = { id: p.id, name: p.name }));
@@ -535,9 +576,11 @@ function saveTournament(doc, players, body, isAdmin) {
   return assemble(tRow, { Entrants: entrants, Results: results, Log: log, Waitlist: waitlist });
 }
 
-function deleteTournament(id, body, isAdmin) {
+function deleteTournament(id, body, actor) {
   var row = findTournament(readTable('Tournaments'), id);
-  if (row && !isAdmin && !isOrganizer(body, row)) throw new Error(NOT_ORGANIZER);
+  var organizer = row && isOrganizer(body, row);
+  if (row && !can(actor, 'tournaments') && !organizer) throw new Error(NOT_ORGANIZER);
+  if (row && !organizer) audit(actor, 'Deleted tournament', row.name, '');
   PER_TOURNAMENT.forEach(function (name) {
     writeBlock(name, { id: id }, []);
   });
@@ -952,11 +995,13 @@ function byPin(id, rawPin, data, waitlistToo) {
     return e.tournamentId === id;
   });
   if (waitlistToo) rows = rows.concat(waitlistOf(id, data));
-  return (
+  var row =
     rows.filter(function (e) {
       return String(e.pin) === pin;
-    })[0] || null
-  );
+    })[0] || null;
+  var banned = row && suspendedAccountOf(row.playerId, data);
+  if (banned) throw new Error(suspendedMessage(banned));
+  return row;
 }
 
 /**
@@ -1239,15 +1284,22 @@ function passwordHash(salt, password) {
 }
 
 function tokenFor(a) {
-  return a.id + '.' + hmac('session:' + a.id + ':' + a.salt).slice(0, 40);
+  // sessionNonce changes on "log out everywhere"; accounts that never did keep their old tokens
+  return a.id + '.' + hmac('session:' + a.id + ':' + a.salt + (a.sessionNonce ? ':' + a.sessionNonce : '')).slice(0, 40);
 }
 
-/** The Accounts row this token belongs to, or null. */
-function accountFromToken(token, data) {
+/** The Accounts row this token belongs to (suspended or not), or null. */
+function tokenAccount(token, data) {
   var parts = String(token || '').split('.');
   if (parts.length !== 2) return null;
-  var a = findById(data.Accounts, parts[0]);
+  var a = findById(data.Accounts || [], parts[0]);
   return a && tokenFor(a) === String(token) ? a : null;
+}
+
+/** The Accounts row this token belongs to, or null (also while the account is suspended). */
+function accountFromToken(token, data) {
+  var a = tokenAccount(token, data);
+  return a && !isSuspended(a) ? a : null;
 }
 
 function findById(rows, id) {
@@ -1288,7 +1340,17 @@ function newSalt() {
 /** What the app may know about an account (never the hash or salt). */
 function accountInfo(a, data) {
   var p = findById(data.Players, a.playerId);
-  return { id: a.id, username: a.username, playerId: a.playerId, name: p ? p.name : a.username, recovery: !!a.recoveryHash };
+  return {
+    id: a.id,
+    username: a.username,
+    playerId: a.playerId,
+    name: p ? p.name : a.username,
+    recovery: !!a.recoveryHash,
+    twoStep: !!a.totpSecret,
+    role: roleOf(a),
+    privateProfile: truthy(a.privateProfile),
+    unranked: truthy(a.unranked),
+  };
 }
 
 /**
@@ -1409,6 +1471,7 @@ function failedTry(a, data, message) {
   a.fails = fails >= MAX_FAILS ? '' : fails;
   a.lockedUntil = fails >= MAX_FAILS ? new Date(Date.now() + LOCK_MINUTES * 60000).toISOString() : '';
   writeTable('Accounts', data.Accounts);
+  if (fails >= MAX_FAILS) audit(SYSTEM, 'Account locked', accountLabel(a), MAX_FAILS + ' wrong passwords or recovery codes in a row');
   throw new Error(message);
 }
 
@@ -1427,17 +1490,21 @@ function hasPlayed(playerId, data) {
   );
 }
 
-function logIn(rawUsername, password) {
+function logIn(rawUsername, password, code) {
   var data = loadTables();
   var a = accountByUsername(rawUsername, data);
   if (!a) throw new Error('Wrong username or password');
   checkLock(a);
   if (passwordHash(a.salt, String(password || '')) !== a.passHash) failedTry(a, data, 'Wrong username or password');
-  if (a.fails || a.lockedUntil) {
-    a.fails = '';
-    a.lockedUntil = '';
-    writeTable('Accounts', data.Accounts);
+  if (isSuspended(a)) throw new Error(suspendedMessage(a));
+  if (a.totpSecret) {
+    if (!String(code || '').trim()) throw new Error(TWO_STEP);
+    if (!useTotp(a, a.totpSecret, code)) failedTry(a, data, 'Wrong code. Use the newest 6-digit code from your authenticator app.');
   }
+  a.fails = '';
+  a.lockedUntil = '';
+  a.lastLogin = new Date().toISOString();
+  writeTable('Accounts', data.Accounts);
   return { token: tokenFor(a), account: accountInfo(a, data) };
 }
 
@@ -1471,14 +1538,20 @@ function recoverAccount(rawUsername, code, newPassword) {
   checkLock(a);
   if (!a.recoveryHash) throw new Error('This account has no recovery code yet. Ask the site admin to reset your password.');
   if (normalRecoveryCode(code).length !== 16 || recoveryHash(a, code) !== a.recoveryHash) failedTry(a, data, wrong);
+  if (isSuspended(a)) throw new Error(suspendedMessage(a));
   var p = checkPassword(newPassword);
   a.salt = newSalt(); // logs out every other device
   a.passHash = passwordHash(a.salt, p);
   a.fails = '';
   a.lockedUntil = '';
   var fresh = setRecoveryCode(a); // each code works once
+  a.lastLogin = new Date().toISOString();
+  // the recovery code is the way back in when the phone with the authenticator is lost
+  var hadTwoStep = !!a.totpSecret;
+  clearTwoStep(a);
   writeTable('Accounts', data.Accounts);
-  return { token: tokenFor(a), account: accountInfo(a, data), recoveryCode: fresh };
+  audit(SYSTEM, 'Password recovered', accountLabel(a), 'with the recovery code' + (hadTwoStep ? '; two-step login turned off' : ''));
+  return { token: tokenFor(a), account: accountInfo(a, data), recoveryCode: fresh, twoStepOff: hadTwoStep };
 }
 
 /** Logged in + current password: a new recovery code (e.g. the old one was lost, or the account never had one). */
@@ -1500,10 +1573,15 @@ function newRecoveryCode(token, password) {
  */
 function aboutMe(token, deviceKeys) {
   var data = loadTables();
-  var a = accountFromToken(token, data);
+  var a = tokenAccount(token, data);
   if (!a) throw new Error(LOGGED_OUT);
+  if (isSuspended(a)) throw new Error(suspendedMessage(a));
   var keys = json(a.orgKeys, {});
   var before = JSON.stringify(keys);
+  // last seen, at most once every 30 minutes (each write rewrites the Accounts tab)
+  var seen = a.lastSeen ? new Date(a.lastSeen).getTime() : 0;
+  var touch = !(seen > Date.now() - 30 * 60000);
+  if (touch) a.lastSeen = new Date().toISOString();
   Object.keys(deviceKeys || {})
     .slice(0, 500)
     .forEach(function (id) {
@@ -1516,10 +1594,8 @@ function aboutMe(token, deviceKeys) {
     if (!t || sha256(keys[id]) !== t.orgKeyHash) delete keys[id];
   });
   var after = JSON.stringify(keys);
-  if (after !== before && after.length <= CELL_LIMIT) {
-    a.orgKeys = after;
-    writeTable('Accounts', data.Accounts);
-  }
+  if (after !== before && after.length <= CELL_LIMIT) a.orgKeys = after;
+  if ((after !== before && after.length <= CELL_LIMIT) || touch) writeTable('Accounts', data.Accounts);
   var pins = {};
   data.Entrants.concat(data.Waitlist).forEach(function (e) {
     if (e.playerId === a.playerId && e.pin) pins[e.tournamentId] = { playerId: e.playerId, pin: String(e.pin) };
@@ -1558,23 +1634,36 @@ function renameSelf(token, rawName) {
 
 var PROFILE_LIMITS = { photo: 45000, bio: 280, links: 3, link: 200 };
 
-function readProfile(id) {
+/** A player's profile; a private one only for the player themself and staff (`trusted`). */
+function readProfile(id, trusted) {
+  id = String(id || '');
+  var owner = accountOf(id, { Accounts: readTable('Accounts') });
+  if (!trusted && owner && truthy(owner.privateProfile)) return { profile: null, private: true };
   var row = readTable('Profiles').filter(function (r) {
-    return r.id === String(id || '');
+    return r.id === id;
   })[0];
-  return row ? { photo: row.photo || '', bio: row.bio || '', links: json(row.links, []) } : null;
+  return { profile: row ? { photo: row.photo || '', bio: row.bio || '', links: json(row.links, []) } : null };
 }
 
-/** The player (with their account token) or the site admin sets a photo, bio and links. */
-function saveProfile(body, isAdmin) {
+/** POST: the player's own profile (or any, for staff), even when it's private. */
+function readOwnProfile(body, actor) {
+  var mine = accountFromToken(body.token, { Accounts: readTable('Accounts') });
+  return readProfile(body.id, can(actor, 'players') || (mine && mine.playerId === String(body.id || '')));
+}
+
+/** The player (with their account token) or staff set a photo, bio and links. */
+function saveProfile(body, actor) {
   var id = String(body.id || '');
   var data = loadTables();
   var player = findById(data.Players, id);
   if (!player) throw new Error('Player not found');
-  if (!isAdmin) {
-    var a = accountFromToken(body.token, data);
-    if (!a) throw new Error(LOGGED_OUT);
-    if (a.playerId !== id) throw new Error('You can only change your own profile');
+  var own = accountFromToken(body.token, data);
+  if (!own || own.playerId !== id) {
+    if (!can(actor, 'players')) {
+      if (!own) throw new Error(LOGGED_OUT);
+      throw new Error('You can only change your own profile');
+    }
+    audit(actor, 'Changed profile', player.name, '');
   }
   var photo = String(body.photo || '');
   if (photo && !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/.test(photo)) throw new Error("That photo can't be used");
@@ -1605,8 +1694,11 @@ function resetPassword(playerId) {
   a.passHash = passwordHash(a.salt, password);
   a.fails = '';
   a.lockedUntil = '';
+  // a reset is for people who lost access: their authenticator may be gone too
+  var hadTwoStep = !!a.totpSecret;
+  clearTwoStep(a);
   writeTable('Accounts', data.Accounts);
-  return { username: a.username, password: password };
+  return { username: a.username, password: password, twoStepOff: hadTwoStep };
 }
 
 /**
@@ -1621,7 +1713,409 @@ function deleteAccount(playerId) {
   });
   if (kept.length === data.Accounts.length) throw new Error('That player has no account');
   writeTable('Accounts', kept);
-  return { ok: true };
+  return { ok: true, playerRemoved: removePlayerIfUnused(playerId, data) };
+}
+
+/**
+ * After an account is gone: a player who is in no tournament (entrant, waitlist or result) goes too,
+ * with their profile, so the name is free at once and nothing needs cleaning up later.
+ */
+function removePlayerIfUnused(playerId, data) {
+  if (hasPlayed(playerId, data)) return false;
+  var players = readTable('Players');
+  var left = players.filter(function (p) {
+    return p.id !== playerId;
+  });
+  if (left.length === players.length) return false;
+  writeTable('Players', left);
+  var profiles = readTable('Profiles');
+  var keptProfiles = profiles.filter(function (r) {
+    return r.id !== playerId;
+  });
+  if (keptProfiles.length !== profiles.length) writeTable('Profiles', keptProfiles);
+  return true;
+}
+
+/** A player deletes their own account: password (and two-step code, if on). Every device is logged out. */
+function deleteMe(token, password, code) {
+  var data = loadTables();
+  var a = accountFromToken(token, data);
+  if (!a) throw new Error(LOGGED_OUT);
+  checkLock(a);
+  if (passwordHash(a.salt, String(password || '')) !== a.passHash) failedTry(a, data, 'Your password is wrong');
+  if (a.totpSecret && !useTotp(a, a.totpSecret, code)) failedTry(a, data, 'Wrong two-step code. Use the newest one from your app (each code works once).');
+  var label = accountLabel(a);
+  writeTable(
+    'Accounts',
+    data.Accounts.filter(function (r) {
+      return r.id !== a.id;
+    }),
+  );
+  var playerRemoved = removePlayerIfUnused(a.playerId, data);
+  audit(SYSTEM, 'Account deleted by its owner', label, playerRemoved ? 'and the player (no tournaments)' : 'the player and results stay');
+  return { ok: true, playerRemoved: playerRemoved };
+}
+
+// ------------------------------------------------------------------ two-step login (authenticator apps)
+
+/*
+ * Optional, per account: a time-based one-time code (TOTP, RFC 6238: SHA-1, 6 digits, 30 s), as made by
+ * Google Authenticator, Microsoft Authenticator, Authy, 1Password… The secret lives in the hidden
+ * `totpSecret` column (`totpPending` while it's being set up, until the first code proves the app has it).
+ * `totpLast` = the last time step used, so a code works only once. Wrong codes count towards the lock.
+ * The recovery code (Forgot password) and a staff password reset turn it off, for a lost phone.
+ */
+var TWO_STEP = 'Enter the 6-digit code from your authenticator app';
+var BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function newTotpSecret() {
+  var hex = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '').slice(0, 40); // 160 bits (UUIDv4 has 122 random)
+  var bits = '';
+  for (var i = 0; i < hex.length; i++) bits += ('000' + parseInt(hex.charAt(i), 16).toString(2)).slice(-4);
+  var out = '';
+  for (var j = 0; j + 5 <= bits.length; j += 5) out += BASE32.charAt(parseInt(bits.slice(j, j + 5), 2));
+  return out; // 32 characters
+}
+
+function base32Bytes(s) {
+  var bits = '';
+  String(s)
+    .toUpperCase()
+    .replace(/[^A-Z2-7]/g, '')
+    .split('')
+    .forEach(function (c) {
+      bits += ('0000' + BASE32.indexOf(c).toString(2)).slice(-5);
+    });
+  var bytes = [];
+  for (var i = 0; i + 8 <= bits.length; i += 8) {
+    var b = parseInt(bits.slice(i, i + 8), 2);
+    bytes.push(b > 127 ? b - 256 : b);
+  }
+  return bytes;
+}
+
+/** The 6-digit code for this secret at time step `step`. */
+function totpAt(secret, step) {
+  var msg = [];
+  var n = step;
+  for (var i = 7; i >= 0; i--) {
+    var b = n % 256;
+    msg[i] = b > 127 ? b - 256 : b;
+    n = Math.floor(n / 256);
+  }
+  var h = Utilities.computeHmacSignature(Utilities.MacAlgorithm.HMAC_SHA_1, msg, base32Bytes(secret)).map(function (b) {
+    return b < 0 ? b + 256 : b;
+  });
+  var o = h[19] & 15;
+  var bin = ((h[o] & 127) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return ('000000' + (bin % 1000000)).slice(-6);
+}
+
+/** Checks a code (30 s either side for clock drift; each step once) and marks it used. */
+function useTotp(a, secret, code) {
+  var c = String(code || '').replace(/\D/g, '');
+  if (c.length !== 6 || !secret) return false;
+  var now = Math.floor(Date.now() / 30000);
+  var last = num(a.totpLast);
+  for (var d = -1; d <= 1; d++) {
+    var step = now + d;
+    if (step > last && totpAt(secret, step) === c) {
+      a.totpLast = step;
+      return true;
+    }
+  }
+  return false;
+}
+
+function clearTwoStep(a) {
+  a.totpSecret = '';
+  a.totpPending = '';
+  a.totpLast = '';
+}
+
+/** Step 1 (password): a new secret to put in the authenticator app. Nothing changes until step 2. */
+function twoStepSetup(token, password) {
+  var data = loadTables();
+  var a = accountFromToken(token, data);
+  if (!a) throw new Error(LOGGED_OUT);
+  checkLock(a);
+  if (passwordHash(a.salt, String(password || '')) !== a.passHash) failedTry(a, data, 'Your password is wrong');
+  if (a.totpSecret) throw new Error('Two-step login is already on');
+  a.totpPending = newTotpSecret();
+  writeTable('Accounts', data.Accounts);
+  var label = encodeURIComponent('Tournament Tester:' + a.username);
+  return {
+    secret: a.totpPending,
+    uri: 'otpauth://totp/' + label + '?secret=' + a.totpPending + '&issuer=' + encodeURIComponent('Tournament Tester'),
+  };
+}
+
+/** Step 2: the first code from the app turns it on. */
+function twoStepOn(token, code) {
+  var data = loadTables();
+  var a = accountFromToken(token, data);
+  if (!a) throw new Error(LOGGED_OUT);
+  checkLock(a);
+  if (!a.totpPending) throw new Error('Start again: the setup expired');
+  if (!useTotp(a, a.totpPending, code)) failedTry(a, data, 'That code doesn\'t match. Check the app shows Tournament Tester and try the newest code.');
+  a.totpSecret = a.totpPending;
+  a.totpPending = '';
+  a.fails = '';
+  writeTable('Accounts', data.Accounts);
+  audit(SYSTEM, 'Turned on two-step login', accountLabel(a), '');
+  return { account: accountInfo(a, data) };
+}
+
+/** Turn it off: password and a current code. */
+function twoStepOff(token, password, code) {
+  var data = loadTables();
+  var a = accountFromToken(token, data);
+  if (!a) throw new Error(LOGGED_OUT);
+  checkLock(a);
+  if (passwordHash(a.salt, String(password || '')) !== a.passHash) failedTry(a, data, 'Your password is wrong');
+  if (!a.totpSecret) return { account: accountInfo(a, data) };
+  if (!useTotp(a, a.totpSecret, code)) failedTry(a, data, 'Wrong two-step code. Use the newest one from your app (each code works once).');
+  clearTwoStep(a);
+  writeTable('Accounts', data.Accounts);
+  audit(SYSTEM, 'Turned off two-step login', accountLabel(a), '');
+  return { account: accountInfo(a, data) };
+}
+
+// ------------------------------------------------------------------ roles, suspensions, sessions, audit
+
+/*
+ * Staff roles are given to accounts (Accounts.role), so nobody has to share the admin key:
+ *   owner     = whoever has ADMIN_KEY (the site owner): everything, including making admins.
+ *   admin     = everything else: roles up to moderator, site security settings, plus all below.
+ *   moderator = fix or delete any tournament, rename / clean up players, edit profiles, and manage
+ *               accounts below them (suspend, reset password, log out everywhere, remove), read the
+ *               audit log.
+ *   organizer = may create tournaments while "only organizers can create" is on.
+ * Staff only act on accounts below their own role. The app sends the logged-in account's token as
+ * `auth` when that account has a role. Everything staff do is written to the Audit tab.
+ */
+var ROLE_RANK = { '': 0, organizer: 1, moderator: 2, admin: 3, owner: 4 };
+var ROLES = ['', 'organizer', 'moderator', 'admin'];
+var PERMS = { tournaments: 2, players: 2, accounts: 2, audit: 2, roles: 3, settings: 3 };
+var SYSTEM = { role: '', rank: 0, label: 'System' };
+var CREATE_LOCKED = 'Only organizers can create tournaments here. Ask the site admin for the Organizer role.';
+var SUSPENDED = 'This account is suspended';
+var AUDIT_MAX = 2000;
+
+function roleOf(a) {
+  var r = String((a && a.role) || '').trim().toLowerCase();
+  return ROLES.indexOf(r) >= 0 ? r : '';
+}
+
+/** Who sent this request: the owner (admin key), a staff account (`auth` token) or anyone. */
+function whoIs(body, adminKey) {
+  if (body.key && body.key === adminKey) return { role: 'owner', rank: ROLE_RANK.owner, accountId: '', label: 'Site owner (admin key)' };
+  if (body.auth) {
+    var data = { Accounts: readTable('Accounts') };
+    var a = accountFromToken(body.auth, data);
+    if (a) {
+      var role = roleOf(a);
+      var p = findById(readTable('Players'), a.playerId);
+      return { role: role, rank: ROLE_RANK[role], accountId: a.id, playerId: a.playerId, label: (p ? p.name : a.username) + ' (@' + a.username + ')' };
+    }
+  }
+  return { role: '', rank: 0, accountId: '', label: '' };
+}
+
+function can(actor, perm) {
+  return !!actor && actor.rank >= PERMS[perm];
+}
+
+function need(actor, perm) {
+  if (!can(actor, perm)) throw new Error(actor && actor.rank ? 'Your role can\'t do this' : 'Only the site admin or staff can do this');
+}
+
+/** The account of this player, if the actor may manage it (staff, and the account is below them). */
+function staffTarget(actor, playerId) {
+  need(actor, 'accounts');
+  var a = accountOf(playerId, { Accounts: readTable('Accounts') });
+  if (!a) throw new Error('That player has no account');
+  if (!outranks(actor, a)) throw new Error('You can only manage accounts below your own role');
+  return a;
+}
+
+function outranks(actor, a) {
+  return actor.rank === ROLE_RANK.owner || actor.rank > ROLE_RANK[roleOf(a)];
+}
+
+function accountLabel(a) {
+  if (!a) return '';
+  var p = findById(readTable('Players'), a.playerId);
+  return (p ? p.name : a.username) + ' (@' + a.username + ')';
+}
+
+function isSuspended(a) {
+  var until = String((a && a.bannedUntil) || '');
+  if (!until) return false;
+  return until === 'forever' || new Date(until).getTime() > Date.now();
+}
+
+function suspendedMessage(a) {
+  var until = String(a.bannedUntil);
+  var when = until === 'forever' ? '' : ' until ' + until.slice(0, 16).replace('T', ' ') + ' (UTC)';
+  return SUSPENDED + when + (a.banReason ? '. Reason: ' + a.banReason : '') + '.';
+}
+
+/** The suspended account of this player, if any (their PINs stop working too). */
+function suspendedAccountOf(playerId, data) {
+  var a = (data.Accounts || []).filter(function (x) {
+    return x.playerId === playerId;
+  })[0];
+  return a && isSuspended(a) ? a : null;
+}
+
+/** Staff: every account with what the admin menu shows (never hashes, salts or keys). */
+function listAccounts(actor) {
+  need(actor, 'accounts');
+  var data = { Accounts: readTable('Accounts'), Players: readTable('Players') };
+  var now = Date.now();
+  return {
+    accounts: data.Accounts.map(function (a) {
+      var p = findById(data.Players, a.playerId);
+      return {
+        id: a.id,
+        username: a.username,
+        playerId: a.playerId,
+        name: p ? p.name : a.username,
+        role: roleOf(a),
+        suspended: isSuspended(a),
+        bannedUntil: isSuspended(a) ? String(a.bannedUntil) : '',
+        banReason: isSuspended(a) ? String(a.banReason || '') : '',
+        locked: !!a.lockedUntil && new Date(a.lockedUntil).getTime() > now,
+        createdAt: String(a.createdAt || ''),
+        lastLogin: String(a.lastLogin || ''),
+        lastSeen: String(a.lastSeen || ''),
+        recovery: !!a.recoveryHash,
+        twoStep: !!a.totpSecret,
+        manageable: outranks(actor, a),
+      };
+    }),
+  };
+}
+
+function setRole(body, actor) {
+  need(actor, 'roles');
+  var data = { Accounts: readTable('Accounts') };
+  var a = accountOf(body.playerId, data);
+  if (!a) throw new Error('That player has no account');
+  var role = String(body.role || '').toLowerCase();
+  if (ROLES.indexOf(role) < 0) throw new Error('Unknown role');
+  if (!outranks(actor, a)) throw new Error('You can only change roles below your own');
+  if (ROLE_RANK[role] >= actor.rank) throw new Error('Only the site owner can make admins');
+  var before = roleOf(a);
+  a.role = role;
+  writeTable('Accounts', data.Accounts);
+  audit(actor, 'Changed role', accountLabel(a), (before || 'player') + ' → ' + (role || 'player'));
+  return { ok: true, role: role };
+}
+
+/** Suspend (`days` > 0, or `forever`) or lift a suspension (neither). Logged out at once. */
+function suspend(body, actor) {
+  var a = staffTarget(actor, body.playerId);
+  var data = { Accounts: readTable('Accounts') };
+  a = findById(data.Accounts, a.id);
+  var reason = String(body.reason || '').trim().slice(0, 200);
+  var days = Number(body.days);
+  if (body.forever) a.bannedUntil = 'forever';
+  else if (days > 0) a.bannedUntil = new Date(Date.now() + Math.min(days, 3650) * 86400000).toISOString();
+  else a.bannedUntil = '';
+  a.banReason = a.bannedUntil ? reason : '';
+  if (a.bannedUntil) a.sessionNonce = newSalt();
+  writeTable('Accounts', data.Accounts);
+  audit(
+    actor,
+    a.bannedUntil ? 'Suspended account' : 'Lifted suspension',
+    accountLabel(a),
+    a.bannedUntil ? (body.forever ? 'for good' : days + ' day' + (days === 1 ? '' : 's')) + (reason ? ': ' + reason : '') : '',
+  );
+  return { ok: true, bannedUntil: a.bannedUntil };
+}
+
+/**
+ * Log out every device: yourself (`token`; you get a new token so this device stays logged in) or,
+ * for staff, another account (`playerId`).
+ */
+function logOutEverywhere(body, actor) {
+  if (body.playerId) {
+    var target = staffTarget(actor, body.playerId);
+    var data = { Accounts: readTable('Accounts') };
+    target = findById(data.Accounts, target.id);
+    target.sessionNonce = newSalt();
+    writeTable('Accounts', data.Accounts);
+    audit(actor, 'Logged out everywhere', accountLabel(target), '');
+    return { ok: true };
+  }
+  var all = loadTables();
+  var a = accountFromToken(body.token, all);
+  if (!a) throw new Error(LOGGED_OUT);
+  a.sessionNonce = newSalt();
+  writeTable('Accounts', all.Accounts);
+  return { token: tokenFor(a), account: accountInfo(a, all) };
+}
+
+/** The player's own privacy choices: a private profile, and staying off the rankings. */
+function setPrivacy(body) {
+  var data = loadTables();
+  var a = accountFromToken(body.token, data);
+  if (!a) throw new Error(LOGGED_OUT);
+  if ('privateProfile' in body) a.privateProfile = body.privateProfile ? 'yes' : '';
+  if ('unranked' in body) a.unranked = body.unranked ? 'yes' : '';
+  writeTable('Accounts', data.Accounts);
+  return { account: accountInfo(a, data) };
+}
+
+/** Site-wide settings (script property SITE). */
+function siteSettings() {
+  return json(PropertiesService.getScriptProperties().getProperty('SITE'), {});
+}
+
+function publicSite() {
+  return { lockCreate: truthy(siteSettings().lockCreate) };
+}
+
+function setSite(body, actor) {
+  need(actor, 'settings');
+  var site = siteSettings();
+  if ('lockCreate' in body) {
+    site.lockCreate = !!body.lockCreate;
+    audit(actor, 'Changed security setting', 'Who can create tournaments', site.lockCreate ? 'Only organizers and staff' : 'Anyone');
+  }
+  PropertiesService.getScriptProperties().setProperty('SITE', JSON.stringify(site));
+  return { site: publicSite() };
+}
+
+/** Write one line to the Audit tab (newest on top). Never fails the action it records. */
+function audit(actor, action, target, detail) {
+  try {
+    var sheet = sheetFor('Audit');
+    var headers = headersFor(sheet, 'Audit');
+    sheet.insertRowsAfter(1, 1);
+    putRows(sheet, 2, headers, [
+      {
+        time: new Date().toISOString(),
+        actor: (actor && actor.label) || 'Someone',
+        role: (actor && actor.role) || '',
+        action: action,
+        target: target || '',
+        detail: String(detail || '').slice(0, 500),
+      },
+    ]);
+    var last = sheet.getLastRow();
+    if (last > AUDIT_MAX + 1) sheet.deleteRows(AUDIT_MAX + 2, last - AUDIT_MAX - 1);
+  } catch (e) {
+    // the audit log must never stop the real work
+  }
+}
+
+function readAudit(body, actor) {
+  need(actor, 'audit');
+  var limit = Math.max(1, Math.min(Number(body.limit) || 300, AUDIT_MAX));
+  return { audit: readTable('Audit').slice(0, limit) };
 }
 
 // ------------------------------------------------------------------ sheet helpers
@@ -1633,7 +2127,7 @@ function deleteAccount(playerId) {
 function loadTables() {
   var out = {};
   Object.keys(TABLES).forEach(function (name) {
-    if (name !== 'Log' && name !== 'Profiles') out[name] = readTable(name);
+    if (name !== 'Log' && name !== 'Profiles' && name !== 'Audit') out[name] = readTable(name);
   });
   return out;
 }

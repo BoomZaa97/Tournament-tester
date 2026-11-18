@@ -3,7 +3,7 @@
   import { app } from '../lib/app.svelte';
   import { getPrefs, savePrefs } from '../lib/prefs';
   import type { Prefs, TextSize, Theme } from '../lib/prefs';
-  import { forgetOrgKey, orgKeyIds, pinnedTournaments } from '../lib/store';
+  import { ROLE_LABEL, ROLE_RANK, forgetOrgKey, orgKeyIds, pinnedTournaments } from '../lib/store';
   import type { AllData } from '../lib/store';
 
   let prefs = $state<Prefs>(getPrefs());
@@ -33,9 +33,19 @@
     }));
   });
   const shared = app.store.kind === 'sheets';
+  const myRole = $derived((void app.account, app.store.role()));
   const role = $derived(
-    app.store.isAdmin ? (shared ? 'Site admin' : 'Everything (this browser only)') : organizing.length ? 'Organizer' : playing.length || app.account ? 'Player' : 'Viewer',
+    !shared
+      ? 'Everything (this browser only)'
+      : myRole
+        ? ROLE_LABEL[myRole]
+        : organizing.length
+          ? 'Organizer'
+          : playing.length || app.account
+            ? 'Player'
+            : 'Viewer',
   );
+  const staff = $derived(shared && ROLE_RANK[myRole] >= ROLE_RANK.moderator);
 
   function forget(id: string, name: string) {
     if (!confirm(`Stop editing “${name}” on this device? You'll need a helper link (or the account that made it) to edit it here again.`)) return;
@@ -91,8 +101,10 @@
       </div>
     {/if}
 
-    {#if app.store.isAdmin && shared}
-      <p class="small">Site admin: you can edit every tournament. <a href="#/admin">Admin settings</a></p>
+    {#if staff}
+      <p class="small">Staff: you can fix every tournament and manage accounts. <a href="#/admin">Admin</a></p>
+    {:else if myRole === 'organizer' && shared}
+      <p class="small">Organizer: you can create tournaments even when creating is limited.</p>
     {/if}
 
     {#if organizing.length}
@@ -121,12 +133,12 @@
       </ul>
     {/if}
 
-    {#if !app.store.isAdmin && !organizing.length && !playing.length}
+    {#if !staff && shared && !organizing.length && !playing.length}
       <p class="small muted">You can see every tournament. Create one to organize it, or join one to report your own scores.</p>
     {/if}
   </section>
 
-  {#if !app.store.isAdmin || !shared}
+  {#if !staff}
     <hr class="rule" />
     <p class="small muted owner">
       {shared ? 'Site owner?' : 'Data source, backups and roles:'} <a href="#/admin">Admin settings</a>

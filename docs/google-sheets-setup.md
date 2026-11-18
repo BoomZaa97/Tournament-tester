@@ -18,7 +18,8 @@ organizer key, so the sheet itself doesn't give it away. PINs are stored in the 
 sent to viewers. To stop anyone guessing them, a tournament refuses every PIN for 10 minutes after 10 wrong ones, and for
 6 hours after 40 wrong ones (the organizer can still enter scores and check people in meanwhile). Passwords are never stored: the `Accounts` tab keeps a salted hash made with a secret
 (`ACCOUNT_SECRET` script property, created by the script the first time someone makes an account; don't share it or change
-it, or every password stops working).
+it, or every password stops working). The `SITE` script property holds site settings (`{"lockCreate":true}` = only
+organizers and staff can create tournaments); change it on the Admin page → Security.
 
 ## 1. Make the sheet
 
@@ -83,6 +84,13 @@ New columns are added to the tabs by themselves on the next save:
 | Results | `status`, `reportedBy` | For scores players reported: `reported` → `confirmed` or `disputed`; empty = entered by the organizer |
 | Waitlist (new tab) | `playerId`, `name`, `pin`, `at`, `checkedIn` | People waiting for a spot, oldest first. Not in the bracket. |
 | Accounts (new tab) | `username`, `playerId`, `passHash`, `salt`, `orgKeys`, `fails`, `lockedUntil` | Player accounts. `orgKeys` holds the organizer keys of the account's tournaments. Delete a row to delete an account (the player and their results stay). |
+| Accounts | `recoveryHash` | Hash of the account's one-time recovery code (the code itself is never stored). |
+| Accounts | `role` | `organizer`, `moderator` or `admin` (empty = player). Given on the Admin page. |
+| Accounts | `bannedUntil`, `banReason` | Suspension: a date or `forever`, and the reason the player sees. Empty = not suspended. |
+| Accounts | `sessionNonce`, `lastLogin`, `lastSeen` | "Log out everywhere" changes the nonce. Last login / last time the site was opened logged in. |
+| Accounts | `privateProfile`, `unranked` | The player's privacy choices (`yes` = on). |
+| Accounts | `totpSecret`, `totpPending`, `totpLast` | Two-step login. A secret: never shown on the site. Empty `totpSecret` to turn it off for someone who lost their phone. |
+| Audit (new tab) | `time`, `actor`, `role`, `action`, `target`, `detail` | What staff did, plus security events (locks, recoveries, two-step on/off). Newest first, last 2,000. |
 | Entrants, Results, Log, Waitlist | `tournament` | The tournament's name, next to its id, so you can tell the rows apart. |
 | Tournaments | `category` | Optional division inside the game (Open, U18, Doubles…). Rankings can be split by it. |
 | Tournaments | `discordWebhook` | The Discord channel link an organizer connected. It's a secret: never shown on the site. Empty it to stop the posts. |

@@ -22,14 +22,81 @@ export interface Profile {
 export interface AllData {
   tournaments: TournamentDoc[];
   players: Player[];
+  /** Site-wide settings (shared mode). */
+  site?: SiteSettings;
+}
+
+export interface SiteSettings {
+  /** Only organizers and staff may create tournaments. */
+  lockCreate: boolean;
+}
+
+/**
+ * Roles. owner = the admin key on this device; the rest are given to accounts by the site admin.
+ * See Code.gs (ROLE_RANK / PERMS) for what each may do; the script checks every request itself.
+ */
+export type Role = '' | 'organizer' | 'moderator' | 'admin' | 'owner';
+export type Perm = 'tournaments' | 'players' | 'accounts' | 'audit' | 'roles' | 'settings' | 'create';
+export const ROLE_RANK: Record<Role, number> = { '': 0, organizer: 1, moderator: 2, admin: 3, owner: 4 };
+export const ROLE_LABEL: Record<Role, string> = { '': 'Player', organizer: 'Organizer', moderator: 'Moderator', admin: 'Admin', owner: 'Site owner' };
+const PERM_RANK: Record<Perm, number> = { create: 1, tournaments: 2, players: 2, accounts: 2, audit: 2, roles: 3, settings: 3 };
+
+export interface StaffAccount {
+  id: string;
+  username: string;
+  playerId: string;
+  name: string;
+  role: Role;
+  suspended: boolean;
+  bannedUntil: string;
+  banReason: string;
+  locked: boolean;
+  createdAt: string;
+  lastLogin: string;
+  lastSeen: string;
+  recovery: boolean;
+  twoStep: boolean;
+  /** This device's role may manage it (it's below us). */
+  manageable: boolean;
+}
+
+export interface AuditRow {
+  time: string;
+  actor: string;
+  role: string;
+  action: string;
+  target: string;
+  detail: string;
+}
+
+const SITE = 'tt.site.v1';
+/** The site settings the sheet last sent (so pages know them before loading). */
+export function siteSettings(): SiteSettings {
+  try {
+    return { lockCreate: false, ...JSON.parse(localStorage.getItem(SITE) || '{}') };
+  } catch {
+    return { lockCreate: false };
+  }
+}
+function rememberSite(site: SiteSettings | undefined) {
+  if (!site) return;
+  try {
+    localStorage.setItem(SITE, JSON.stringify(site));
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Where data lives. Swap implementations without touching the UI. */
 export interface Store {
   kind: 'local' | 'sheets';
-  /** Site admin (the owner's key): can change every tournament. Always true in local mode. */
+  /** Site owner (the admin key): can change everything. Always true in local mode. */
   isAdmin: boolean;
-  /** Can this browser change this tournament? Admin, or its organizer/helper key is saved here. */
+  /** This device's role: owner (admin key) or the logged-in account's role. */
+  role(): Role;
+  /** May this device do this (by role)? The script checks it again. */
+  can(perm: Perm): boolean;
+  /** Can this browser change this tournament? Staff, or its organizer/helper key is saved here. */
   canEdit(id: string): boolean;
   /** Every tournament and player. Shared mode leaves out each tournament's log unless `full` (lists don't need it). */
   loadAll(opts?: { full?: boolean }): Promise<AllData>;
@@ -84,7 +151,14 @@ export interface Store {
   /** Player accounts (shared mode). Each returns the account now saved on this device. */
   /** Also returns the account's first recovery code (shown once). */
   register?(input: { username: string; password: string; name: string; claim?: { code: string; pin: string } }): Promise<Account & { recoveryCode?: string }>;
-  login?(username: string, password: string): Promise<Account>;
+  /** `code`: the authenticator code, for accounts with two-step login (else the error is TWO_STEP). */
+  login?(username: string, password: string, code?: string): Promise<Account>;
+  /** Two-step login: a secret for the authenticator app (password), then the first code turns it on. */
+  twoStepSetup?(password: string): Promise<{ secret: string; uri: string }>;
+  twoStepOn?(code: string): Promise<Account>;
+  twoStepOff?(password: string, code: string): Promise<Account>;
+  /** Delete the logged-in account (password, and code with two-step). Logs this device out. */
+  deleteMe?(password: string, code?: string): Promise<{ playerRemoved: boolean }>;
   /** Forgot password: username + one-time recovery code + new password. Logs in; returns the next recovery code. */
   recover?(username: string, code: string, newPassword: string): Promise<Account & { recoveryCode: string }>;
   /** Logged in: a new recovery code (the old one stops working). Needs the current password. */
@@ -94,9 +168,20 @@ export interface Store {
   changePassword?(password: string, newPassword: string): Promise<Account>;
   renameSelf?(name: string): Promise<Account>;
   /** Site admin: a new random password for the account of this player. */
-  resetPassword?(playerId: string): Promise<{ username: string; password: string }>;
-  /** Site admin: remove a player's account (the player stays, unverified). */
-  deleteAccount?(playerId: string): Promise<void>;
+  resetPassword?(playerId: string): Promise<{ username: string; password: string; twoStepOff?: boolean }>;
+  /** Staff: remove a player's account. A player in no tournament goes too (playerRemoved); others stay, unverified. */
+  deleteAccount?(playerId: string): Promise<{ playerRemoved: boolean }>;
+  /** Staff (shared mode). */
+  accounts?(): Promise<StaffAccount[]>;
+  setRole?(playerId: string, role: Role): Promise<void>;
+  /** Suspend for some days or for good, or lift it (neither). */
+  suspend?(playerId: string, opts: { days?: number; forever?: boolean; reason?: string }): Promise<void>;
+  /** Log out every device: of another account (staff), or (no id) your own other devices. */
+  logoutAll?(playerId?: string): Promise<void>;
+  audit?(limit?: number): Promise<AuditRow[]>;
+  setSite?(site: Partial<SiteSettings>): Promise<SiteSettings>;
+  /** The logged-in player's privacy choices. */
+  setPrivacy?(p: { privateProfile?: boolean; unranked?: boolean }): Promise<Account>;
 }
 
 export interface Account {
@@ -106,6 +191,11 @@ export interface Account {
   name: string;
   /** Has a recovery code (for "forgot password"). */
   recovery?: boolean;
+  /** Two-step login (authenticator app) is on. */
+  twoStep?: boolean;
+  role?: Role;
+  privateProfile?: boolean;
+  unranked?: boolean;
 }
 
 export type ReportedResult = Pick<MatchResult, 'winner' | 'score1' | 'score2' | 'p1' | 'p2'>;
@@ -152,6 +242,9 @@ export function rememberPin(id: string, playerId: string, pin: string) {
 const ACCOUNT = 'tt.account.v1';
 /** Server message for a token that no longer works (password changed or reset). */
 export const LOGGED_OUT = 'Your login has expired. Please log in again.';
+export const SUSPENDED = 'This account is suspended';
+/** Login needs the authenticator code (two-step login is on). */
+export const TWO_STEP = 'Enter the 6-digit code from your authenticator app';
 
 interface SavedAccount {
   token: string;
@@ -276,6 +369,14 @@ function upsertPlayers(list: Player[], add: Player[]): Player[] {
 export class LocalStore implements Store {
   kind = 'local' as const;
   isAdmin = true;
+
+  role(): Role {
+    return 'owner';
+  }
+
+  can() {
+    return true;
+  }
   canEdit() {
     return true;
   }
@@ -414,8 +515,23 @@ export class SheetsStore implements Store {
     return t;
   }
 
+  role(): Role {
+    if (this.isAdmin) return 'owner';
+    return savedAccount()?.account.role ?? '';
+  }
+
+  can(perm: Perm) {
+    if (perm === 'create' && !siteSettings().lockCreate) return true;
+    return ROLE_RANK[this.role()] >= PERM_RANK[perm];
+  }
+
   canEdit(id: string) {
-    return this.isAdmin || !!orgKeyFor(id);
+    return this.can('tournaments') || !!orgKeyFor(id);
+  }
+
+  private staffToken() {
+    const a = savedAccount();
+    return a?.account.role ? a.token : '';
   }
 
   private async call<T>(method: 'GET' | 'POST', params: Record<string, unknown>): Promise<T> {
@@ -427,7 +543,8 @@ export class SheetsStore implements Store {
       res = await fetch(this.url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ ...params, key: this.key }),
+        // a staff account proves its role with its login token (`auth`); everyone else needs none
+        body: JSON.stringify({ ...params, key: this.key, ...(this.staffToken() ? { auth: this.staffToken() } : {}) }),
       });
     }
     if (!res.ok) throw new Error(`Google Sheet request failed (${res.status})`);
@@ -443,6 +560,7 @@ export class SheetsStore implements Store {
     const held = heldIds();
     const data = await this.call<AllData>('GET', opts.full ? { action: 'all' } : { action: 'all', lite: '1' });
     this.cache.setList(data);
+    rememberSite(data.site);
     forgetDeleted(data.tournaments.map((t) => t.id), held);
     return data;
   }
@@ -467,6 +585,11 @@ export class SheetsStore implements Store {
 
   async profile(playerId: string) {
     try {
+      // your own (or, for staff, anyone's) profile even when it's private
+      const token = savedAccount()?.token;
+      if (this.canEditProfile(playerId)) {
+        return (await this.call<{ profile: Profile | null }>('POST', { action: 'readProfile', id: playerId, ...(token ? { token } : {}) })).profile;
+      }
       return (await this.call<{ profile: Profile | null }>('GET', { action: 'profile', id: playerId })).profile;
     } catch (e) {
       if (e instanceof Error && e.message === UPDATE_SCRIPT) return null; // older script: no profiles yet
@@ -481,7 +604,7 @@ export class SheetsStore implements Store {
   }
 
   canEditProfile(playerId: string) {
-    return this.isAdmin || savedAccount()?.account.playerId === playerId;
+    return this.can('players') || savedAccount()?.account.playerId === playerId;
   }
 
   async players() {
@@ -565,9 +688,33 @@ export class SheetsStore implements Store {
     return r.recoveryCode;
   }
 
-  async login(username: string, password: string) {
-    const r = await this.call<{ token: string; account: Account }>('POST', { action: 'login', username, password });
+  async login(username: string, password: string, code?: string) {
+    const r = await this.call<{ token: string; account: Account }>('POST', { action: 'login', username, password, ...(code ? { code } : {}) });
     return this.loggedIn(r);
+  }
+
+  async twoStepSetup(password: string) {
+    return this.call<{ secret: string; uri: string }>('POST', { action: 'twoStepSetup', token: savedAccount()?.token ?? '', password });
+  }
+
+  async twoStepOn(code: string) {
+    const r = await this.call<{ account: Account }>('POST', { action: 'twoStepOn', token: savedAccount()?.token ?? '', code });
+    const a = savedAccount();
+    if (a) saveAccount({ ...a, account: r.account });
+    return r.account;
+  }
+
+  async twoStepOff(password: string, code: string) {
+    const r = await this.call<{ account: Account }>('POST', { action: 'twoStepOff', token: savedAccount()?.token ?? '', password, code });
+    const a = savedAccount();
+    if (a) saveAccount({ ...a, account: r.account });
+    return r.account;
+  }
+
+  async deleteMe(password: string, code?: string) {
+    const r = await this.call<{ playerRemoved: boolean }>('POST', { action: 'deleteMe', token: savedAccount()?.token ?? '', password, ...(code ? { code } : {}) });
+    forgetAccount();
+    return r;
   }
 
   async syncAccount() {
@@ -577,7 +724,7 @@ export class SheetsStore implements Store {
     try {
       r = await this.call('POST', { action: 'me', token: a.token, orgKeys: readJson<string>(KEYS) });
     } catch (e) {
-      if (e instanceof Error && e.message === LOGGED_OUT) forgetAccount();
+      if (e instanceof Error && (e.message === LOGGED_OUT || e.message.startsWith(SUSPENDED))) forgetAccount();
       throw e;
     }
     // This device now acts as the account's player in its tournaments (a borrowed phone's PIN gives way).
@@ -608,11 +755,50 @@ export class SheetsStore implements Store {
   }
 
   resetPassword(playerId: string) {
-    return this.call<{ username: string; password: string }>('POST', { action: 'resetPassword', playerId });
+    return this.call<{ username: string; password: string; twoStepOff?: boolean }>('POST', { action: 'resetPassword', playerId });
   }
 
   async deleteAccount(playerId: string) {
-    await this.call('POST', { action: 'deleteAccount', playerId });
+    return this.call<{ playerRemoved: boolean }>('POST', { action: 'deleteAccount', playerId });
+  }
+
+  async accounts() {
+    return (await this.call<{ accounts: StaffAccount[] }>('POST', { action: 'accounts' })).accounts;
+  }
+
+  async setRole(playerId: string, role: Role) {
+    await this.call('POST', { action: 'setRole', playerId, role });
+  }
+
+  async suspend(playerId: string, opts: { days?: number; forever?: boolean; reason?: string }) {
+    await this.call('POST', { action: 'suspend', playerId, ...opts });
+  }
+
+  async logoutAll(playerId?: string) {
+    if (playerId) {
+      await this.call('POST', { action: 'logoutAll', playerId });
+      return;
+    }
+    const a = savedAccount();
+    const r = await this.call<{ token: string; account: Account }>('POST', { action: 'logoutAll', token: a?.token ?? '' });
+    if (a) saveAccount({ ...a, token: r.token, account: r.account });
+  }
+
+  async audit(limit = 300) {
+    return (await this.call<{ audit: AuditRow[] }>('POST', { action: 'audit', limit })).audit;
+  }
+
+  async setSite(site: Partial<SiteSettings>) {
+    const r = await this.call<{ site: SiteSettings }>('POST', { action: 'site', ...site });
+    rememberSite(r.site);
+    return r.site;
+  }
+
+  async setPrivacy(p: { privateProfile?: boolean; unranked?: boolean }) {
+    const a = savedAccount();
+    const r = await this.call<{ account: Account }>('POST', { action: 'privacy', token: a?.token ?? '', ...p });
+    if (a) saveAccount({ ...a, account: r.account });
+    return r.account;
   }
 
   async report(id: string, matchId: string, pin: string, result: ReportedResult, matchNo?: number) {

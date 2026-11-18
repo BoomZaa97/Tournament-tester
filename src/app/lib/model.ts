@@ -19,6 +19,10 @@ export interface Player {
   name: string;
   /** Has a player account (from the Google script's player list; never saved back). */
   account?: boolean;
+  /** The account holder hides their photo, bio and links from others. */
+  privateProfile?: boolean;
+  /** The account holder stays off the rankings leaderboards. */
+  unranked?: boolean;
 }
 
 export interface LogEntry {

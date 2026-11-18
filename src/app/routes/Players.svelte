@@ -53,7 +53,8 @@
   const anyVerified = $derived(!!data?.players.some((p) => p.account));
   const list = $derived.by(() => {
     if (!data) return [];
-    const rows = ranked(rankings(scope, data.players).values(), by);
+    // players who chose "hide me from the rankings" are left out (their matches still rate their opponents)
+    const rows = ranked([...rankings(scope, data.players).values()].filter((r) => !r.player.unranked), by);
     // "verified only" hides the others but keeps everyone's real place in the whole ranking
     return verifiedOnly ? rows.filter((r) => app.verified.has(r.player.id)) : rows;
   });

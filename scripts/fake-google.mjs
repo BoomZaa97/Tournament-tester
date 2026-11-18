@@ -142,6 +142,12 @@ export function fakeGoogle({ adminKey = 'secret', codePath = 'apps-script/Code.g
       DigestAlgorithm: { SHA_256: 'sha256' },
       Charset: { UTF_8: 'utf8' },
       // Apps Script returns signed bytes (-128..127)
+      MacAlgorithm: { HMAC_SHA_1: 'sha1' },
+      // byte-array form (Apps Script bytes are signed)
+      computeHmacSignature: (alg, v, k) =>
+        [...createHmac(alg, Buffer.from(k.map((b) => b & 255))).update(Buffer.from(v.map((b) => b & 255))).digest()].map((b) =>
+          b > 127 ? b - 256 : b,
+        ),
       computeHmacSha256Signature: (v, k) => [...createHmac('sha256', k).update(v, 'utf8').digest()].map((b) => (b > 127 ? b - 256 : b)),
       getUuid: () => randomUUID(),
       computeDigest: (_alg, s) => [...createHash('sha256').update(s, 'utf8').digest()].map((b) => (b > 127 ? b - 256 : b)),

@@ -80,8 +80,8 @@ describe('Google Sheets backend (Code.gs)', () => {
   it('anyone can read; writing needs the admin key or an organizer key', () => {
     const g = fakeGoogle();
     expect(g.post({ key: 'wrong', action: 'save', tournament: doc }).error).toMatch(/organizer key/);
-    expect(g.post({ key: 'wrong', action: 'check' })).toEqual({ admin: false, organizer: false });
-    expect(g.post({ key: 'secret', action: 'check' })).toEqual({ admin: true, organizer: false });
+    expect(g.post({ key: 'wrong', action: 'check' })).toMatchObject({ admin: false, organizer: false });
+    expect(g.post({ key: 'secret', action: 'check' })).toMatchObject({ admin: true, organizer: false });
     expect(g.get({ action: 'all' }).tournaments).toEqual([]);
   });
 
@@ -124,7 +124,7 @@ describe('Google Sheets backend (Code.gs)', () => {
     it('anyone can create a tournament; only its organizer (or the admin) can change it', () => {
       const g = fakeGoogle();
       expect(create(g).error).toBeUndefined();
-      expect(g.post({ action: 'check', id: 'o1', orgKey: ORG })).toEqual({ admin: false, organizer: true });
+      expect(g.post({ action: 'check', id: 'o1', orgKey: ORG })).toMatchObject({ admin: false, organizer: true });
       expect(g.post({ action: 'save', orgKey: 'someone-else-key-12345', tournament: { ...swiss, version: 1 } }).error).toMatch(/organizer/);
       expect(g.post({ action: 'save', orgKey: ORG, tournament: { ...swiss, name: 'Renamed', version: 1 } }).tournament.version).toBe(2);
       expect(g.post({ action: 'save', key: 'secret', tournament: { ...swiss, version: 2 } }).tournament.version).toBe(3);
@@ -379,6 +379,7 @@ describe('Google Sheets backend (Code.gs)', () => {
     const create = (g: G, extra: Record<string, unknown> = {}) =>
       g.post({ action: 'save', orgKey: ORG, tournament: open, players: open.entrants, ...extra });
     const reg = (g: G, body: Record<string, unknown>) => g.post({ action: 'register', password: 'hunter22', ...body });
+    const totp = (g: G, secret: string, step: number) => (g.ctx.totpAt as (s: string, n: number) => string)(secret, step);
     const pinsOf = (g: G) => g.post({ action: 'pins', id: 'o1', orgKey: ORG }).pins as Record<string, string>;
 
     it('register, log in, wrong passwords lock the account for a while; nothing secret is public', () => {
@@ -514,21 +515,206 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.post({ action: 'recover', username: 'olduser', code: made.recoveryCode, newPassword: 'whatever1' }).error).toBeUndefined();
     });
 
-    it('admin removes an account: the player stays unverified, the login stops working, clean-up can then remove them', () => {
+    it('roles: the owner makes admins, admins make moderators and organizers; nobody acts above their rank', () => {
+      const g = fakeGoogle();
+      const boss = reg(g, { username: 'boss', name: 'Boss' });
+      const mod = reg(g, { username: 'mod', name: 'Mod' });
+      const org = reg(g, { username: 'org', name: 'Org' });
+      const joe = reg(g, { username: 'joe', name: 'Joe' });
+      const role = (by: Record<string, unknown>, who: { account: { playerId: string } }, r: string) =>
+        g.post({ action: 'setRole', playerId: who.account.playerId, role: r, ...by });
+      // only staff with the roles right
+      expect(role({ auth: joe.token }, mod, 'moderator').error).toMatch(/Only the site admin or staff/);
+      expect(role({ key: 'secret' }, boss, 'admin').error).toBeUndefined();
+      expect(g.post({ action: 'me', token: boss.token }).account.role).toBe('admin');
+      // an admin can't make admins or touch other admins
+      expect(role({ auth: boss.token }, mod, 'admin').error).toMatch(/site owner/);
+      expect(role({ auth: boss.token }, mod, 'moderator').error).toBeUndefined();
+      expect(role({ auth: boss.token }, org, 'organizer').error).toBeUndefined();
+      expect(role({ auth: boss.token }, boss, '').error).toMatch(/below your own/);
+      // a moderator can't give roles at all
+      expect(role({ auth: mod.token }, joe, 'organizer').error).toMatch(/role can't/);
+      // the account list is for staff only, and never has secrets
+      expect(g.post({ action: 'accounts', auth: joe.token }).error).toBeDefined();
+      const list = g.post({ action: 'accounts', auth: mod.token }).accounts;
+      expect(list.map((a: { role: string }) => a.role).sort()).toEqual(['', 'admin', 'moderator', 'organizer']);
+      expect(JSON.stringify(list)).not.toMatch(/passHash|salt|recoveryHash|orgKeys/);
+      expect(list.find((a: { username: string }) => a.username === 'boss').manageable).toBe(false);
+      // a moderator edits any tournament (written to the audit log), but not with a wrong token
+      create(g);
+      const t = g.get({ action: 'get', id: 'o1' }).tournament;
+      expect(g.post({ action: 'save', auth: joe.token, tournament: { ...t, name: 'Hacked' }, players: [] }).error).toMatch(/organizer/i);
+      expect(g.post({ action: 'save', auth: mod.token, tournament: { ...t, name: 'Fixed' }, players: [] }).error).toBeUndefined();
+      const audit = g.post({ action: 'audit', auth: mod.token }).audit;
+      expect(audit[0]).toMatchObject({ actor: 'Mod (@mod)', role: 'moderator', action: 'Edited tournament' });
+      expect(audit.map((r: { action: string }) => r.action)).toEqual(['Edited tournament', 'Changed role', 'Changed role', 'Changed role']);
+      expect(g.post({ action: 'audit', auth: org.token }).error).toBeDefined();
+    });
+
+    it('suspensions: no login, no token, no PINs; staff only below them; lifting works', () => {
+      const g = fakeGoogle();
+      create(g);
+      const t = g.get({ action: 'get', id: 'o1' }).tournament;
+      const alice = t.entrants[0];
+      g.post({ action: 'save', orgKey: ORG, tournament: { ...t, checkIn: true }, players: [] });
+      const pins = g.post({ action: 'pins', id: 'o1', orgKey: ORG }).pins as Record<string, string>;
+      // Alice makes an account with her PIN, then gets suspended
+      const al = reg(g, { username: 'alice', name: alice.name, claim: { code: t.code, pin: pins[alice.id] } });
+      expect(al.error).toBeUndefined();
+      const mod = reg(g, { username: 'mod', name: 'Mod' });
+      g.post({ action: 'setRole', key: 'secret', playerId: mod.account.playerId, role: 'moderator' });
+      expect(g.post({ action: 'suspend', auth: al.token, playerId: mod.account.playerId, days: 1 }).error).toBeDefined();
+      expect(g.post({ action: 'suspend', auth: mod.token, playerId: al.account.playerId, days: 7, reason: 'Spam' }).error).toBeUndefined();
+      expect(g.post({ action: 'login', username: 'alice', password: 'hunter22' }).error).toMatch(/suspended until .*Reason: Spam/);
+      expect(g.post({ action: 'me', token: al.token }).error).toMatch(/log in again/); // logged out everywhere
+      expect(g.post({ action: 'checkin', id: 'o1', pin: pins[alice.id], here: true }).error).toMatch(/suspended/);
+      const m = g.post({ action: 'accounts', auth: mod.token }).accounts.find((a: { username: string }) => a.username === 'alice');
+      expect(m).toMatchObject({ suspended: true, banReason: 'Spam' });
+      // lifted: works again (old tokens stay logged out)
+      expect(g.post({ action: 'suspend', auth: mod.token, playerId: al.account.playerId }).error).toBeUndefined();
+      expect(g.post({ action: 'login', username: 'alice', password: 'hunter22' }).error).toBeUndefined();
+      expect(g.post({ action: 'me', token: al.token }).error).toMatch(/log in again/);
+      const log = g.post({ action: 'audit', key: 'secret' }).audit.map((r: { action: string }) => r.action);
+      expect(log.slice(0, 2)).toEqual(['Lifted suspension', 'Suspended account']);
+    });
+
+    it('log out everywhere: yourself (this device keeps a new token) or staff for someone else', () => {
+      const g = fakeGoogle();
+      const dana = reg(g, { username: 'dana', name: 'Dana' });
+      const other = g.post({ action: 'login', username: 'dana', password: 'hunter22' });
+      const out = g.post({ action: 'logoutAll', token: dana.token });
+      expect(out.error).toBeUndefined();
+      expect(g.post({ action: 'me', token: other.token }).error).toMatch(/log in again/);
+      expect(g.post({ action: 'me', token: dana.token }).error).toMatch(/log in again/);
+      expect(g.post({ action: 'me', token: out.token }).error).toBeUndefined();
+      expect(g.post({ action: 'logoutAll', key: 'secret', playerId: dana.account.playerId }).error).toBeUndefined();
+      expect(g.post({ action: 'me', token: out.token }).error).toMatch(/log in again/);
+      // sessions: last login is shown to staff
+      const row = g.post({ action: 'accounts', key: 'secret' }).accounts[0];
+      expect(row.lastLogin).toMatch(/^20/);
+    });
+
+    it('creation lock: when on, only organizers and staff can create tournaments; edits still work', () => {
+      const g = fakeGoogle();
+      const org = reg(g, { username: 'org', name: 'Org' });
+      g.post({ action: 'setRole', key: 'secret', playerId: org.account.playerId, role: 'organizer' });
+      create(g); // made before the lock
+      expect(g.post({ action: 'site', auth: org.token, lockCreate: true }).error).toBeDefined();
+      expect(g.post({ action: 'site', key: 'secret', lockCreate: true })).toEqual({ site: { lockCreate: true } });
+      expect(g.get({ action: 'all', lite: '1' }).site).toEqual({ lockCreate: true });
+      const fresh = { ...open, id: 'n1', name: 'New' };
+      expect(g.post({ action: 'save', orgKey: ORG, tournament: fresh, players: fresh.entrants }).error).toMatch(/Only organizers/);
+      expect(g.post({ action: 'save', orgKey: ORG, auth: org.token, tournament: fresh, players: fresh.entrants }).error).toBeUndefined();
+      const t = g.get({ action: 'get', id: 'o1' }).tournament;
+      expect(g.post({ action: 'save', orgKey: ORG, tournament: { ...t, name: 'Still mine' }, players: [] }).error).toBeUndefined();
+      expect(g.post({ action: 'audit', key: 'secret' }).audit[0]).toMatchObject({ action: 'Changed security setting', detail: 'Only organizers and staff' });
+    });
+
+    it('privacy: a private profile is hidden from others; staying off the rankings is a flag on the player', () => {
+      const g = fakeGoogle();
+      const dana = reg(g, { username: 'dana', name: 'Dana' });
+      const me = dana.account.playerId;
+      g.post({ action: 'profile', id: me, token: dana.token, bio: 'Hello', links: [] });
+      expect(g.get({ action: 'profile', id: me }).profile.bio).toBe('Hello');
+      const set = g.post({ action: 'privacy', token: dana.token, privateProfile: true, unranked: true });
+      expect(set.account).toMatchObject({ privateProfile: true, unranked: true });
+      expect(g.get({ action: 'profile', id: me })).toEqual({ profile: null, private: true });
+      expect(g.post({ action: 'readProfile', id: me, token: dana.token }).profile.bio).toBe('Hello');
+      expect(g.post({ action: 'readProfile', id: me, key: 'secret' }).profile.bio).toBe('Hello');
+      expect(g.post({ action: 'readProfile', id: me }).profile).toBeNull();
+      expect(g.get({ action: 'players' }).players[0]).toMatchObject({ id: me, privateProfile: true, unranked: true });
+      expect(g.post({ action: 'privacy', token: dana.token, privateProfile: false }).account.privateProfile).toBe(false);
+      expect(g.get({ action: 'profile', id: me }).profile.bio).toBe('Hello');
+    });
+
+    it('admin removes an account in one step: a player with no tournaments goes too; one who played stays unverified', () => {
       const g = fakeGoogle();
       const { account } = reg(g, { username: 'dupe', name: 'Dupe' });
+      g.post({ action: 'profile', id: account.playerId, key: 'secret', bio: 'test', links: [] });
       reg(g, { username: 'keeper', name: 'Keeper' });
       expect(g.post({ action: 'deleteAccount', playerId: account.playerId }).error).toMatch(/site admin/);
       expect(g.post({ action: 'deleteAccount', key: 'secret', playerId: 'nobody' }).error).toMatch(/no account/);
-      expect(g.post({ action: 'deleteAccount', key: 'secret', playerId: account.playerId }).error).toBeUndefined();
+      expect(g.post({ action: 'deleteAccount', key: 'secret', playerId: account.playerId })).toEqual({ ok: true, playerRemoved: true });
       expect(g.post({ action: 'login', username: 'dupe', password: 'hunter22' }).error).toBeDefined();
       expect(g.post({ action: 'login', username: 'keeper', password: 'hunter22' }).error).toBeUndefined();
-      expect(g.get({ action: 'players' }).players.find((p: { id: string }) => p.id === account.playerId)).toEqual({ id: account.playerId, name: 'Dupe' });
-      // the name has no results, so anyone can make an account with it again (no PIN needed): same player
-      const again = reg(g, { username: 'dupe2', name: 'dupe' });
+      expect(g.get({ action: 'players' }).players.map((p: { name: string }) => p.name)).toEqual(['Keeper']);
+      expect(g.get({ action: 'profile', id: account.playerId }).profile).toBeNull();
+      // the name is free at once, nothing left to clean up
+      const again = reg(g, { username: 'dupe2', name: 'Dupe' });
       expect(again.error).toBeUndefined();
-      expect(again.account.playerId).toBe(account.playerId);
       expect(g.post({ action: 'prunePlayers', key: 'secret' }).removed).toEqual([]);
+
+      // someone who played keeps their player and results
+      create(g);
+      const t = g.get({ action: 'get', id: 'o1' }).tournament;
+      const alice = t.entrants[0];
+      const pins = g.post({ action: 'pins', id: 'o1', orgKey: ORG }).pins as Record<string, string>;
+      const al = reg(g, { username: 'alice', name: alice.name, claim: { code: t.code, pin: pins[alice.id] } });
+      expect(g.post({ action: 'deleteAccount', key: 'secret', playerId: al.account.playerId })).toEqual({ ok: true, playerRemoved: false });
+      expect(g.get({ action: 'players' }).players.find((p: { id: string }) => p.id === alice.id)).toEqual({ id: alice.id, name: alice.name });
+    });
+
+    it('players delete their own account with their password; the name is free again', () => {
+      const g = fakeGoogle();
+      const dana = reg(g, { username: 'dana', name: 'Dana' });
+      const other = g.post({ action: 'login', username: 'dana', password: 'hunter22' });
+      expect(g.post({ action: 'deleteMe', token: dana.token, password: 'wrong1' }).error).toMatch(/password is wrong/);
+      expect(g.post({ action: 'deleteMe', token: dana.token, password: 'hunter22' })).toEqual({ ok: true, playerRemoved: true });
+      expect(g.post({ action: 'me', token: other.token }).error).toMatch(/log in again/);
+      expect(g.post({ action: 'login', username: 'dana', password: 'hunter22' }).error).toMatch(/Wrong username/);
+      expect(g.get({ action: 'players' }).players).toEqual([]);
+      expect(reg(g, { username: 'dana', name: 'Dana' }).error).toBeUndefined();
+      expect(g.post({ action: 'audit', key: 'secret' }).audit[0]).toMatchObject({ action: 'Account deleted by its owner', target: 'Dana (@dana)' });
+    });
+
+    it('two-step login: set up with an authenticator code, then login needs a fresh code; recovery turns it off', () => {
+      const g = fakeGoogle();
+      // RFC 6238 test vector (SHA-1, T = 59 s)
+      expect(totp(g, 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ', 1)).toBe('287082');
+      const step = () => Math.floor(Date.now() / 30000);
+      const dana = reg(g, { username: 'dana', name: 'Dana' });
+      const code = dana.recoveryCode;
+      expect(g.post({ action: 'twoStepSetup', token: dana.token, password: 'nope11' }).error).toMatch(/password is wrong/);
+      const setup = g.post({ action: 'twoStepSetup', token: dana.token, password: 'hunter22' });
+      expect(setup.secret).toMatch(/^[A-Z2-7]{32}$/);
+      expect(setup.uri).toBe(`otpauth://totp/Tournament%20Tester%3Adana?secret=${setup.secret}&issuer=Tournament%20Tester`);
+      // not on until a code proves the app has it
+      expect(g.post({ action: 'login', username: 'dana', password: 'hunter22' }).error).toBeUndefined();
+      expect(g.post({ action: 'twoStepOn', token: dana.token, code: '000000' }).error).toMatch(/doesn't match/);
+      const on = g.post({ action: 'twoStepOn', token: dana.token, code: totp(g, setup.secret, step()) });
+      expect(on.account.twoStep).toBe(true);
+      // the secret never leaves the script again
+      expect(JSON.stringify(g.post({ action: 'accounts', key: 'secret' }))).not.toContain(setup.secret);
+      expect(g.post({ action: 'accounts', key: 'secret' }).accounts[0].twoStep).toBe(true);
+      // login: password alone asks for the code; a used code doesn't work twice
+      expect(g.post({ action: 'login', username: 'dana', password: 'hunter22' }).error).toMatch(/6-digit code/);
+      expect(g.post({ action: 'login', username: 'dana', password: 'hunter22', code: totp(g, setup.secret, step()) }).error).toMatch(/Wrong code/);
+      const next = totp(g, setup.secret, step() + 1);
+      const ok = g.post({ action: 'login', username: 'dana', password: 'hunter22', code: next });
+      expect(ok.error).toBeUndefined();
+      expect(g.post({ action: 'login', username: 'dana', password: 'hunter22', code: next }).error).toMatch(/Wrong code/);
+      // deleting the account needs a code too
+      expect(g.post({ action: 'deleteMe', token: ok.token, password: 'hunter22' }).error).toMatch(/two-step/);
+      // lost phone: the recovery code gets them in and turns it off
+      const rec = g.post({ action: 'recover', username: 'dana', code, newPassword: 'newpass1' });
+      expect(rec).toMatchObject({ twoStepOff: true, account: { twoStep: false } });
+      expect(g.post({ action: 'login', username: 'dana', password: 'newpass1' }).error).toBeUndefined();
+    });
+
+    it('two-step login: turning it off needs password and code; a staff reset turns it off', () => {
+      const g = fakeGoogle();
+      const step = () => Math.floor(Date.now() / 30000);
+      const dana = reg(g, { username: 'dana', name: 'Dana' });
+      const { secret } = g.post({ action: 'twoStepSetup', token: dana.token, password: 'hunter22' });
+      g.post({ action: 'twoStepOn', token: dana.token, code: totp(g, secret, step() - 1) });
+      expect(g.post({ action: 'twoStepOff', token: dana.token, password: 'hunter22', code: '123' }).error).toMatch(/Wrong two-step/);
+      expect(g.post({ action: 'twoStepOff', token: dana.token, password: 'hunter22', code: totp(g, secret, step()) }).account.twoStep).toBe(false);
+      // on again, then a reset by the owner
+      const again = g.post({ action: 'twoStepSetup', token: dana.token, password: 'hunter22' });
+      g.post({ action: 'twoStepOn', token: dana.token, code: totp(g, again.secret, step() + 1) });
+      const reset = g.post({ action: 'resetPassword', key: 'secret', playerId: dana.account.playerId });
+      expect(reset.twoStepOff).toBe(true);
+      expect(g.post({ action: 'login', username: 'dana', password: reset.password }).error).toBeUndefined();
     });
 
     it('a removed player keeps their PIN: adding them back or them signing up again gives the same one', () => {

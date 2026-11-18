@@ -59,7 +59,29 @@ Made because Challonge made fixing wrong results hard.
   new player id under a verified name, and `renamePlayer` (admin) can't rename someone else onto one.
 - The device forgets organizer keys / PINs of deleted tournaments (`forgetDeleted`, on every `loadAll`, only ids held before
   the request). Removing the account this device is logged in to logs it out.
-- `store.canEdit(id)` (admin key or org key for that id) replaces the old global flag.
+- `store.canEdit(id)` (`can('tournaments')` or org key for that id) replaces the old global flag.
+- Staff roles (Code.gs "roles, suspensions, sessions, audit" section; `Accounts.role`): `ROLE_RANK` '' 0 < organizer 1 <
+  moderator 2 < admin 3 < owner 4 (owner = `ADMIN_KEY`). `PERMS`: tournaments/players/accounts/audit = moderator,
+  roles/settings = admin. `whoIs(body)` → actor (key, or `auth` = the account token, sent by `SheetsStore` only when the
+  saved account has a role). Staff act only on accounts below them (`staffTarget`/`outranks`); only the owner makes admins.
+  Client: `store.role()`, `store.can(perm)` (+ 'create': true unless `site.lockCreate`), `ROLE_LABEL`. Every staff
+  action → `audit()` (Audit tab, newest first via insertRowsAfter, max 2000; `loadTables` skips it).
+- Admin page (`routes/Admin.svelte`) = tabs by perms: Overview, Users & roles (role select, suspend 1/7/30/365 days/forever,
+  log out everywhere, reset password, remove, clean up players), Tournaments, Audit log, Security (`lockCreate`, roles
+  table), Data & backup. Nav link when `can('audit')` in sheets mode.
+- Suspensions: `bannedUntil` ('forever' or ISO) + `banReason`; suspending changes `sessionNonce` (token includes it), login /
+  recover / PINs refused (`suspendedAccountOf`). "Log out everywhere": `logoutAll` (self → new token for this device).
+- Site settings: script property `SITE` JSON (`lockCreate`), sent as `site` in `GET all`, cached in `tt.site.v1`.
+  `CREATE_LOCKED` for version-0 saves below organizer.
+- Privacy: `Accounts.privateProfile` (GET profile → `{profile:null, private:true}`; POST `readProfile` for self/staff) and
+  `unranked` (players lists carry the flags; Rankings leaves them out before ranking).
+- Two-step login (TOTP, RFC 6238 SHA-1/6 digits/30 s, ±1 step): `twoStepSetup` (password → `totpPending` + otpauth URI,
+  QR on the Account page), `twoStepOn` (first code), `twoStepOff` (password + code). Login without `code` → `TWO_STEP`
+  error, the form then asks for it. `totpLast` = last step used (each code once). Wrong codes count towards the lock.
+  Recovery code and staff reset turn it off (`twoStepOff: true` in the reply). Fake Google has `computeHmacSignature`.
+- Deleting accounts: `deleteMe` (own password + code) or staff `deleteAccount`; both call `removePlayerIfUnused` (no
+  entrant/waitlist/result → the player and profile go too, `playerRemoved`), so no separate clean-up.
+- Player pages show the player ID (copy button).
 - Settings are split: `#/settings` (`routes/Settings.svelte`, everyone) = this device's look (`lib/prefs.ts`, `tt.prefs.v1`:
   theme auto/light/dark → `data-theme` on <html>, text size → `data-size=large` = `zoom: 1.12` on body; Bracket divides its
   connector measurements by that zoom) and "Your access" (role, account, tournaments organized/played on this device).

@@ -82,6 +82,12 @@
 <div class="wrap page">
   <a class="back small" href="#/">← Tournaments</a>
   <h1>New tournament</h1>
+  {#if !app.store.can('create')}
+    <p class="notice">
+      Only organizers can create tournaments here. Ask the site admin for the Organizer role{app.account ? '' : ', then log in'}.
+      {#if !app.account}<a href="#/account/new">Log in</a>{/if}
+    </p>
+  {:else}
 
   {#if shared}
     <p class="small muted intro">
@@ -143,6 +149,7 @@
         {/if}
       </section>
     </div>
+  {/if}
 </div>
 
 <style>
