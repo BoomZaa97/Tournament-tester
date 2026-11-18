@@ -95,11 +95,16 @@ Made because Challonge made fixing wrong results hard.
 - Create: sign-up is on by default in shared mode and no entrants are required (the page waits for 2).
 - Home (`routes/Home.svelte`, `#/`): plain "results sheet" front page, no marketing hero / step lists / stat cards.
   Masthead (date line, "Tournaments & results", counts, New tournament). Left: On now, Taking sign-ups, Latest results
-  (or a short "Nothing here yet" text). Right: join-code box, Notices, Top players (most played game), Official. Then All
-  tournaments (filter chips incl. Official). Phones: join + notices first.
-- Notices (announcements): `site.news` in the SITE script property (≤ 8, newest first; title ≤ 80, text ≤ 400, link
-  https:// or #/…, `important`). Code.gs `news` action (perm 'tournaments', audited): `post` (with `id` = edit) or
-  `remove`. Sent with `GET all` as `site.news`; `store.setNews`; staff post/edit/remove inline on the home page.
+  (or a short "Nothing here yet" text). Right: join-code box, Top players (most played game), Official. Then the 6 most
+  recent tournaments + link to the Tournaments page. No nav item is highlighted on Home (the brand links to it).
+- Tournaments page (`routes/Tournaments.svelte`, `#/tournaments`, nav "Tournaments"): status tabs with counts, search,
+  sort, and filters for game, category, division, format, event size, official only, taking sign-ups (folded behind a
+  "Filters" button on phones). Filters live in `sessionStorage` `tt.tfilter.v1`. Rows: `components/TournamentRows.svelte`
+  (also used by Home).
+- Notices (announcements), backend only for now (the owner didn't want them on the site yet): `site.news` in the SITE
+  script property (≤ 8, newest first; title ≤ 80, text ≤ 400, link https:// or #/…, `important`). Code.gs `news` action
+  (perm 'tournaments', audited): `post` (with `id` = edit) or `remove`. Sent with `GET all` as `site.news`;
+  `store.setNews`. No UI shows them.
 - Footer (App.svelte, not on the poster): about line, Players / Organizers links, © year, back to top. Its link lists are
   `div.links`, not `nav` (App's header `nav a` styles would apply).
 - Player page stats start with the overall rating (all games) and place.

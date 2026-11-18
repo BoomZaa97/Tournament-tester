@@ -140,7 +140,7 @@
 
 <div class="wrap page">
   {#if missing}
-    <p class="empty">This tournament doesn't exist (or was deleted). <a href="#/">See all tournaments</a></p>
+    <p class="empty">This tournament doesn't exist (or was deleted). <a href="#/tournaments">See all tournaments</a></p>
   {:else if error && !doc}
     <p class="notice">Couldn't load: {error}</p>
   {:else if !doc}

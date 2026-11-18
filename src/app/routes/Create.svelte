@@ -81,7 +81,7 @@
 </script>
 
 <div class="wrap page">
-  <a class="back small" href="#/">← Tournaments</a>
+  <a class="back small" href="#/tournaments">← Tournaments</a>
   <h1>New tournament</h1>
   {#if !app.store.can('create')}
     <p class="notice">

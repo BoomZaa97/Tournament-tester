@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from './lib/app.svelte';
   import Home from './routes/Home.svelte';
+  import Tournaments from './routes/Tournaments.svelte';
   import Create from './routes/Create.svelte';
   import Tournament from './routes/Tournament.svelte';
   import Poster from './routes/Poster.svelte';
@@ -42,7 +43,7 @@
       <span><small>Project:</small> Tournament Tester</span>
     </a>
     <nav>
-      <a href="#/" class:on={section === '' || section === 't' || section === 'j' || section === 'new'}>Tournaments</a>
+      <a href="#/tournaments" class:on={section === 'tournaments' || section === 't' || section === 'j' || section === 'new'}>Tournaments</a>
       <a href="#/players" class:on={section === 'players' || (section === 'p' && app.path[1] !== app.account?.playerId)}>Rankings</a>
     </nav>
     <UserMenu {staff} {section} />
@@ -77,6 +78,8 @@
       <Poster id={app.path[1]} />
     {:else if section === 't' && app.path[1]}
       <Tournament id={app.path[1]} tab={app.path[2] ?? 'bracket'} arg={app.path[3]} />
+    {:else if section === 'tournaments'}
+      <Tournaments />
     {:else if section === 'players'}
       <Players />
     {:else if section === 'p' && app.path[1]}
@@ -103,7 +106,7 @@
         </div>
         <div class="links" role="navigation" aria-label="Players">
           <h2>Players</h2>
-          <a href="#/">Tournaments</a>
+          <a href="#/tournaments">Tournaments</a>
           <a href="#/players">Rankings</a>
           <a href={app.account ? `#/p/${app.account.playerId}` : '#/account'}>{app.account ? 'Your profile' : 'Log in or sign up'}</a>
         </div>

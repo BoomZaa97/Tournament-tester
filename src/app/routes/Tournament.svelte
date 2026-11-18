@@ -408,7 +408,7 @@
     try {
       await app.store.remove(doc.id);
       app.notify('Deleted');
-      app.go('');
+      app.go('tournaments');
     } catch (e) {
       app.notify(errorText(e), 'error');
     }
@@ -438,7 +438,7 @@
 </script>
 
 {#if missing}
-  <div class="wrap page"><div class="empty">This tournament doesn't exist (or was deleted). <a href="#/">Back to list</a></div></div>
+  <div class="wrap page"><div class="empty">This tournament doesn't exist (or was deleted). <a href="#/tournaments">Back to list</a></div></div>
 {:else if error && !doc}
   <div class="wrap page"><p class="notice">Couldn't load: {error}</p></div>
 {:else if !doc}
