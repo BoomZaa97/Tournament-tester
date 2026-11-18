@@ -468,6 +468,52 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.post({ action: 'login', username: 'dana', password: 'hunter22' }).error).toBeUndefined();
     });
 
+    it('account recovery: a one-time code resets the password, wrong codes lock, a new code needs the password', () => {
+      const g = fakeGoogle();
+      const r = reg(g, { username: 'dana', name: 'Dana' });
+      expect(r.recoveryCode).toMatch(/^[0-9A-F]{4}(-[0-9A-F]{4}){3}$/);
+      expect(r.account.recovery).toBe(true);
+      // the code is only shown once: not in the sheet, not in any later answer
+      expect(JSON.stringify(g.sheets.dump())).not.toContain(r.recoveryCode.replace(/-/g, ''));
+      expect(JSON.stringify(g.post({ action: 'me', token: r.token }))).not.toContain(r.recoveryCode);
+
+      // typed loosely (lower case, spaces) it still works; other devices are logged out; the code is used up
+      const loose = r.recoveryCode.toLowerCase().replace(/-/g, ' ');
+      const ok = g.post({ action: 'recover', username: ' DANA ', code: loose, newPassword: 'new-secret' });
+      expect(ok.error).toBeUndefined();
+      expect(ok.recoveryCode).toMatch(/^[0-9A-F]{4}-/);
+      expect(ok.recoveryCode).not.toBe(r.recoveryCode);
+      expect(g.post({ action: 'me', token: r.token }).error).toMatch(/log in again/);
+      expect(g.post({ action: 'login', username: 'dana', password: 'hunter22' }).error).toMatch(/Wrong/);
+      expect(g.post({ action: 'login', username: 'dana', password: 'new-secret' }).error).toBeUndefined();
+      expect(g.post({ action: 'recover', username: 'dana', code: r.recoveryCode, newPassword: 'again-again' }).error).toMatch(/recovery code/);
+
+      // a short new password is refused and doesn't use up the code
+      expect(g.post({ action: 'recover', username: 'dana', code: ok.recoveryCode, newPassword: 'x' }).error).toMatch(/6 characters/);
+      // a new code while logged in needs the current password
+      expect(g.post({ action: 'recoveryCode', token: ok.token, password: 'nope-nope' }).error).toMatch(/current password/);
+      const fresh = g.post({ action: 'recoveryCode', token: ok.token, password: 'new-secret' });
+      expect(fresh.recoveryCode).toMatch(/^[0-9A-F]{4}-/);
+      expect(g.post({ action: 'recover', username: 'dana', code: ok.recoveryCode, newPassword: 'whatever1' }).error).toMatch(/Wrong/);
+
+      // guessing locks the account (login too) for a while
+      for (let i = 0; i < 3; i++) g.post({ action: 'recover', username: 'dana', code: '0000-0000-0000-0000', newPassword: 'whatever1' });
+      expect(g.post({ action: 'recover', username: 'dana', code: fresh.recoveryCode, newPassword: 'whatever1' }).error).toMatch(/Try again in/);
+      expect(g.post({ action: 'login', username: 'dana', password: 'new-secret' }).error).toMatch(/Try again in/);
+
+      // accounts made before recovery codes existed: told to ask the admin, and can make one while logged in
+      const old = reg(g, { username: 'olduser', name: 'Old' });
+      const rows = g.sheets.get('Accounts')!;
+      const col = rows[0].indexOf('recoveryHash');
+      const row = rows.findIndex((x) => x[rows[0].indexOf('username')] === 'olduser');
+      g.sheets.set('Accounts', row, col, '');
+      expect(g.post({ action: 'me', token: old.token }).account.recovery).toBe(false);
+      expect(g.post({ action: 'recover', username: 'olduser', code: old.recoveryCode, newPassword: 'whatever1' }).error).toMatch(/Ask the site admin/);
+      const made = g.post({ action: 'recoveryCode', token: old.token, password: 'hunter22' });
+      expect(made.account.recovery).toBe(true);
+      expect(g.post({ action: 'recover', username: 'olduser', code: made.recoveryCode, newPassword: 'whatever1' }).error).toBeUndefined();
+    });
+
     it('admin removes an account: the player stays unverified, the login stops working, clean-up can then remove them', () => {
       const g = fakeGoogle();
       const { account } = reg(g, { username: 'dupe', name: 'Dupe' });
@@ -478,7 +524,11 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.post({ action: 'login', username: 'dupe', password: 'hunter22' }).error).toBeDefined();
       expect(g.post({ action: 'login', username: 'keeper', password: 'hunter22' }).error).toBeUndefined();
       expect(g.get({ action: 'players' }).players.find((p: { id: string }) => p.id === account.playerId)).toEqual({ id: account.playerId, name: 'Dupe' });
-      expect(g.post({ action: 'prunePlayers', key: 'secret' }).removed.map((p: { name: string }) => p.name)).toEqual(['Dupe']);
+      // the name has no results, so anyone can make an account with it again (no PIN needed): same player
+      const again = reg(g, { username: 'dupe2', name: 'dupe' });
+      expect(again.error).toBeUndefined();
+      expect(again.account.playerId).toBe(account.playerId);
+      expect(g.post({ action: 'prunePlayers', key: 'secret' }).removed).toEqual([]);
     });
 
     it('a removed player keeps their PIN: adding them back or them signing up again gives the same one', () => {

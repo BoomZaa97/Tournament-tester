@@ -48,7 +48,7 @@ var TABLES = {
   // People who signed up after the player limit was reached, in order (oldest first).
   Waitlist: ['tournamentId', 'tournament', 'playerId', 'name', 'pin', 'at', 'checkedIn'],
   // Player accounts. Delete a row to delete an account (the player and their results stay).
-  Accounts: ['id', 'username', 'playerId', 'passHash', 'salt', 'createdAt', 'orgKeys', 'fails', 'lockedUntil'],
+  Accounts: ['id', 'username', 'playerId', 'passHash', 'salt', 'createdAt', 'orgKeys', 'fails', 'lockedUntil', 'recoveryHash'],
   // Player profiles: id = the player's id. Read only by the player page (photos are big).
   Profiles: ['id', 'name', 'photo', 'bio', 'links', 'updatedAt'],
 };
@@ -124,6 +124,8 @@ function doPost(e) {
       if (body.action === 'login') return logIn(body.username, body.password);
       if (body.action === 'me') return aboutMe(body.token, body.orgKeys);
       if (body.action === 'password') return changePassword(body.token, body.password, body.newPassword);
+      if (body.action === 'recover') return recoverAccount(body.username, body.code, body.newPassword);
+      if (body.action === 'recoveryCode') return newRecoveryCode(body.token, body.password);
       if (body.action === 'rename') return renameSelf(body.token, body.name);
       if (body.action === 'profile') return { profile: saveProfile(body, isAdmin) };
       if (body.action === 'resetPassword') {
@@ -1286,7 +1288,7 @@ function newSalt() {
 /** What the app may know about an account (never the hash or salt). */
 function accountInfo(a, data) {
   var p = findById(data.Players, a.playerId);
-  return { id: a.id, username: a.username, playerId: a.playerId, name: p ? p.name : a.username };
+  return { id: a.id, username: a.username, playerId: a.playerId, name: p ? p.name : a.username, recovery: !!a.recoveryHash };
 }
 
 /**
@@ -1345,7 +1347,8 @@ function register(body) {
     if (!player) throw new Error('That join code and PIN don\'t match anyone');
     if (sameName && sameName.id !== player.id) throw new Error('Another player is already called ' + name + '. Pick a different name.');
   } else if (sameName) {
-    if (!proven[sameName.id]) {
+    // proof is only needed to take over someone's results; a leftover name with none is free
+    if (!proven[sameName.id] && hasPlayed(sameName.id, data)) {
       throw new Error(
         'A player called ' + name + ' has played here before. If that\'s you, add the join code and your PIN ' +
           'from one of their tournaments. If not, pick a different name.',
@@ -1375,37 +1378,119 @@ function register(body) {
     fails: '',
     lockedUntil: '',
   };
+  var code = setRecoveryCode(a);
   data.Accounts.push(a);
   writeTable('Accounts', data.Accounts);
   if (renamed) renamePlayer(player.id, name);
-  return { token: tokenFor(a), account: accountInfo(a, loadTables()) };
+  return { token: tokenFor(a), account: accountInfo(a, loadTables()), recoveryCode: code };
+}
+
+function accountByUsername(rawUsername, data) {
+  var username = String(rawUsername || '').trim().toLowerCase();
+  return (
+    data.Accounts.filter(function (r) {
+      return String(r.username).toLowerCase() === username;
+    })[0] || null
+  );
+}
+
+/** Throws while the account is locked after too many wrong passwords or recovery codes. */
+function checkLock(a) {
+  var now = Date.now();
+  if (a.lockedUntil && new Date(a.lockedUntil).getTime() > now) {
+    var mins = Math.ceil((new Date(a.lockedUntil).getTime() - now) / 60000);
+    throw new Error('Too many wrong tries. Try again in ' + mins + ' minute' + (mins === 1 ? '' : 's') + '.');
+  }
+}
+
+/** A wrong password or recovery code: counts towards the lock (saved), then throws `message`. */
+function failedTry(a, data, message) {
+  var fails = num(a.fails) + 1;
+  a.fails = fails >= MAX_FAILS ? '' : fails;
+  a.lockedUntil = fails >= MAX_FAILS ? new Date(Date.now() + LOCK_MINUTES * 60000).toISOString() : '';
+  writeTable('Accounts', data.Accounts);
+  throw new Error(message);
+}
+
+/** Is this player in any tournament (entrant, waitlist or a result)? */
+function hasPlayed(playerId, data) {
+  return (
+    data.Entrants.some(function (e) {
+      return e.playerId === playerId;
+    }) ||
+    data.Waitlist.some(function (w) {
+      return w.playerId === playerId;
+    }) ||
+    data.Results.some(function (r) {
+      return r.p1Id === playerId || r.p2Id === playerId;
+    })
+  );
 }
 
 function logIn(rawUsername, password) {
   var data = loadTables();
-  var username = String(rawUsername || '').trim().toLowerCase();
-  var a = data.Accounts.filter(function (r) {
-    return String(r.username).toLowerCase() === username;
-  })[0];
+  var a = accountByUsername(rawUsername, data);
   if (!a) throw new Error('Wrong username or password');
-  var now = Date.now();
-  if (a.lockedUntil && new Date(a.lockedUntil).getTime() > now) {
-    var mins = Math.ceil((new Date(a.lockedUntil).getTime() - now) / 60000);
-    throw new Error('Too many wrong passwords. Try again in ' + mins + ' minute' + (mins === 1 ? '' : 's') + '.');
-  }
-  if (passwordHash(a.salt, String(password || '')) !== a.passHash) {
-    var fails = num(a.fails) + 1;
-    a.fails = fails >= MAX_FAILS ? '' : fails;
-    a.lockedUntil = fails >= MAX_FAILS ? new Date(now + LOCK_MINUTES * 60000).toISOString() : '';
-    writeTable('Accounts', data.Accounts);
-    throw new Error('Wrong username or password');
-  }
+  checkLock(a);
+  if (passwordHash(a.salt, String(password || '')) !== a.passHash) failedTry(a, data, 'Wrong username or password');
   if (a.fails || a.lockedUntil) {
     a.fails = '';
     a.lockedUntil = '';
     writeTable('Accounts', data.Accounts);
   }
   return { token: tokenFor(a), account: accountInfo(a, data) };
+}
+
+/*
+ * Account recovery without email: every account gets a one-time recovery code (shown once, when
+ * it's made; only its hash is kept in the hidden `recoveryHash` column). "Forgot password" takes
+ * username + code + a new password, logs out every other device and hands out a fresh code, since
+ * each code works once. Wrong codes count towards the same lock as wrong passwords. No code? The
+ * site admin can still reset the password (Player page).
+ */
+function normalRecoveryCode(code) {
+  return String(code || '').toUpperCase().replace(/[^0-9A-F]/g, '');
+}
+
+function recoveryHash(a, code) {
+  return hmac('recovery:' + a.id + ':' + normalRecoveryCode(code));
+}
+
+/** Gives the account a new recovery code (the old one stops working) and returns it, as XXXX-XXXX-XXXX-XXXX. */
+function setRecoveryCode(a) {
+  var raw = Utilities.getUuid().replace(/-/g, '').toUpperCase().slice(0, 16); // 64 random bits
+  a.recoveryHash = recoveryHash(a, raw);
+  return raw.match(/.{4}/g).join('-');
+}
+
+function recoverAccount(rawUsername, code, newPassword) {
+  var data = loadTables();
+  var a = accountByUsername(rawUsername, data);
+  var wrong = 'Wrong username or recovery code';
+  if (!a) throw new Error(wrong);
+  checkLock(a);
+  if (!a.recoveryHash) throw new Error('This account has no recovery code yet. Ask the site admin to reset your password.');
+  if (normalRecoveryCode(code).length !== 16 || recoveryHash(a, code) !== a.recoveryHash) failedTry(a, data, wrong);
+  var p = checkPassword(newPassword);
+  a.salt = newSalt(); // logs out every other device
+  a.passHash = passwordHash(a.salt, p);
+  a.fails = '';
+  a.lockedUntil = '';
+  var fresh = setRecoveryCode(a); // each code works once
+  writeTable('Accounts', data.Accounts);
+  return { token: tokenFor(a), account: accountInfo(a, data), recoveryCode: fresh };
+}
+
+/** Logged in + current password: a new recovery code (e.g. the old one was lost, or the account never had one). */
+function newRecoveryCode(token, password) {
+  var data = loadTables();
+  var a = accountFromToken(token, data);
+  if (!a) throw new Error(LOGGED_OUT);
+  checkLock(a);
+  if (passwordHash(a.salt, String(password || '')) !== a.passHash) failedTry(a, data, 'Your current password is wrong');
+  var code = setRecoveryCode(a);
+  writeTable('Accounts', data.Accounts);
+  return { recoveryCode: code, account: accountInfo(a, data) };
 }
 
 /**

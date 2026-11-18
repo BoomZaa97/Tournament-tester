@@ -10,6 +10,7 @@
   import type { Tier } from '../lib/model';
   import { PROVISIONAL, ranked, rankings } from '../lib/ranking';
   import type { AllData, Profile } from '../lib/store';
+  import { forgetAccount } from '../lib/store';
 
   interface Props {
     id: string;
@@ -197,6 +198,11 @@
     try {
       await app.store.deleteAccount!(id);
       app.verified.delete(id);
+      if (app.account?.playerId === id) {
+        // this device was logged in to that account
+        forgetAccount();
+        app.refreshAccount();
+      }
       stats = { ...stats, player: { ...stats.player, account: undefined } };
       app.notify('Account removed');
     } catch (err) {

@@ -10,7 +10,7 @@
   let { next = '' }: Props = $props();
 
   const can = $derived(!!app.store.login);
-  let mode = $state<'login' | 'register'>('login');
+  let mode = $state<'login' | 'register' | 'recover'>('login');
   let username = $state('');
   let password = $state('');
   let name = $state('');
@@ -19,6 +19,10 @@
   let claimPin = $state('');
   let busy = $state(false);
   let error = $state('');
+  let recoveryInput = $state('');
+  /** A recovery code to show once (after sign-up, recovery, or making a new one). */
+  let shownCode = $state('');
+  let savedIt = $state(false);
 
   async function submit(e: SubmitEvent) {
     e.preventDefault();
@@ -29,11 +33,21 @@
       const a =
         mode === 'login'
           ? await app.store.login!(username.trim(), password)
-          : await app.store.register!({ username: username.trim(), password, name: name.trim(), claim });
+          : mode === 'recover'
+            ? await app.store.recover!(username.trim(), recoveryInput, password)
+            : await app.store.register!({ username: username.trim(), password, name: name.trim(), claim });
+      const code = 'recoveryCode' in a ? (a.recoveryCode as string | undefined) : undefined;
       app.refreshAccount();
       password = '';
-      app.notify(mode === 'login' ? `Logged in as ${a.name}` : `Welcome, ${a.name}`);
-      if (next) app.go(next);
+      recoveryInput = '';
+      app.notify(
+        mode === 'login' ? `Logged in as ${a.name}` : mode === 'recover' ? 'New password set. Other devices are logged out.' : `Welcome, ${a.name}`,
+      );
+      if (code) {
+        // show it before going anywhere: it's the only way back in without the site admin
+        shownCode = code;
+        savedIt = false;
+      } else if (next) app.go(next);
     } catch (err) {
       error = errorText(err);
       // name used by a player who played before: offer the join code + PIN fields
@@ -98,6 +112,50 @@
     }
   }
 
+  let codePass = $state('');
+  async function makeCode(e: SubmitEvent) {
+    e.preventDefault();
+    if (app.account?.recovery && !confirm('Make a new recovery code? Your old one stops working.')) return;
+    busy = true;
+    error = '';
+    try {
+      shownCode = await app.store.newRecoveryCode!(codePass);
+      savedIt = false;
+      codePass = '';
+      app.refreshAccount();
+    } catch (err) {
+      error = errorText(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function copyCode() {
+    try {
+      await navigator.clipboard.writeText(shownCode);
+      app.notify('Recovery code copied');
+    } catch {
+      prompt('Copy your recovery code:', shownCode);
+    }
+  }
+
+  function downloadCode() {
+    const text =
+      'Tournament Tester recovery code\n\n' +
+      `Username: ${app.account?.username ?? ''}\nRecovery code: ${shownCode}\n\n` +
+      'Use it on the Log in page: "Forgot your password?". It works once; you get a new one after using it.\n';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    a.download = `recovery-code-${app.account?.username ?? 'account'}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function doneWithCode() {
+    shownCode = '';
+    if (next) app.go(next);
+  }
+
   function logOut() {
     forgetAccount();
     mode = 'login';
@@ -112,6 +170,23 @@
     <h1>Account</h1>
     <p class="muted">Accounts work when the site saves to the shared Google Sheet (Settings).</p>
   {:else if app.account}
+    {#if shownCode}
+      <section class="panel codebox" aria-live="polite">
+        <h2>Your recovery code</h2>
+        <p class="small">
+          If you ever forget your password, this code lets you set a new one. <b>It's shown only now.</b> Keep it somewhere safe
+          (a note, a photo, a password manager).
+        </p>
+        <p class="code num">{shownCode}</p>
+        <div class="row wrap">
+          <button class="small" onclick={copyCode}>Copy</button>
+          <button class="small" onclick={downloadCode}>Download as a file</button>
+        </div>
+        <label class="check"><input type="checkbox" bind:checked={savedIt} /> I've saved my recovery code</label>
+        <div><button class="primary" disabled={!savedIt} onclick={doneWithCode}>Done</button></div>
+      </section>
+    {/if}
+
     <p class="label">Logged in</p>
     <h1>{app.account.name}</h1>
     <p class="muted user">@{app.account.username} · <a href="#/p/{app.account.playerId}">Your results</a></p>
@@ -166,6 +241,19 @@
       <p class="small muted">This logs you out on every other device.</p>
     </section>
 
+    <section>
+      <h2>Recovery code</h2>
+      {#if app.account.recovery}
+        <p class="small muted">You have a recovery code for "Forgot your password?". Lost it? Make a new one (the old one stops working).</p>
+      {:else}
+        <p class="small notice">You don't have a recovery code yet. Make one now, so you can get back in if you forget your password.</p>
+      {/if}
+      <form class="row" onsubmit={makeCode}>
+        <input bind:value={codePass} type="password" autocomplete="current-password" placeholder="Current password" aria-label="Current password" />
+        <button type="submit" disabled={busy || !codePass}>{app.account.recovery ? 'New code' : 'Make code'}</button>
+      </form>
+    </section>
+
     {#if error}<p class="small err">{error}</p>{/if}
 
     <hr class="rule" />
@@ -174,11 +262,18 @@
       <span class="small muted">Also removes your PINs and organizer keys from this device. Log in again to get them back.</span>
     </div>
   {:else}
-    <h1>{mode === 'login' ? 'Log in' : 'Create an account'}</h1>
-    <p class="muted intro">
-      An account keeps your PINs and the tournaments you run on every device, and lets you join a tournament with one tap.
-      You can still play without one.
-    </p>
+    <h1>{mode === 'login' ? 'Log in' : mode === 'recover' ? 'Forgot your password?' : 'Create an account'}</h1>
+    {#if mode === 'recover'}
+      <p class="muted intro">
+        Type your username, the recovery code you saved when you made your account, and a new password. No code? Ask the site
+        admin: they can give you a new password.
+      </p>
+    {:else}
+      <p class="muted intro">
+        An account keeps your PINs and the tournaments you run on every device, and lets you join a tournament with one tap.
+        You can still play without one.
+      </p>
+    {/if}
 
     <form class="grid form" onsubmit={submit}>
       {#if mode === 'register'}
@@ -191,8 +286,14 @@
         <span>Username</span>
         <input bind:value={username} maxlength="24" autocomplete="username" autocapitalize="none" spellcheck="false" />
       </label>
+      {#if mode === 'recover'}
+        <label class="field">
+          <span>Recovery code</span>
+          <input bind:value={recoveryInput} placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+        </label>
+      {/if}
       <label class="field">
-        <span>Password{#if mode === 'register'} <span class="muted">(6 or more characters)</span>{/if}</span>
+        <span>{mode === 'recover' ? 'New password' : 'Password'}{#if mode !== 'login'} <span class="muted">(6 or more characters)</span>{/if}</span>
         <input bind:value={password} type="password" autocomplete={mode === 'login' ? 'current-password' : 'new-password'} />
       </label>
 
@@ -215,8 +316,12 @@
       {/if}
 
       {#if error}<p class="small err">{error}</p>{/if}
-      <button class="accent big" type="submit" disabled={busy || !username.trim() || !password || (mode === 'register' && !name.trim())}>
-        {busy ? 'One moment…' : mode === 'login' ? 'Log in' : 'Create account'}
+      <button
+        class="accent big"
+        type="submit"
+        disabled={busy || !username.trim() || !password || (mode === 'register' && !name.trim()) || (mode === 'recover' && !recoveryInput.trim())}
+      >
+        {busy ? 'One moment…' : mode === 'login' ? 'Log in' : mode === 'recover' ? 'Set new password' : 'Create account'}
       </button>
     </form>
 
@@ -224,11 +329,11 @@
       {#if mode === 'login'}
         No account yet? <button class="linkish" onclick={() => ((mode = 'register'), (error = ''))}>Create one</button>
       {:else}
-        Have an account? <button class="linkish" onclick={() => ((mode = 'login'), (error = ''))}>Log in</button>
+        {mode === 'recover' ? 'Remembered it?' : 'Have an account?'} <button class="linkish" onclick={() => ((mode = 'login'), (error = ''))}>Log in</button>
       {/if}
     </p>
     {#if mode === 'login'}
-      <p class="small muted">Forgot your password? Ask the site admin: they can give you a new one.</p>
+      <p class="small"><button class="linkish" onclick={() => ((mode = 'recover'), (error = ''), (password = ''))}>Forgot your password?</button></p>
     {/if}
   {/if}
 </div>
@@ -257,5 +362,10 @@
   .linkish.small { font-size: 14px; }
   .switch { margin: 0 0 8px; }
   .err { color: var(--danger); margin: 0; }
+  .codebox { padding: 14px; margin-bottom: 24px; border-color: var(--accent); }
+  .codebox p { margin: 0; }
+  .code { font: 700 26px var(--font-cond); letter-spacing: 0.08em; overflow-wrap: anywhere; user-select: all; }
+  .row.wrap { flex-wrap: wrap; justify-content: flex-start; }
+  .codebox > div { justify-self: start; }
   @media (max-width: 520px) { .row:not(form) { flex-wrap: wrap; } }
 </style>

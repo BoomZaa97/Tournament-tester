@@ -45,8 +45,11 @@ Made because Challonge made fixing wrong results hard.
   (`Accounts.orgKeys`, plain keys checked against `orgKeyHash`), written into `tt.pins.v1` / `tt.keys.v1`, so all PIN /
   org-key code works unchanged. `tt.account.v1` = {token, account, pins, keys}; the lists are what logout removes again.
   Token = `accountId.HMAC(ACCOUNT_SECRET, salt)` (stateless; a new salt on password change/reset logs other devices out).
-  Passwords: HMAC with salt. 5 wrong in a row → 10 min lock. `signup` with `token` joins as the account's player; a name
-  that belongs to an account can't be used by name. Registering a name that already played needs a PIN of that player
+  Passwords: HMAC with salt. 5 wrong in a row → 10 min lock (wrong recovery codes count too). Recovery (no email): each
+  account has a one-time recovery code (16 hex, shown once at sign-up / recovery / `recoveryCode` with the password; only
+  `Accounts.recoveryHash` kept). `recover` = username + code + new password → logs out other devices, new code.
+  `account.recovery` says whether one exists (old accounts: make one on the Account page). `signup` with `token` joins as the account's player; a name
+  that belongs to an account can't be used by name. Registering a name that already played (`hasPlayed`: entrant, waitlist or result) needs a PIN of that player; a leftover name with no results is free
   (device PINs sent as `claims`, or join code + PIN typed). Admin: `resetPassword` and `deleteAccount` (Player page; the player stays, unverified). A player with no matches still has a page. Players list has
   `account: true` (all lists, incl. `get`). `app.account` / `app.accountSync` (pages re-read `myPin` when it changes); `app.syncAccount()` on start.
 - Verified names: a player with an account is "verified". `app.verified` (SvelteSet of ids, filled by `app.noteVerified(players)`
@@ -54,6 +57,8 @@ Made because Challonge made fixing wrong results hard.
   bracket, matches, standings, rankings, profile, entrant editor). Lock in Code.gs (`verifiedNames` / `notVerifiedName`,
   names compared by `nameKey`: case and extra spaces ignored, same as `lib/players.ts` `nameKey`): a save can't create a
   new player id under a verified name, and `renamePlayer` (admin) can't rename someone else onto one.
+- The device forgets organizer keys / PINs of deleted tournaments (`forgetDeleted`, on every `loadAll`, only ids held before
+  the request). Removing the account this device is logged in to logs it out.
 - `store.canEdit(id)` (admin key or org key for that id) replaces the old global flag.
 - Settings are split: `#/settings` (`routes/Settings.svelte`, everyone) = this device's look (`lib/prefs.ts`, `tt.prefs.v1`:
   theme auto/light/dark → `data-theme` on <html>, text size → `data-size=large` = `zoom: 1.12` on body; Bracket divides its

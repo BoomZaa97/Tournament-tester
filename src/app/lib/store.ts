@@ -82,8 +82,13 @@ export interface Store {
   /** Organizer/admin only: every entrant's PIN, by player id. */
   pins?(id: string): Promise<Record<string, string>>;
   /** Player accounts (shared mode). Each returns the account now saved on this device. */
-  register?(input: { username: string; password: string; name: string; claim?: { code: string; pin: string } }): Promise<Account>;
+  /** Also returns the account's first recovery code (shown once). */
+  register?(input: { username: string; password: string; name: string; claim?: { code: string; pin: string } }): Promise<Account & { recoveryCode?: string }>;
   login?(username: string, password: string): Promise<Account>;
+  /** Forgot password: username + one-time recovery code + new password. Logs in; returns the next recovery code. */
+  recover?(username: string, code: string, newPassword: string): Promise<Account & { recoveryCode: string }>;
+  /** Logged in: a new recovery code (the old one stops working). Needs the current password. */
+  newRecoveryCode?(password: string): Promise<string>;
   /** Fetch this account's PINs and organizer keys onto this device (and share this device's keys with it). */
   syncAccount?(): Promise<Account>;
   changePassword?(password: string, newPassword: string): Promise<Account>;
@@ -99,6 +104,8 @@ export interface Account {
   username: string;
   playerId: string;
   name: string;
+  /** Has a recovery code (for "forgot password"). */
+  recovery?: boolean;
 }
 
 export type ReportedResult = Pick<MatchResult, 'winner' | 'score1' | 'score2' | 'p1' | 'p2'>;
@@ -185,6 +192,29 @@ export function forgetAccount() {
     /* ignore */
   }
 }
+/**
+ * Forget this device's organizer keys and PINs for tournaments that were deleted, so Settings and
+ * the account stop listing them. `known` = the ids this device held when the list was asked for
+ * (a tournament created meanwhile isn't in the answer yet, so it's left alone).
+ */
+export function forgetDeleted(existing: string[], known: { keys: string[]; pins: string[] }) {
+  const live = new Set(existing);
+  const keys = readJson<string>(KEYS);
+  const pins = readJson(PINS);
+  const goneKeys = known.keys.filter((id) => !live.has(id) && id in keys);
+  const gonePins = known.pins.filter((id) => !live.has(id) && id in pins);
+  if (!goneKeys.length && !gonePins.length) return;
+  for (const id of goneKeys) delete keys[id];
+  for (const id of gonePins) delete pins[id];
+  writeJson(KEYS, keys);
+  writeJson(PINS, pins);
+  const a = savedAccount();
+  if (a) saveAccount({ ...a, keys: a.keys.filter((id) => live.has(id)), pins: a.pins.filter((id) => live.has(id)) });
+}
+function heldIds() {
+  return { keys: Object.keys(readJson<string>(KEYS)), pins: Object.keys(readJson(PINS)) };
+}
+
 /** Tournaments this device can edit with an organizer key. */
 export function orgKeyIds(): string[] {
   return Object.keys(readJson<string>(KEYS));
@@ -251,7 +281,9 @@ export class LocalStore implements Store {
   }
 
   async loadAll() {
-    return readLocal();
+    const d = readLocal();
+    forgetDeleted(d.tournaments.map((t) => t.id), heldIds());
+    return d;
   }
 
   async get(id: string) {
@@ -408,8 +440,10 @@ export class SheetsStore implements Store {
   }
 
   async loadAll(opts: { full?: boolean } = {}) {
+    const held = heldIds();
     const data = await this.call<AllData>('GET', opts.full ? { action: 'all' } : { action: 'all', lite: '1' });
     this.cache.setList(data);
+    forgetDeleted(data.tournaments.map((t) => t.id), held);
     return data;
   }
 
@@ -514,8 +548,21 @@ export class SheetsStore implements Store {
   }
 
   async register(input: { username: string; password: string; name: string; claim?: { code: string; pin: string } }) {
-    const r = await this.call<{ token: string; account: Account }>('POST', { action: 'register', ...input, claims: this.claims() });
-    return this.loggedIn(r);
+    const r = await this.call<{ token: string; account: Account; recoveryCode?: string }>('POST', { action: 'register', ...input, claims: this.claims() });
+    return { ...(await this.loggedIn(r)), recoveryCode: r.recoveryCode };
+  }
+
+  async recover(username: string, code: string, newPassword: string) {
+    const r = await this.call<{ token: string; account: Account; recoveryCode: string }>('POST', { action: 'recover', username, code, newPassword });
+    return { ...(await this.loggedIn(r)), recoveryCode: r.recoveryCode };
+  }
+
+  async newRecoveryCode(password: string) {
+    const a = savedAccount();
+    const r = await this.call<{ recoveryCode: string; account: Account }>('POST', { action: 'recoveryCode', token: a?.token ?? '', password });
+    const now = savedAccount();
+    if (now) saveAccount({ ...now, account: r.account });
+    return r.recoveryCode;
   }
 
   async login(username: string, password: string) {
