@@ -49,6 +49,12 @@ export const TIERS: Tier[] = ['major', 'semi', 'small'];
 export const TIER_LABEL: Record<Tier, string> = { major: 'Major', semi: 'Semi-major', small: 'Small event' };
 /** Placement points are multiplied by this. */
 export const TIER_WEIGHT: Record<Tier, number> = { major: 2, semi: 1.5, small: 1 };
+export type Official = '' | 'pending' | 'yes' | 'no';
+
+export function isOfficial(t: { official?: string }): boolean {
+  return t.official === 'yes';
+}
+
 export function tierOf(t: { tier?: string }): Tier {
   return t.tier === 'major' || t.tier === 'semi' ? t.tier : 'small';
 }
@@ -66,6 +72,13 @@ export interface TournamentDoc {
   discord?: boolean;
   /** How big the event is: majors and semi-majors give more ranking points. Unset = small. */
   tier?: Tier;
+  /**
+   * Official (verified by staff): counts towards the confirmed rating. Organizers ask ('pending'),
+   * staff say yes or no. Only the Google script changes it; saves leave it alone.
+   */
+  official?: Official;
+  /** The organizer's request message, or the staff's reason. */
+  officialNote?: string;
   format: Format;
   options: FormatOptions;
   scoring: Scoring;

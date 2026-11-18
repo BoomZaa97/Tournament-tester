@@ -515,6 +515,42 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.post({ action: 'recover', username: 'olduser', code: made.recoveryCode, newPassword: 'whatever1' }).error).toBeUndefined();
     });
 
+    it('official tournaments: organizers ask, staff decide (audited); saves never change it', () => {
+      const g = fakeGoogle();
+      create(g);
+      const get = () => g.get({ action: 'get', id: 'o1' }).tournament;
+      expect(get().official).toBe('');
+      // only the organizer asks; asking twice is refused; they can withdraw
+      expect(g.post({ action: 'requestOfficial', id: 'o1', orgKey: 'wrong-key-0123456789' }).error).toMatch(/organizer/i);
+      expect(g.post({ action: 'requestOfficial', id: 'o1', orgKey: ORG, note: '  Weekly   league  ' })).toEqual({ official: 'pending', officialNote: 'Weekly league' });
+      expect(g.post({ action: 'requestOfficial', id: 'o1', orgKey: ORG }).error).toMatch(/Already sent/);
+      expect(g.post({ action: 'requestOfficial', id: 'o1', orgKey: ORG, cancel: true }).official).toBe('');
+      g.post({ action: 'requestOfficial', id: 'o1', orgKey: ORG });
+      expect(g.get({ action: 'all', lite: '1' }).tournaments[0].official).toBe('pending');
+
+      // an organizer save can't make it official, and keeps the stored status
+      const t = get();
+      expect(g.post({ action: 'save', orgKey: ORG, tournament: { ...t, official: 'yes' }, players: [] }).error).toBeUndefined();
+      expect(get().official).toBe('pending');
+
+      // players and organizers can't decide; a moderator can
+      const joe = reg(g, { username: 'joe', name: 'Joe' });
+      const mod = reg(g, { username: 'mod', name: 'Mod' });
+      g.post({ action: 'setRole', key: 'secret', playerId: mod.account.playerId, role: 'moderator' });
+      expect(g.post({ action: 'setOfficial', id: 'o1', status: 'yes', orgKey: ORG }).error).toMatch(/staff/);
+      expect(g.post({ action: 'setOfficial', id: 'o1', status: 'yes', auth: joe.token }).error).toMatch(/staff/);
+      expect(g.post({ action: 'setOfficial', id: 'o1', status: 'pending', auth: mod.token }).error).toBeDefined();
+      expect(g.post({ action: 'setOfficial', id: 'o1', status: 'yes', auth: mod.token, note: 'Checked' })).toEqual({ official: 'yes', officialNote: 'Checked' });
+      expect(get().official).toBe('yes');
+      expect(g.post({ action: 'requestOfficial', id: 'o1', orgKey: ORG }).error).toMatch(/already official/);
+      const log = g.post({ action: 'audit', key: 'secret' }).audit;
+      expect(log[0]).toMatchObject({ actor: 'Mod (@mod)', action: 'Made official', detail: 'Checked' });
+      // refused: the organizer sees why and can ask again
+      g.post({ action: 'setOfficial', id: 'o1', status: 'no', key: 'secret', note: 'Not enough players' });
+      expect(get()).toMatchObject({ official: 'no', officialNote: 'Not enough players' });
+      expect(g.post({ action: 'requestOfficial', id: 'o1', orgKey: ORG }).official).toBe('pending');
+    });
+
     it('roles: the owner makes admins, admins make moderators and organizers; nobody acts above their rank', () => {
       const g = fakeGoogle();
       const boss = reg(g, { username: 'boss', name: 'Boss' });
@@ -1250,7 +1286,7 @@ describe('Google Sheets backend (Code.gs)', () => {
       vm.runInContext(readFileSync('apps-script/Code.gs', 'utf8'), g.ctx as vm.Context); // the owner pastes the new script
       // newer scripts add fields (an empty category, a small event, no Discord); everything that was there stays the same
       const after = [1, 2, 3].map((n) => g.get({ action: 'get', id: 'e' + n }).tournament);
-      expect(after).toEqual(before.map((t) => ({ ...t, category: after[0].category, division: '', tier: after[0].tier, discord: false })));
+      expect(after).toEqual(before.map((t) => ({ ...t, category: after[0].category, division: '', tier: after[0].tier, discord: false, official: '', officialNote: '' })));
       expect(after[0].category).toBe('');
       expect(after[0].tier).toBe('small');
       for (const tab of ['Entrants', 'Results', 'Log']) {

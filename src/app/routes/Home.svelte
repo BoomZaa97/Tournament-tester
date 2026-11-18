@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app, errorText } from '../lib/app.svelte';
   import TierTag from '../components/TierTag.svelte';
+  import OfficialTag from '../components/OfficialTag.svelte';
   import Verified from '../components/Verified.svelte';
   import { categoryOf, FORMAT_LABEL, STATUS_LABEL, summaryOf, tierOf } from '../lib/model';
   import type { Player, TournamentDoc } from '../lib/model';
@@ -46,10 +47,16 @@
     running: summaries.filter((r) => r.status === 'running').length,
     players: players.length,
   });
+  // top players of the most played game (a rating only means something within one game)
+  const topGame = $derived.by(() => {
+    const count = new Map<string, number>();
+    for (const t of tournaments ?? []) if (t.game) count.set(t.game, (count.get(t.game) ?? 0) + 1);
+    return [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? '';
+  });
   const top = $derived.by(() => {
     if (!tournaments?.length) return [];
     const me = app.account?.playerId;
-    return ranked(rankings(tournaments, players).values(), 'rating')
+    return ranked(rankings(tournaments.filter((t) => !topGame || t.game === topGame), players).values(), 'rating')
       .filter((r) => r.rank !== null)
       .slice(0, 5)
       .map((r) => ({ ...r, anon: !!r.player.unranked && r.player.id !== me }));
@@ -164,7 +171,7 @@
       {/if}
       {#if top.length}
         <section class="box">
-          <h2>Top players</h2>
+          <h2>Top players{#if topGame}<span class="muted"> · {topGame}</span>{/if}</h2>
           <ol class="top">
             {#each top as r (r.player.id)}
               <li>
@@ -174,7 +181,7 @@
               </li>
             {/each}
           </ol>
-          <a class="small" href="#/players">Full rankings →</a>
+          <a class="small" href={topGame ? `#/players/${encodeURIComponent(topGame)}` : '#/players'}>Full rankings →</a>
         </section>
       {/if}
     </div>
@@ -232,6 +239,7 @@
             <span class="meta">
               {#if t.game}<span>{t.game}</span>{/if}
               {#if categoryOf(t)}<span>{categoryOf(t)}</span>{/if}
+              {#if t.official === 'yes'}<span><OfficialTag official={t.official} /></span>{/if}
               {#if tierOf(t) !== 'small'}<span><TierTag tier={t.tier} /></span>{/if}
               <span>{FORMAT_LABEL[t.format]}</span>
               <span>{t.entrants.length} entrants</span>

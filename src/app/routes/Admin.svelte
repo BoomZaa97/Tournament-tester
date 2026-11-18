@@ -6,6 +6,7 @@
   import type { Player, TournamentDoc } from '../lib/model';
   import Verified from '../components/Verified.svelte';
   import TierTag from '../components/TierTag.svelte';
+  import OfficialTag from '../components/OfficialTag.svelte';
 
   // ---------------------------------------------------------------- tabs (what this device's role may see)
   type Tab = 'overview' | 'users' | 'tournaments' | 'audit' | 'security' | 'data';
@@ -94,6 +95,7 @@
     for (const t of ts) by[statusOf(t)]++;
     return {
       tournaments: ts.length,
+      official: ts.filter((t) => t.official === 'yes').length,
       ...by,
       players: all?.players.length ?? 0,
       accounts: accounts?.length ?? 0,
@@ -220,6 +222,29 @@
       .filter((t) => !tq.trim() || `${t.name} ${t.game} ${t.category ?? ''}`.toLowerCase().includes(tq.trim().toLowerCase()))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
   );
+  // organizers asked for these to be official (counted in the confirmed rating)
+  const requests = $derived((all?.tournaments ?? []).filter((t) => t.official === 'pending').sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)));
+  async function decide(t: TournamentDoc, status: '' | 'yes' | 'no') {
+    let note = '';
+    if (status === 'no') {
+      const r = prompt(`Why isn't "${t.name}" official? The organizer sees this.`, '');
+      if (r === null) return;
+      note = r;
+    }
+    if (status === '' && !confirm(`Take official status away from "${t.name}"? Its matches leave the confirmed rating.`)) return;
+    working = t.id;
+    try {
+      const r = await app.store.setOfficial(t.id, status, note);
+      if (all) all = { ...all, tournaments: all.tournaments.map((x) => (x.id === t.id ? { ...x, ...r } : x)) };
+      app.notify(status === 'yes' ? `"${t.name}" is official` : status === 'no' ? 'Request refused' : 'Official status removed');
+      loadAudit();
+    } catch (e) {
+      app.notify(errorText(e), 'error');
+    } finally {
+      working = '';
+    }
+  }
+
   async function deleteTournament(t: TournamentDoc) {
     if (!confirm(`Delete "${t.name}"? Its matches disappear from player history too. This can't be undone.`)) return;
     working = t.id;
@@ -370,6 +395,7 @@
     <section>
       <div class="stats">
         <div><span class="lbl">Tournaments</span><b class="num">{counts.tournaments}</b><span class="small muted">{counts.running} running · {counts.finished} finished</span></div>
+        <div><span class="lbl">Official</span><b class="num" class:waiting={requests.length > 0}>{counts.official}</b><button onclick={() => pick('tournaments')}>{requests.length} waiting for review</button></div>
         <div><span class="lbl">Players</span><b class="num">{counts.players}</b><span class="small muted">{counts.accounts} with an account</span></div>
         <div><span class="lbl">Staff</span><b class="num">{counts.staff}</b><span class="small muted">{counts.organizers} organizers</span></div>
         <div><span class="lbl">Suspended</span><b class="num" class:alert={counts.suspended > 0}>{counts.suspended}</b><span class="small muted">{counts.locked} locked right now</span></div>
@@ -492,6 +518,27 @@
 
   <!-- ============================================================ tournaments -->
   {:else if current === 'tournaments'}
+    {#if requests.length}
+      <section>
+        <h2 class="label">Asked to be official ({requests.length})</h2>
+        <p class="small muted">Official tournaments count towards everyone's confirmed rating. Check that the results are real before saying yes.</p>
+        <ul class="tlist">
+          {#each requests as t (t.id)}
+            <li>
+              <div>
+                <a href="#/t/{t.id}">{t.name}</a> <TierTag tier={t.tier} />
+                <div class="small muted">{[t.game, `${t.entrants.length} entrants`, STATUS_LABEL[statusOf(t)], `made ${t.createdAt.slice(0, 10)}`].filter(Boolean).join(' · ')}</div>
+                {#if t.officialNote}<div class="small">“{t.officialNote}”</div>{/if}
+              </div>
+              <div class="row">
+                <button class="small" disabled={working === t.id} onclick={() => decide(t, 'yes')}>Make official</button>
+                <button class="small ghost" disabled={working === t.id} onclick={() => decide(t, 'no')}>Refuse</button>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
     <section>
       <input bind:value={tq} placeholder="Search tournaments" aria-label="Search tournaments" />
       {#if !all}
@@ -503,10 +550,15 @@
           {#each tlist as t (t.id)}
             <li>
               <div>
-                <a href="#/t/{t.id}">{t.name}</a> <TierTag tier={t.tier} />
+                <a href="#/t/{t.id}">{t.name}</a> <TierTag tier={t.tier} /> <OfficialTag official={t.official} pending />
                 <div class="small muted">{[t.game, t.category, `${t.entrants.length} entrants`, STATUS_LABEL[statusOf(t)], `made ${t.createdAt.slice(0, 10)}`].filter(Boolean).join(' · ')}</div>
               </div>
               <div class="row">
+                {#if t.official === 'yes'}
+                  <button class="small ghost" disabled={working === t.id} onclick={() => decide(t, '')}>Not official</button>
+                {:else if t.official !== 'pending'}
+                  <button class="small ghost" disabled={working === t.id} onclick={() => decide(t, 'yes')}>Make official</button>
+                {/if}
                 <a class="btn small" href="#/t/{t.id}/edit">Edit</a>
                 <button class="small danger" disabled={working === t.id} onclick={() => deleteTournament(t)}>Delete</button>
               </div>
@@ -657,16 +709,19 @@
   .err { color: var(--danger); }
   .bad { color: var(--danger); }
   .linkish { background: none; border: 0; padding: 0; min-height: 0; color: var(--ink); text-decoration: underline; font: inherit; cursor: pointer; }
-  .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line); }
+  .stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line); }
   .stats > div { display: grid; gap: 2px; padding: 10px 12px; border-right: 1px solid var(--line); }
   .stats > div:last-child { border-right: 0; }
   .stats .lbl { font: 600 12px var(--font-cond); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
   .stats b { font: 700 30px var(--font-cond); }
   .stats b.alert { color: var(--danger); }
+  .stats b.waiting { color: var(--accent); }
+  .stats button { justify-self: start; padding: 0; border: 0; background: none; color: var(--muted); text-decoration: underline; font-size: 14px; min-height: 0; }
   @media (max-width: 600px) {
     .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .stats > div:nth-child(2) { border-right: 0; }
-    .stats > div:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
+    .stats > div:nth-child(2n) { border-right: 0; }
+    .stats > div:not(:nth-last-child(-n + 2)) { border-bottom: 1px solid var(--line); }
+    .stats > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
   }
   .feed, .users, .tlist, .facts { list-style: none; margin: 0; padding: 0; }
   .feed li { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 15px; }

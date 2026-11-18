@@ -12,6 +12,7 @@
   import Account from './routes/Account.svelte';
   import UserMenu from './components/UserMenu.svelte';
   import { stopLoginAs, viewingAs } from './lib/store';
+  import { update, watchForUpdates } from './lib/update.svelte';
 
   const section = $derived(app.path[0] ?? '');
   // an admin used "Log in as" on this device
@@ -27,6 +28,7 @@
   const staff = $derived((void app.account, app.store.kind === 'sheets' && app.store.can('audit')));
   // bring a logged-in account's PINs and organizer keys onto this device
   app.syncAccount();
+  watchForUpdates();
 </script>
 
 <header class="top no-print">
@@ -42,6 +44,15 @@
     <UserMenu {staff} {section} />
   </div>
 </header>
+
+{#if update.ready}
+  <div class="updated no-print" role="status">
+    <div class="wrap row">
+      <span>A newer version of the site is out.</span>
+      <button class="small" onclick={() => location.reload()}>Reload</button>
+    </div>
+  </div>
+{/if}
 
 {#if asOther && app.account}
   <div class="viewas no-print" role="status">
@@ -158,6 +169,9 @@
   main {
     padding-bottom: 80px;
   }
+  .updated { background: var(--ink); color: var(--paper); padding: 8px 0; font-size: 15px; }
+  .updated .row { justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .updated button { background: var(--paper); color: var(--ink); border-color: var(--paper); }
   .viewas { background: var(--accent); color: #fff; padding: 8px 0; font-size: 15px; }
   .viewas .row { justify-content: space-between; flex-wrap: wrap; gap: 8px; }
   .viewas button { background: #fff; color: #16181d; border-color: #fff; }

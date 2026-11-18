@@ -2,7 +2,12 @@ import type { MatchResult } from '../../core';
 import { DeviceCache } from './cache';
 import type { CachedDoc } from './cache';
 import { cleanCode, makeCode, UPDATE_SCRIPT } from './model';
-import type { Player, TournamentDoc } from './model';
+import type { Official, Player, TournamentDoc } from './model';
+
+export interface OfficialState {
+  official: Official;
+  officialNote: string;
+}
 import type { ChTournament } from './challonge';
 
 export class VersionConflictError extends Error {
@@ -142,6 +147,10 @@ export interface Store {
   confirm?(id: string, matchId: string, pin: string, ok: boolean, matchNo?: number, announce?: string[]): Promise<TournamentDoc>;
   /** Organizer: connect the tournament to a Discord channel (webhook link), or disconnect (''). Returns whether it's connected. */
   discord?(id: string, url: string): Promise<boolean>;
+  /** Organizer: ask staff to make the tournament official (or withdraw the request). */
+  requestOfficial?(id: string, note: string, cancel?: boolean): Promise<OfficialState>;
+  /** Staff: make a tournament official ('yes'), refuse ('no') or clear it (''). */
+  setOfficial(id: string, status: Official, note: string): Promise<OfficialState>;
   /** A Challonge tournament as Challonge's API returns it (fetched by the Google script; the key is never stored). */
   challonge?(ref: string, apiKey: string): Promise<ChTournament>;
   /** A player drops out of a running tournament with their PIN. */
@@ -464,6 +473,17 @@ export class LocalStore implements Store {
     data.players = upsertPlayers(data.players, players);
     writeLocal(data);
     return saved;
+  }
+
+  async setOfficial(id: string, status: Official, note: string) {
+    const data = readLocal();
+    const t = data.tournaments.find((x) => x.id === id);
+    if (!t) throw new Error('Tournament not found');
+    t.official = status;
+    t.officialNote = note.trim();
+    t.updatedAt = new Date().toISOString();
+    writeLocal(data);
+    return { official: status, officialNote: t.officialNote };
   }
 
   async remove(id: string) {
@@ -871,6 +891,14 @@ export class SheetsStore implements Store {
     });
     if (!myPin(id)) rememberPin(id, r.playerId, pin);
     return this.keep(r.tournament);
+  }
+
+  async requestOfficial(id: string, note: string, cancel = false) {
+    return this.call<OfficialState>('POST', { action: 'requestOfficial', id, note, cancel, orgKey: orgKeyFor(id) ?? '' });
+  }
+
+  async setOfficial(id: string, status: Official, note: string) {
+    return this.call<OfficialState>('POST', { action: 'setOfficial', id, status, note });
   }
 
   async discord(id: string, url: string) {

@@ -92,6 +92,29 @@ describe('rankings', () => {
     expect(byPoints.find((r) => r.player.id === 'd')!.rank).not.toBeNull();
   });
 
+  it('confirmed rating counts official tournaments only', () => {
+    // a wins every official event, then b wins every unofficial one
+    const real = Array.from({ length: PROVISIONAL }, (_, i) => played('o' + i, 'single_elim', ['a', 'b'], { official: 'yes' }));
+    const fake = Array.from({ length: PROVISIONAL }, (_, i) => played('u' + i, 'single_elim', ['a', 'b'], {}, () => 'p2'));
+    const pending = played('p', 'single_elim', ['a', 'b'], { official: 'pending' }, () => 'p2');
+    const rows = rankings([...fake, ...real, pending], []);
+    const a = rows.get('a')!;
+    const b = rows.get('b')!;
+    expect(a.confirmedRated).toBe(PROVISIONAL);
+    expect(a.officialEvents).toBe(PROVISIONAL);
+    expect(a.confirmed).toBeGreaterThan(START_RATING);
+    expect(b.confirmed).toBeLessThan(START_RATING);
+    expect(a.confirmed + b.confirmed).toBeCloseTo(2 * START_RATING, 6);
+    expect(a.confirmedChange).toBeGreaterThan(0);
+    // the normal rating counts everything: b won more
+    expect(b.rating).toBeGreaterThan(a.rating);
+    expect(ranked(rows.values(), 'confirmed').map((r) => [r.player.id, r.rank])).toEqual([['a', 1], ['b', 2]]);
+    expect(ranked(rows.values(), 'rating')[0].player.id).toBe('b');
+    // nobody is ranked on confirmed without official matches
+    const none = rankings(fake, []);
+    expect(ranked(none.values(), 'confirmed').every((r) => r.rank === null && r.confirmed === START_RATING)).toBe(true);
+  });
+
   it('shares a rank on equal points', () => {
     const t1 = played('t1', 'single_elim', ['a', 'b']);
     const t2 = played('t2', 'single_elim', ['c', 'd']);

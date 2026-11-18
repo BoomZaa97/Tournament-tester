@@ -1,12 +1,14 @@
 import { resolve } from '../../core';
 import type { EntrantId } from '../../core';
-import { categoryOf, divisionOf, finalPlaces, matchNumbers, statusOf, TIER_WEIGHT, tierOf, toState } from './model';
+import { categoryOf, divisionOf, finalPlaces, isOfficial, matchNumbers, statusOf, TIER_WEIGHT, tierOf, toState } from './model';
 import type { Player, Tier, TournamentDoc } from './model';
 
 /**
  * Rankings, worked out from the tournaments themselves (nothing extra is stored):
  *  - rating: Elo over every played match, in the order they were played. Everyone starts at 1500;
  *    beating a stronger player gains more. Forfeits, byes and walkovers don't count.
+ *  - confirmed rating: the same Elo, but only over matches in official tournaments (checked by staff),
+ *    so it can't be pumped up with made-up events.
  *  - points: placement points from finished tournaments, added up like a season or circuit.
  *    Majors count double, semi-majors one and a half times.
  */
@@ -74,6 +76,14 @@ export interface RankRow {
   peak: number;
   /** Rating change in the player's latest tournament. */
   change: number;
+  /** Elo from official tournaments only. */
+  confirmed: number;
+  /** Matches that counted for the confirmed rating. */
+  confirmedRated: number;
+  /** Confirmed rating change in the player's latest official tournament. */
+  confirmedChange: number;
+  /** Official tournaments played. */
+  officialEvents: number;
   history: RatingPoint[];
   points: number;
   events: number;
@@ -109,6 +119,7 @@ export function rankings(tournaments: TournamentDoc[], players: Player[]): Map<s
     if (!r) {
       r = {
         player: known.get(id) ?? { id, name: fallback }, rating: START_RATING, rated: 0, peak: START_RATING, change: 0, history: [],
+        confirmed: START_RATING, confirmedRated: 0, confirmedChange: 0, officialEvents: 0,
         points: 0, events: 0, wins: 0, losses: 0, draws: 0, titles: 0, medals: [0, 0, 0], best: null, majorTitles: 0, semiTitles: 0,
       };
       out.set(id, r);
@@ -118,7 +129,12 @@ export function rankings(tournaments: TournamentDoc[], players: Player[]): Map<s
 
   const played: Played[] = [];
   for (const t of tournaments) {
-    for (const e of t.entrants) row(e.id, e.name).events++;
+    const official = isOfficial(t);
+    for (const e of t.entrants) {
+      const r = row(e.id, e.name);
+      r.events++;
+      if (official) r.officialEvents++;
+    }
     if (t.entrants.length < 2) continue;
     const state = toState(t);
     const resolved = resolve(state);
@@ -176,6 +192,28 @@ export function rankings(tournaments: TournamentDoc[], players: Player[]): Map<s
       note(r, p);
     }
   }
+  // confirmed rating: the same, over official tournaments only
+  const last = new Map<string, { t: string; before: number }>();
+  for (const p of played) {
+    if (!isOfficial(p.t)) continue;
+    const a = out.get(p.a)!;
+    const b = out.get(p.b)!;
+    for (const r of [a, b]) {
+      const l = last.get(r.player.id);
+      if (!l || l.t !== p.t.id) last.set(r.player.id, { t: p.t.id, before: r.confirmed });
+    }
+    const expected = 1 / (1 + 10 ** ((b.confirmed - a.confirmed) / 400));
+    const da = kFactor(a.confirmedRated) * (p.s - expected);
+    const db = kFactor(b.confirmedRated) * (1 - p.s - (1 - expected));
+    a.confirmed += da;
+    b.confirmed += db;
+    a.confirmedRated++;
+    b.confirmedRated++;
+  }
+  for (const [id, l] of last) {
+    const r = out.get(id)!;
+    r.confirmedChange = r.confirmed - l.before;
+  }
   for (const r of out.values()) {
     const h = r.history;
     r.change = h.length ? h[h.length - 1].rating - (h.length > 1 ? h[h.length - 2].rating : START_RATING) : 0;
@@ -183,10 +221,19 @@ export function rankings(tournaments: TournamentDoc[], players: Player[]): Map<s
   return out;
 }
 
-export type RankBy = 'rating' | 'points';
+export type RankBy = 'rating' | 'confirmed' | 'points';
+
+/** A row for a player who hasn't played (in this scope) yet. */
+export function emptyRow(player: Player): RankRow {
+  return {
+    player, rating: START_RATING, rated: 0, peak: START_RATING, change: 0, history: [], confirmed: START_RATING, confirmedRated: 0,
+    confirmedChange: 0, officialEvents: 0, points: 0, events: 0, wins: 0, losses: 0, draws: 0, titles: 0, medals: [0, 0, 0], best: null,
+    majorTitles: 0, semiTitles: 0,
+  };
+}
 
 export interface Ranked extends RankRow {
-  /** Place in the ranking (ties share it); null while the rating is provisional (rating ranking only). */
+  /** Place in the ranking (ties share it); null while the rating is provisional (rating rankings) or without points. */
   rank: number | null;
 }
 
@@ -196,13 +243,13 @@ export interface Ranked extends RankRow {
  */
 export function ranked(rows: Iterable<RankRow>, by: RankBy): Ranked[] {
   const list = [...rows];
-  const counts = (r: RankRow) => (by === 'rating' ? r.rated >= PROVISIONAL : r.points > 0);
-  const value = (r: RankRow) => (by === 'rating' ? Math.round(r.rating) : r.points);
+  const counts = (r: RankRow) => (by === 'rating' ? r.rated >= PROVISIONAL : by === 'confirmed' ? r.confirmedRated >= PROVISIONAL : r.points > 0);
+  const value = (r: RankRow) => (by === 'rating' ? Math.round(r.rating) : by === 'confirmed' ? Math.round(r.confirmed) : r.points);
   list.sort(
     (x, y) =>
       Number(counts(y)) - Number(counts(x)) ||
       value(y) - value(x) ||
-      (by === 'points' ? Math.round(y.rating) - Math.round(x.rating) : y.points - x.points) ||
+      (by === 'rating' ? y.points - x.points : Math.round(y.rating) - Math.round(x.rating)) ||
       y.titles - x.titles ||
       x.player.name.localeCompare(y.player.name),
   );

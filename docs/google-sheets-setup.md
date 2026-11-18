@@ -94,6 +94,7 @@ New columns are added to the tabs by themselves on the next save:
 | Entrants, Results, Log, Waitlist | `tournament` | The tournament's name, next to its id, so you can tell the rows apart. |
 | Tournaments | `category` | Optional kind of competition (Esports, Sports, Board games…). Rankings can be split by it. |
 | Tournaments | `division` | Optional age or level group (U18, Women…). Empty = Open. Rankings can be split by it. |
+| Tournaments | `official`, `officialNote` | Official tournament: `pending` (the organizer asked), `yes` (staff approved; counts towards the confirmed rating) or `no` (refused). The note is the organizer's message or the staff's reason. |
 | Tournaments | `discordWebhook` | The Discord channel link an organizer connected. It's a secret: never shown on the site. Empty it to stop the posts. |
 | Tournaments | `removedPins` | PINs of players the organizer removed, so they get the same PIN if they're added back. Leave it alone; it's never shown on the site. |
 | Tournaments | `tier` | Event size: `major`, `semi` or `small` (empty = small). Majors give double ranking points, semi-majors 1.5×. |

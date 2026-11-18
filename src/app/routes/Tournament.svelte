@@ -4,9 +4,12 @@
   import type { Decision, ResolvedMatch, ResultInput } from '../../core';
   import Bracket from '../components/Bracket.svelte';
   import EditTournament from '../components/EditTournament.svelte';
+  import OfficialPanel from '../components/OfficialPanel.svelte';
+  import type { OfficialState } from '../lib/store';
   import FinalsPanel from '../components/FinalsPanel.svelte';
   import Verified from '../components/Verified.svelte';
   import TierTag from '../components/TierTag.svelte';
+  import OfficialTag from '../components/OfficialTag.svelte';
   import LogView from '../components/LogView.svelte';
   import MatchList from '../components/MatchList.svelte';
   import MatchSheet from '../components/MatchSheet.svelte';
@@ -191,6 +194,21 @@
   }
 
   /** Organizer connects (or, with '', disconnects) a Discord channel. */
+  async function setOfficial(fn: () => Promise<OfficialState>, done: string) {
+    if (!doc) return false;
+    try {
+      await queue.idle();
+      const r = await fn();
+      doc = { ...doc, ...r };
+      if (queue.confirmed) queue.confirmed = { ...queue.confirmed, ...r };
+      app.notify(done);
+      return true;
+    } catch (e) {
+      app.notify(errorText(e), 'error');
+      return false;
+    }
+  }
+
   async function setDiscord(url: string) {
     if (!doc || !app.store.discord) return false;
     try {
@@ -429,6 +447,7 @@
   <div class="wrap page">
     <div class="titlebar">
       <div class="label">
+        <OfficialTag official={doc.official} />
         <TierTag tier={doc.tier} />
         {[
           doc.game,
@@ -496,6 +515,7 @@
       {#if tab === 'edit' && canEdit}
         {#if app.store.kind === 'sheets'}<SharePanel {doc} {names} onsignup={setSignup} onmax={setMaxPlayers} oncheckin={setCheckIn} ondiscord={setDiscord} />{/if}
         {#if status !== 'setup' && tstate}<DropPanel {doc} {names} ondrop={setDropped} />{/if}
+        <OfficialPanel {doc} onchange={setOfficial} />
         {#key doc.version}
           <EditTournament {doc} known={players} {names} onapply={applyEditTournament} ondelete={remove} />
         {/key}

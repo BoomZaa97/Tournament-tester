@@ -110,6 +110,17 @@ Made because Challonge made fixing wrong results hard.
   switch, Majors column. Player page: a rank card per game and per category they played, rating chart
   (`components/RatingChart.svelte`), leaderboard around them, "By event size" honours table, tournaments with tier tag and
   points (filter chips), medals, recent form, head-to-head.
+- Rankings are per game: game chips at the top (most played first, default = most played, "All games" last), category chips
+  under them, link `#/players/<game>` (`all-games` = every game; chips use `history.replaceState`, no reload). Home "Top
+  players" and the Player page's Rating stat use the (player's) most played game.
+- Official tournaments: `Tournaments.official` ('' | 'pending' | 'yes' | 'no', `officialOf`) + `officialNote`. Organizer
+  `requestOfficial` (org key; `cancel` withdraws), staff `setOfficial` (perm 'tournaments', audited). Saves never change it
+  (`saveTournament` copies unknown stored columns). `isOfficial(t)`, `OfficialTag` badge, `components/OfficialPanel.svelte`
+  (Edit tab), Admin → Tournaments "Asked to be official" + Overview count.
+- Confirmed rating: `RankRow.confirmed` / `confirmedRated` / `confirmedChange` / `officialEvents` = the same Elo over official
+  tournaments only; `RankBy` 'rating' | 'confirmed' | 'points' (Rankings tabs, Confirmed column; Player page stat + cards).
+- New-version bar: `lib/update.svelte.ts` re-fetches `index.html` (no-store) every 5 min and when the tab is shown, compares
+  the `assets/index-*.js` name with the loaded one → "A newer version of the site is out. Reload" (Pages caches 10 min).
 - Profiles (`Profiles` tab, read only by `GET action=profile`, never in lists; `loadTables` skips it): photo = square JPEG
   data URL made by `lib/photo.ts` (≤ 45k chars), bio ≤ 280, ≤ 3 http(s) links. `POST action=profile`: the player's own
   account token or the admin key. Local mode keeps them in `tt.profiles.v1`.

@@ -1,17 +1,19 @@
 <script lang="ts">
   import Verified from '../components/Verified.svelte';
   import { app, errorText } from '../lib/app.svelte';
-  import { categoryOf, divisionOf, OPEN, TIER_LABEL, TIER_WEIGHT, tierOf } from '../lib/model';
-  import { START_RATING } from '../lib/ranking';
+  import { categoryOf, divisionOf, isOfficial, OPEN, TIER_LABEL, TIER_WEIGHT, tierOf } from '../lib/model';
   import type { Tier } from '../lib/model';
-  import { filterTournaments, PROVISIONAL, ranked, rankings } from '../lib/ranking';
+  import { emptyRow, filterTournaments, PROVISIONAL, ranked, rankings } from '../lib/ranking';
   import type { RankBy, Ranked } from '../lib/ranking';
   import type { AllData } from '../lib/store';
 
   let data = $state<AllData | null>(null);
   let error = $state('');
   let q = $state('');
-  let game = $state('');
+  /** #/players/<game> opens that game's ranking; ALL = every game together. */
+  const ALL = 'all-games';
+  const fromLink = app.path[1] ?? '';
+  let game = $state(fromLink === ALL ? '' : fromLink);
   let category = $state('');
   let division = $state('');
   let tier = $state<Tier | ''>('');
@@ -23,12 +25,14 @@
   function show(d: AllData) {
     data = d;
     app.noteVerified(d.players);
-    if (picked) return;
-    picked = true;
+    if (picked || fromLink) return;
     // start on the game with the most tournaments: a rating across different games means little
     const count = new Map<string, number>();
     for (const t of d.tournaments) if (t.game) count.set(t.game, (count.get(t.game) ?? 0) + 1);
-    game = [...count].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
+    const top = [...count].sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (top === undefined) return; // nothing yet (e.g. an empty copy from last time): wait for the sheet
+    picked = true;
+    game = top;
   }
   // what this device saw last time, until the sheet answers
   const seen = app.store.peekAll();
@@ -41,7 +45,19 @@
     });
 
   const all = $derived(data?.tournaments ?? []);
-  const games = $derived([...new Set(all.map((t) => t.game).filter(Boolean))].sort());
+  // most played first
+  const games = $derived.by(() => {
+    const count = new Map<string, number>();
+    for (const t of all) if (t.game) count.set(t.game, (count.get(t.game) ?? 0) + 1);
+    return [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([g]) => g);
+  });
+  function pickGame(g: string) {
+    picked = true;
+    game = g;
+    category = '';
+    // keep the link shareable without reloading the page
+    history.replaceState(null, '', '#/players/' + encodeURIComponent(g || ALL));
+  }
   const inGame = $derived(all.filter((t) => !game || t.game === game));
   const categories = $derived([...new Set(inGame.map(categoryOf).filter(Boolean))].sort());
   const inCategory = $derived(inGame.filter((t) => !category || categoryOf(t) === category));
@@ -61,17 +77,10 @@
   const anyVerified = $derived(!!data?.players.some((p) => p.account));
   const list = $derived.by(() => {
     if (!data) return [];
-    // players who chose "hide me from the rankings" are left out (their matches still rate their opponents)
     const table = rankings(scope, data.players);
     // with no filter, players with an account show up before their first match too (not ranked yet)
     if (!game && !category && !division && !tier && !year) {
-      for (const p of data.players) {
-        if (!p.account || table.has(p.id)) continue;
-        table.set(p.id, {
-          player: p, rating: START_RATING, rated: 0, peak: START_RATING, change: 0, history: [], points: 0, events: 0, wins: 0,
-          losses: 0, draws: 0, titles: 0, medals: [0, 0, 0], best: null, majorTitles: 0, semiTitles: 0,
-        });
-      }
+      for (const p of data.players) if (p.account && !table.has(p.id)) table.set(p.id, emptyRow(p));
     }
     const rows = ranked(table.values(), by);
     // "verified only" hides the others but keeps everyone's real place in the whole ranking
@@ -86,11 +95,14 @@
   const podium = $derived(q.trim() ? [] : list.filter((r) => r.rank !== null && r.rank <= 3).slice(0, 3));
   const firstUnranked = $derived(shown.findIndex((r) => r.rank === null));
   const hasMajors = $derived(scope.some((t) => tierOf(t) === 'major'));
+  const officialCount = $derived(scope.filter(isOfficial).length);
   const myId = $derived(app.account?.playerId ?? '');
   const mine = $derived(myId ? list.find((r) => r.player.id === myId) : undefined);
 
   const sign = (n: number) => (n > 0 ? `+${n}` : `${n}`);
-  const value = (r: Ranked) => (by === 'rating' ? Math.round(r.rating) : r.points);
+  const value = (r: Ranked) => (by === 'rating' ? Math.round(r.rating) : by === 'confirmed' ? Math.round(r.confirmed) : r.points);
+  const unit = $derived(by === 'points' ? 'pts' : by === 'confirmed' ? 'confirmed' : 'rating');
+  const BY: [RankBy, string][] = [['rating', 'Rating'], ['confirmed', 'Confirmed'], ['points', 'Points']];
   const ordinal = (n: number) => n + (['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] ?? 'th');
   function jumpToMe() {
     q = '';
@@ -99,30 +111,29 @@
 </script>
 
 <div class="wrap page">
-  <h1>Rankings</h1>
+  <h1>Rankings{#if game}<span class="game">&nbsp;· {game}</span>{/if}</h1>
   <p class="muted intro">
-    From every result on this site. Pick a game{categories.length ? ', category' : ''} or event size to see who's on top.
+    Each game has its own ranking: a rating in one game says nothing about another.
   </p>
 
+  {#if games.length > 1}
+    <div class="chips games" role="tablist" aria-label="Game">
+      {#each games as g}
+        <button role="tab" class:on={game === g} aria-selected={game === g} onclick={() => pickGame(g)}>{g}</button>
+      {/each}
+      <button role="tab" class="allg" class:on={!game} aria-selected={!game} onclick={() => pickGame('')}>All games</button>
+    </div>
+  {/if}
+  {#if categories.length > 1}
+    <div class="chips cats" role="tablist" aria-label="Category">
+      <button role="tab" class:on={!category} aria-selected={!category} onclick={() => (category = '')}>All categories</button>
+      {#each categories as c}
+        <button role="tab" class:on={category === c} aria-selected={category === c} onclick={() => (category = c)}>{c}</button>
+      {/each}
+    </div>
+  {/if}
+
   <div class="controls">
-    {#if games.length}
-      <label class="field">
-        <span>Game</span>
-        <select bind:value={game}>
-          <option value="">All games</option>
-          {#each games as g}<option value={g}>{g}</option>{/each}
-        </select>
-      </label>
-    {/if}
-    {#if categories.length}
-      <label class="field">
-        <span>Category</span>
-        <select bind:value={category}>
-          <option value="">All categories</option>
-          {#each categories as c}<option value={c}>{c}</option>{/each}
-        </select>
-      </label>
-    {/if}
     {#if divisions.length > 1}
       <label class="field">
         <span>Division</span>
@@ -158,8 +169,9 @@
 
   <div class="bar">
     <div class="by" role="tablist" aria-label="Rank by">
-      <button class:on={by === 'rating'} role="tab" aria-selected={by === 'rating'} onclick={() => (by = 'rating')}>Rating</button>
-      <button class:on={by === 'points'} role="tab" aria-selected={by === 'points'} onclick={() => (by = 'points')}>Points</button>
+      {#each BY as [k, label]}
+        <button class:on={by === k} role="tab" aria-selected={by === k} onclick={() => (by = k)}>{label}</button>
+      {/each}
     </div>
     {#if anyVerified}
       <label class="check small"><input type="checkbox" bind:checked={verifiedOnly} /> Verified players only</label>
@@ -168,8 +180,16 @@
       <button class="small ghost me-btn" onclick={jumpToMe}>
         You: {mine.rank ? `#${mine.rank}` : 'not ranked yet'}
       </button>
+    {:else if myId && data}
+      <span class="small muted me-btn">You haven't played {game || 'here'} yet</span>
     {/if}
   </div>
+  {#if by === 'confirmed'}
+    <p class="small muted byline">
+      Only matches in <b>official tournaments</b> count here: tournaments staff checked.
+      {officialCount ? `${officialCount} official tournament${officialCount === 1 ? '' : 's'} so far.` : 'There are none here yet.'}
+    </p>
+  {/if}
 
   {#if error}
     <p class="notice">Couldn't load: {error}</p>
@@ -186,7 +206,7 @@
           <li class="p{r.rank}" class:me={r.player.id === myId}>
             <span class="place">{ordinal(r.rank!)}</span>
             <span class="pn">{#if anon(r)}<span class="pname anon">Anonymous</span>{:else}<a class="pname" href="#/p/{r.player.id}">{r.player.name}</a><Verified id={r.player.id} />{/if}</span>
-            <span class="pval">{value(r)} <small>{by === 'rating' ? 'rating' : 'pts'}</small></span>
+            <span class="pval">{value(r)} <small>{unit}</small></span>
             <span class="small muted">
               {r.wins}–{r.losses}{r.draws ? `–${r.draws}` : ''}
               {#if r.titles}· {r.titles} title{r.titles === 1 ? '' : 's'}{/if}
@@ -204,7 +224,8 @@
             <th class="num">#</th>
             <th>Player</th>
             <th class="num" class:sorted={by === 'rating'}>Rating</th>
-            <th class="num" class:sorted={by === 'points'}>Points</th>
+            <th class="num" class:sorted={by === 'confirmed'} class:hide-xs={by !== 'confirmed'} title="Rating from official tournaments only">Confirmed</th>
+            <th class="num" class:sorted={by === 'points'} class:hide-xs={by !== 'points'}>Points</th>
             <th class="num hide-s">W–L</th>
             <th class="num hide-s">Events</th>
             {#if hasMajors}<th class="num hide-xs" title="Majors won">Majors</th>{/if}
@@ -215,10 +236,12 @@
           {#each shown as r, i (r.player.id)}
             {#if i === firstUnranked}
               <tr class="divider">
-                <td colspan="8">
+                <td colspan="9">
                   {by === 'rating'
                     ? `Not ranked yet: fewer than ${PROVISIONAL} rated matches`
-                    : 'No points yet: points come from finished tournaments'}
+                    : by === 'confirmed'
+                      ? `No confirmed rating yet: fewer than ${PROVISIONAL} matches in official tournaments`
+                      : 'No points yet: points come from finished tournaments'}
                 </td>
               </tr>
             {/if}
@@ -238,7 +261,15 @@
                   <span class="chg" class:up={r.change > 0}>{sign(Math.round(r.change))}</span>
                 {/if}
               </td>
-              <td class="num" class:sorted={by === 'points'}><span class="val">{r.points}</span></td>
+              <td class="num" class:sorted={by === 'confirmed'} class:hide-xs={by !== 'confirmed'}>
+                {#if r.confirmedRated}
+                  <span class="val" class:prov={r.confirmedRated < PROVISIONAL}>{Math.round(r.confirmed)}</span>
+                  {#if by === 'confirmed' && Math.round(r.confirmedChange)}
+                    <span class="chg" class:up={r.confirmedChange > 0}>{sign(Math.round(r.confirmedChange))}</span>
+                  {/if}
+                {:else}<span class="muted">–</span>{/if}
+              </td>
+              <td class="num" class:sorted={by === 'points'} class:hide-xs={by !== 'points'}><span class="val">{r.points}</span></td>
               <td class="num hide-s">{r.wins}–{r.losses}{r.draws ? `–${r.draws}` : ''}</td>
               <td class="num hide-s">{r.events}</td>
               {#if hasMajors}<td class="num hide-xs">{r.majorTitles || ''}</td>{/if}
@@ -253,6 +284,8 @@
     <p class="small muted note">
       <b>Rating</b>: everyone starts at 1500. Each match moves it up or down; beating a higher-rated player gains more.
       Forfeits don't count. The small number is the change in the player's latest tournament.
+      <b>Confirmed</b>: the same rating, from official tournaments only (checked by staff), so it can't be pumped up with
+      made-up events. Grey numbers are still settling (fewer than {PROVISIONAL} matches).
       <b>Points</b>: 100 for 1st, 70 for 2nd, 50 for 3rd, 40 for 4th, 25 for top 8, 15 for top 16, 10 for taking part;
       ×{TIER_WEIGHT.major} at majors, ×{TIER_WEIGHT.semi} at semi-majors.
       {#if anyVerified}<b>Verified</b> <Verified id={data.players.find((p) => p.account)?.id} />: the name belongs to the player's own account.{/if}
@@ -263,7 +296,19 @@
 <style>
   .page { padding-top: 28px; }
   h1 { margin-bottom: 4px; }
-  .intro { margin-bottom: 16px; }
+  .intro { margin-bottom: 14px; }
+  h1 .game { color: var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .chips button {
+    min-height: 34px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: transparent;
+    font: 600 15px var(--font-cond); letter-spacing: 0.04em; color: var(--ink-2);
+  }
+  .chips button.on { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+  .chips.games button { font-size: 16px; }
+  .chips .allg { border-style: dashed; }
+  .chips.cats button { min-height: 30px; font-size: 14px; }
+  .chips.cats { margin-bottom: 14px; }
+  .byline { margin: -6px 0 14px; }
   .controls { display: flex; gap: 10px 12px; flex-wrap: wrap; align-items: end; margin-bottom: 16px; }
   .controls .field { flex: 0 1 180px; min-width: 0; }
   .controls .field > span { font-size: 13px; }

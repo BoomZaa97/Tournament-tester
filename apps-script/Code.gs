@@ -38,6 +38,7 @@ var TABLES = {
   Tournaments: [
     'id', 'name', 'game', 'category', 'tier', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash',
     'code', 'maxPlayers', 'checkIn', 'removedPins', 'discordWebhook', 'division',
+    'official', 'officialNote',
   ],
   Entrants: ['tournamentId', 'tournament', 'seed', 'playerId', 'name', 'pin', 'checkedIn'],
   Results: [
@@ -135,6 +136,8 @@ function doPost(e) {
         return confirmed;
       }
       if (body.action === 'discord') return setDiscord(body, can(actor, 'tournaments'));
+      if (body.action === 'requestOfficial') return requestOfficial(body, actor);
+      if (body.action === 'setOfficial') return setOfficial(body, actor);
       if (body.action === 'register') return register(body);
       if (body.action === 'login') return logIn(body.username, body.password, body.code);
       if (body.action === 'twoStepSetup') return twoStepSetup(body.token, body.password);
@@ -340,6 +343,9 @@ function assemble(t, data, lite) {
     category: t.category || '',
     division: t.division || '',
     tier: tierOf(t.tier),
+    // official = counted in the confirmed rating; only staff set it (organizers ask)
+    official: officialOf(t.official),
+    officialNote: String(t.officialNote || ''),
     signup: truthy(t.signup),
     code: t.code || '',
     maxPlayers: num(t.maxPlayers),
@@ -757,6 +763,62 @@ function setDiscord(body, isAdmin) {
   t.updatedAt = new Date().toISOString(); // other open pages pick it up; not a new version of the bracket
   writeRow('Tournaments', t);
   return { discord: !!url };
+}
+
+// ------------------------------------------------------------------ official tournaments
+
+/**
+ * An official (verified) tournament counts towards the confirmed rating. Organizers ask for it
+ * (`requestOfficial`, 'pending'); staff with the tournaments permission approve or refuse it
+ * (`setOfficial`, audited). Saves never change it: `saveTournament` keeps the stored columns.
+ */
+var OFFICIAL = ['', 'pending', 'yes', 'no'];
+
+function officialOf(raw) {
+  var v = String(raw || '').trim().toLowerCase();
+  return OFFICIAL.indexOf(v) >= 0 ? v : '';
+}
+
+function cleanNote(raw) {
+  return String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+}
+
+function requestOfficial(body, actor) {
+  var data = loadOne(body.id);
+  var t = findTournament(data.Tournaments, body.id);
+  if (!t) throw new Error('Tournament not found');
+  if (!can(actor, 'tournaments') && !isOrganizer(body, t)) throw new Error(NOT_ORGANIZER);
+  var now = officialOf(t.official);
+  if (body.cancel) {
+    if (now !== 'pending') throw new Error('There is no request to withdraw');
+    t.official = '';
+    t.officialNote = '';
+  } else {
+    if (now === 'yes') throw new Error('This tournament is already official');
+    if (now === 'pending') throw new Error('Already sent: staff will look at it');
+    t.official = 'pending';
+    t.officialNote = cleanNote(body.note);
+  }
+  t.updatedAt = new Date().toISOString();
+  writeRow('Tournaments', t);
+  return { official: officialOf(t.official), officialNote: String(t.officialNote || '') };
+}
+
+function setOfficial(body, actor) {
+  need(actor, 'tournaments');
+  var status = officialOf(body.status);
+  if (status === 'pending') throw new Error('Choose official, not official or none');
+  var data = loadOne(body.id);
+  var t = findTournament(data.Tournaments, body.id);
+  if (!t) throw new Error('Tournament not found');
+  var note = cleanNote(body.note);
+  t.official = status;
+  t.officialNote = note;
+  t.updatedAt = new Date().toISOString();
+  writeRow('Tournaments', t);
+  var label = { '': 'Removed official status', yes: 'Made official', no: 'Refused official status' }[status];
+  audit(actor, label, t.name + ' (' + t.id + ')', note);
+  return { official: status, officialNote: note };
 }
 
 /** Post the lines the app made for this change, if the tournament has a channel. Never fails the save. */

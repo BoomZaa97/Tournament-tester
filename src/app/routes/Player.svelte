@@ -1,6 +1,7 @@
 <script lang="ts">
   import RatingChart from '../components/RatingChart.svelte';
   import TierTag from '../components/TierTag.svelte';
+  import OfficialTag from '../components/OfficialTag.svelte';
   import Verified from '../components/Verified.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import { buildHistory, winRate } from '../lib/history';
@@ -82,12 +83,24 @@
     }
   };
 
-  // ---- overall rating (every game) and place in the overall ranking
+  // ---- rating and confirmed rating in the player's main game (ratings only make sense within one game)
   const overall = $derived.by(() => {
-    if (!data) return null;
-    const list = ranked(rankings(data.tournaments, data.players).values(), 'rating');
+    if (!data || !stats) return null;
+    const count = new Map<string, number>();
+    for (const t of stats.tournaments) count.set(t.game, (count.get(t.game) ?? 0) + 1);
+    const game = [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
+    if (game === undefined) return null;
+    const rows = rankings(data.tournaments.filter((t) => t.game === game), data.players);
+    const list = ranked(rows.values(), 'rating');
+    const conf = ranked(rows.values(), 'confirmed');
     const me = list.find((r) => r.player.id === id);
-    return me ? { rating: Math.round(me.rating), rank: me.rank, of: list.filter((r) => r.rank !== null).length, rated: me.rated, peak: Math.round(me.peak) } : null;
+    if (!me) return null;
+    return {
+      game, several: count.size > 1,
+      rating: Math.round(me.rating), rank: me.rank, of: list.filter((r) => r.rank !== null).length, rated: me.rated,
+      confirmed: Math.round(me.confirmed), confirmedRated: me.confirmedRated,
+      confirmedRank: conf.find((r) => r.player.id === id)?.rank ?? null, confirmedOf: conf.filter((r) => r.rank !== null).length,
+    };
   });
 
   // ---- rank in each game this player has played, and in each category of it they played in
@@ -114,6 +127,7 @@
         list,
         of: list.filter((r) => r.rank !== null).length,
         pointsRank: ranked(list, 'points').find((r) => r.player.id === id)?.rank ?? null,
+        confirmedRank: ranked(list, 'confirmed').find((r) => r.player.id === id)?.rank ?? null,
       };
     });
   });
@@ -338,11 +352,22 @@
 
     <dl class="stats">
       <div>
-        <dt class="label" title="Elo rating from every rated match, all games">Rating</dt>
+        <dt class="label" title="Elo rating from every rated match{overall?.game ? ` in ${overall.game}` : ''}">Rating{#if overall?.several}<span class="g">&nbsp;· {overall.game}</span>{/if}</dt>
         <dd>
           {overall?.rating ?? 1500}
           <small class="sub">
             {#if overall?.rank}#{overall.rank} of {overall.of}{:else}not ranked yet ({overall?.rated ?? 0}/{PROVISIONAL} matches){/if}
+          </small>
+        </dd>
+      </div>
+      <div>
+        <dt class="label" title="Rating from official tournaments only (checked by staff)">Confirmed</dt>
+        <dd>
+          {#if overall?.confirmedRated}{overall.confirmed}{:else}<span class="muted">–</span>{/if}
+          <small class="sub">
+            {#if overall?.confirmedRank}#{overall.confirmedRank} of {overall.confirmedOf}
+            {:else if overall?.confirmedRated}{overall.confirmedRated}/{PROVISIONAL} official matches
+            {:else}no official matches yet{/if}
           </small>
         </dd>
       </div>
@@ -351,8 +376,7 @@
         <dt class="label" title="1st / 2nd / 3rd places">Medals</dt>
         <dd class="medals"><span>{medals[0]}</span><i>/</i><span>{medals[1]}</span><i>/</i><span>{medals[2]}</span></dd>
       </div>
-      <div><dt class="label">Record</dt><dd>{stats.wins}–{stats.losses}{stats.draws ? `–${stats.draws}` : ''}</dd></div>
-      <div><dt class="label">Win rate</dt><dd>{winRate(stats)}</dd></div>
+      <div><dt class="label">Record</dt><dd>{stats.wins}–{stats.losses}{stats.draws ? `–${stats.draws}` : ''}<small class="sub">{winRate(stats)} won</small></dd></div>
       <div><dt class="label">Events</dt><dd>{stats.tournaments.length}</dd></div>
     </dl>
 
@@ -370,6 +394,9 @@
                 Rating <b>{Math.round(c.me.rating)}</b>
                 {#if c.me.rated < PROVISIONAL}<span class="muted">({c.me.rated} of {PROVISIONAL} matches)</span>
                 {:else}<span class="muted">· peak {Math.round(c.me.peak)}</span>{/if}
+              </span>
+              <span class="small">
+                Confirmed {#if c.me.confirmedRated}<b>{Math.round(c.me.confirmed)}</b>{#if c.confirmedRank}<span class="muted">&nbsp;· #{c.confirmedRank}</span>{:else}<span class="muted"> ({c.me.confirmedRated} of {PROVISIONAL})</span>{/if}{:else}<span class="muted">–</span>{/if}
               </span>
               <span class="small">
                 {c.me.points} pts{#if c.pointsRank}<span class="muted">&nbsp;· #{c.pointsRank} on points</span>{/if}
@@ -451,7 +478,7 @@
             <li>
               <span class="place" class:gold={t.place === 1 && t.finished}>{t.place ? ordinal(t.place) : '–'}</span>
               <span class="tbody">
-                <span><a href="#/t/{t.id}">{t.name}</a> <TierTag tier={t.tier} /></span>
+                <span><a href="#/t/{t.id}">{t.name}</a> <TierTag tier={t.tier} /> <OfficialTag official={t.official ? 'yes' : ''} /></span>
                 <span class="muted small">
                   {[t.game, t.category, t.division, `${t.entrants} entrants`].filter(Boolean).join(' · ')}{#if !t.finished}&nbsp;· in progress{/if}
                 </span>
@@ -542,6 +569,7 @@
   .stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 20px 0 28px; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line); }
   .stats div { padding: 12px 4px; }
   .stats div + div { border-left: 1px solid var(--line); padding-left: 14px; }
+  .stats dt .g { text-transform: none; letter-spacing: 0; }
   dd { margin: 2px 0 0; font: 700 30px/1 var(--font-cond); }
   .medals i { font-style: normal; color: var(--line-strong); margin: 0 3px; font-weight: 400; }
   .medals span:first-child { color: var(--accent); }
