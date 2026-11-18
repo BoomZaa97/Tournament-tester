@@ -74,7 +74,8 @@ Made because Challonge made fixing wrong results hard.
 - Site settings: script property `SITE` JSON (`lockCreate`), sent as `site` in `GET all`, cached in `tt.site.v1`.
   `CREATE_LOCKED` for version-0 saves below organizer.
 - Privacy: `Accounts.privateProfile` (GET profile → `{profile:null, private:true}`; POST `readProfile` for self/staff) and
-  `unranked` (players lists carry the flags; Rankings leaves them out before ranking).
+  `unranked` = "hide my name in the rankings": they keep their place but show as "Anonymous" (not linked, not searchable)
+  to everyone but themselves (Rankings, home Top players, Player leaderboard).
 - Two-step login (TOTP, RFC 6238 SHA-1/6 digits/30 s, ±1 step): `twoStepSetup` (password → `totpPending` + otpauth URI,
   QR on the Account page), `twoStepOn` (first code), `twoStepOff` (password + code). Login without `code` → `TWO_STEP`
   error, the form then asks for it. `totpLast` = last step used (each code once). Wrong codes count towards the lock.
@@ -92,6 +93,9 @@ Made because Challonge made fixing wrong results hard.
   looks like an age group (`DIVISION_LIKE`: Open, U18…) counts as the division until the tournament is edited.
   Rankings filter by both; with no filters, verified players without matches are listed as not ranked yet.
 - Create: sign-up is on by default in shared mode and no entrants are required (the page waits for 2).
+- Home (`routes/Home.svelte`, `#/`): hero + join-code box, site counts, Live now / Sign-up open / Latest champions /
+  Top players boxes (only those with content), "How it works" while there are < 6 tournaments, then All tournaments.
+- Player page stats start with the overall rating (all games) and place.
 - Settings are split: `#/settings` (`routes/Settings.svelte`, everyone) = this device's look (`lib/prefs.ts`, `tt.prefs.v1`:
   theme auto/light/dark → `data-theme` on <html>, text size → `data-size=large` = `zoom: 1.12` on body; Bracket divides its
   connector measurements by that zoom) and "Your access" (role, account, tournaments organized/played on this device).

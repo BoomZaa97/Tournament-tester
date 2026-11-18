@@ -82,6 +82,14 @@
     }
   };
 
+  // ---- overall rating (every game) and place in the overall ranking
+  const overall = $derived.by(() => {
+    if (!data) return null;
+    const list = ranked(rankings(data.tournaments, data.players).values(), 'rating');
+    const me = list.find((r) => r.player.id === id);
+    return me ? { rating: Math.round(me.rating), rank: me.rank, of: list.filter((r) => r.rank !== null).length, rated: me.rated, peak: Math.round(me.peak) } : null;
+  });
+
   // ---- rank in each game this player has played, and in each category of it they played in
   const gameCards = $derived.by(() => {
     if (!data || !stats) return [];
@@ -275,7 +283,8 @@
     <p class="pid small muted">Player ID <code class="num">{stats.player.id}</code> <button class="linkish" onclick={copyId}>Copy</button></p>
     {#if stats.player.account}<p class="acct"><Verified id={stats.player.id} label /> <span class="small muted">This name belongs to the player's own account. Nobody else can use it.</span></p>{/if}
     {#if stats.player.privateProfile && !profile}<p class="small muted">This player's profile is private.</p>{/if}
-    {#if stats.player.unranked}<p class="small muted">Hidden from the rankings at the player's request.</p>{/if}
+    {#if stats.player.privateProfile && profile}<p class="small muted">Private profile: only {app.account?.playerId === id ? 'you' : 'this player'} and staff can see the photo, bio and links.</p>{/if}
+    {#if stats.player.unranked}<p class="small muted">Shown as Anonymous in the rankings at the player's request.</p>{/if}
     {#if profile?.bio}<p class="bio">{profile.bio}</p>{/if}
     {#if profile?.links.length}
       <ul class="links">
@@ -328,6 +337,15 @@
     {/if}
 
     <dl class="stats">
+      <div>
+        <dt class="label" title="Elo rating from every rated match, all games">Rating</dt>
+        <dd>
+          {overall?.rating ?? 1500}
+          <small class="sub">
+            {#if overall?.rank}#{overall.rank} of {overall.of}{:else}not ranked yet ({overall?.rated ?? 0}/{PROVISIONAL} matches){/if}
+          </small>
+        </dd>
+      </div>
       <div><dt class="label">Titles</dt><dd>{stats.titles}{#if majorTitles}<small class="sub">{majorTitles} major</small>{/if}</dd></div>
       <div>
         <dt class="label" title="1st / 2nd / 3rd places">Medals</dt>
@@ -372,7 +390,7 @@
                 <tr class:self={r.player.id === id}>
                   <td class="num rk">{r.rank}</td>
                   <td class="nm">
-                    {#if r.player.id === id}<b>{r.player.name}</b>{:else}<a href="#/p/{r.player.id}">{r.player.name}</a>{/if}<Verified id={r.player.id} />
+                    {#if r.player.id === id}<b>{r.player.name}</b><Verified id={r.player.id} />{:else if r.player.unranked && r.player.id !== app.account?.playerId}<span class="muted">Anonymous</span>{:else}<a href="#/p/{r.player.id}">{r.player.name}</a><Verified id={r.player.id} />{/if}
                   </td>
                   <td class="num">{Math.round(r.rating)}</td>
                   <td class="num muted hide-xs">{r.points} pts</td>
@@ -521,7 +539,7 @@
   .editor .field { gap: 6px; }
   .photo-edit { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   .btn.small { min-height: 32px; padding: 0 10px; font-size: 14px; }
-  .stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 20px 0 28px; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line); }
+  .stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 20px 0 28px; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line); }
   .stats div { padding: 12px 4px; }
   .stats div + div { border-left: 1px solid var(--line); padding-left: 14px; }
   dd { margin: 2px 0 0; font: 700 30px/1 var(--font-cond); }

@@ -455,7 +455,7 @@
       </label>
       <label class="check">
         <input type="checkbox" checked={!!app.account.unranked} disabled={busy} onchange={(e) => setPrivacy({ unranked: e.currentTarget.checked })} />
-        <span>Hide me from the rankings <span class="small muted">(your results still count in brackets and for opponents)</span></span>
+        <span>Hide my name in the rankings <span class="small muted">(you keep your place but show as "Anonymous"; brackets still show your name)</span></span>
       </label>
     </section>
 

@@ -73,13 +73,15 @@
         });
       }
     }
-    const rows = ranked([...table.values()].filter((r) => !r.player.unranked), by);
+    const rows = ranked(table.values(), by);
     // "verified only" hides the others but keeps everyone's real place in the whole ranking
     return verifiedOnly ? rows.filter((r) => app.verified.has(r.player.id)) : rows;
   });
+  // players who chose "hide my name in the rankings" keep their place but show as Anonymous (to everyone but themselves)
+  const anon = (r: Ranked) => !!r.player.unranked && r.player.id !== myId;
   const shown = $derived.by(() => {
     const needle = q.trim().toLowerCase();
-    return needle ? list.filter((r) => r.player.name.toLowerCase().includes(needle)) : list;
+    return needle ? list.filter((r) => !anon(r) && r.player.name.toLowerCase().includes(needle)) : list;
   });
   const podium = $derived(q.trim() ? [] : list.filter((r) => r.rank !== null && r.rank <= 3).slice(0, 3));
   const firstUnranked = $derived(shown.findIndex((r) => r.rank === null));
@@ -183,7 +185,7 @@
         {#each podium as r (r.player.id)}
           <li class="p{r.rank}" class:me={r.player.id === myId}>
             <span class="place">{ordinal(r.rank!)}</span>
-            <span class="pn"><a class="pname" href="#/p/{r.player.id}">{r.player.name}</a><Verified id={r.player.id} /></span>
+            <span class="pn">{#if anon(r)}<span class="pname anon">Anonymous</span>{:else}<a class="pname" href="#/p/{r.player.id}">{r.player.name}</a><Verified id={r.player.id} />{/if}</span>
             <span class="pval">{value(r)} <small>{by === 'rating' ? 'rating' : 'pts'}</small></span>
             <span class="small muted">
               {r.wins}–{r.losses}{r.draws ? `–${r.draws}` : ''}
@@ -220,11 +222,15 @@
                 </td>
               </tr>
             {/if}
-            <tr id="r-{r.player.id}" class:top={r.rank === 1} class:me={r.player.id === myId}>
+            <tr id={anon(r) ? undefined : `r-${r.player.id}`} class:top={r.rank === 1} class:me={r.player.id === myId}>
               <td class="num rank">{r.rank ?? '–'}</td>
               <td class="name">
-                <a href="#/p/{r.player.id}">{r.player.name}</a><Verified id={r.player.id} />
-                {#if r.player.id === myId}<span class="you">You</span>{/if}
+                {#if anon(r)}
+                  <span class="anon">Anonymous</span>
+                {:else}
+                  <a href="#/p/{r.player.id}">{r.player.name}</a><Verified id={r.player.id} />
+                {/if}
+                {#if r.player.id === myId}<span class="you">You{r.player.unranked ? ' · shown as Anonymous' : ''}</span>{/if}
               </td>
               <td class="num" class:sorted={by === 'rating'}>
                 <span class="val" class:prov={r.rated < PROVISIONAL}>{Math.round(r.rating)}</span>
@@ -293,6 +299,7 @@
   .name a:hover { text-decoration: underline; }
   tr.me td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
   tr.me td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  .anon { color: var(--muted); font-style: italic; }
   .you { margin-left: 6px; font: 700 11px var(--font-cond); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
   th.sorted { color: var(--ink); }
   td.sorted .val { font: 700 18px var(--font-cond); }
