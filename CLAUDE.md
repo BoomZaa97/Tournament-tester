@@ -47,7 +47,7 @@ Made because Challonge made fixing wrong results hard.
   Token = `accountId.HMAC(ACCOUNT_SECRET, salt)` (stateless; a new salt on password change/reset logs other devices out).
   Passwords: HMAC with salt. 5 wrong in a row → 10 min lock. `signup` with `token` joins as the account's player; a name
   that belongs to an account can't be used by name. Registering a name that already played needs a PIN of that player
-  (device PINs sent as `claims`, or join code + PIN typed). Admin: `resetPassword` (Player page). Players list has
+  (device PINs sent as `claims`, or join code + PIN typed). Admin: `resetPassword` and `deleteAccount` (Player page; the player stays, unverified). A player with no matches still has a page. Players list has
   `account: true` (all lists, incl. `get`). `app.account` / `app.accountSync` (pages re-read `myPin` when it changes); `app.syncAccount()` on start.
 - Verified names: a player with an account is "verified". `app.verified` (SvelteSet of ids, filled by `app.noteVerified(players)`
   from every player list a page gets; only adds) drives `components/Verified.svelte` (accent check mark next to names:

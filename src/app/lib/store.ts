@@ -90,6 +90,8 @@ export interface Store {
   renameSelf?(name: string): Promise<Account>;
   /** Site admin: a new random password for the account of this player. */
   resetPassword?(playerId: string): Promise<{ username: string; password: string }>;
+  /** Site admin: remove a player's account (the player stays, unverified). */
+  deleteAccount?(playerId: string): Promise<void>;
 }
 
 export interface Account {
@@ -560,6 +562,10 @@ export class SheetsStore implements Store {
 
   resetPassword(playerId: string) {
     return this.call<{ username: string; password: string }>('POST', { action: 'resetPassword', playerId });
+  }
+
+  async deleteAccount(playerId: string) {
+    await this.call('POST', { action: 'deleteAccount', playerId });
   }
 
   async report(id: string, matchId: string, pin: string, result: ReportedResult, matchNo?: number) {

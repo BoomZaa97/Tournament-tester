@@ -28,7 +28,9 @@
     app.noteVerified(d.players);
     const all = buildHistory(d.tournaments, d.players);
     names = new Map([...all.values()].map((s) => [s.player.id, s.player.name]));
-    stats = all.get(id) ?? null;
+    // a player with no matches yet (e.g. a new account) still has a page
+    const known = d.players.find((p) => p.id === id);
+    stats = all.get(id) ?? (known ? { player: known, matches: [], wins: 0, losses: 0, draws: 0, tournaments: [], titles: 0 } : null);
   }
 
   // ---- photo, bio, links
@@ -190,6 +192,18 @@
     }
   }
 
+  async function deleteAccount() {
+    if (!stats || !confirm(`Remove ${stats.player.name}'s account? They're logged out everywhere and lose the verified mark. Their results stay.`)) return;
+    try {
+      await app.store.deleteAccount!(id);
+      app.verified.delete(id);
+      stats = { ...stats, player: { ...stats.player, account: undefined } };
+      app.notify('Account removed');
+    } catch (err) {
+      app.notify(errorText(err), 'error');
+    }
+  }
+
   const ordinal = (n: number) => n + (['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] ?? 'th');
 
   async function rename(e: SubmitEvent) {
@@ -230,6 +244,9 @@
           <button class="small ghost" onclick={() => { newName = stats!.player.name; renaming = true; }}>Rename</button>
           {#if stats.player.account && app.store.resetPassword}
             <button class="small ghost" onclick={resetPassword}>Reset password</button>
+          {/if}
+          {#if stats.player.account && app.store.deleteAccount}
+            <button class="small ghost danger" onclick={deleteAccount}>Remove account</button>
           {/if}
         {/if}
         {#if canEditProfile && !editing}
@@ -389,6 +406,7 @@
             </div>
           {/if}
         </div>
+        {#if !stats.tournaments.length}<p class="muted">No tournaments yet.</p>{/if}
         <ul class="plain">
           {#each tournamentsShown as t (t.id)}
             <li>

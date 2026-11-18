@@ -130,6 +130,10 @@ function doPost(e) {
         if (!isAdmin) throw new Error('Only the site admin can reset passwords');
         return resetPassword(body.playerId);
       }
+      if (body.action === 'deleteAccount') {
+        if (!isAdmin) throw new Error('Only the site admin can remove accounts');
+        return deleteAccount(body.playerId);
+      }
       throw new Error('Unknown action: ' + body.action);
     } finally {
       lock.releaseLock();
@@ -1518,6 +1522,21 @@ function resetPassword(playerId) {
   a.lockedUntil = '';
   writeTable('Accounts', data.Accounts);
   return { username: a.username, password: password };
+}
+
+/**
+ * Admin: remove a player's account (a duplicate or test account). The player and their results stay,
+ * just no longer verified; their devices are logged out. "Clean up players" removes the player too
+ * if they're in no tournament.
+ */
+function deleteAccount(playerId) {
+  var data = loadTables();
+  var kept = data.Accounts.filter(function (a) {
+    return a.playerId !== playerId;
+  });
+  if (kept.length === data.Accounts.length) throw new Error('That player has no account');
+  writeTable('Accounts', kept);
+  return { ok: true };
 }
 
 // ------------------------------------------------------------------ sheet helpers

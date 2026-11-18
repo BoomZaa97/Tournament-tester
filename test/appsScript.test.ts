@@ -468,6 +468,19 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.post({ action: 'login', username: 'dana', password: 'hunter22' }).error).toBeUndefined();
     });
 
+    it('admin removes an account: the player stays unverified, the login stops working, clean-up can then remove them', () => {
+      const g = fakeGoogle();
+      const { account } = reg(g, { username: 'dupe', name: 'Dupe' });
+      reg(g, { username: 'keeper', name: 'Keeper' });
+      expect(g.post({ action: 'deleteAccount', playerId: account.playerId }).error).toMatch(/site admin/);
+      expect(g.post({ action: 'deleteAccount', key: 'secret', playerId: 'nobody' }).error).toMatch(/no account/);
+      expect(g.post({ action: 'deleteAccount', key: 'secret', playerId: account.playerId }).error).toBeUndefined();
+      expect(g.post({ action: 'login', username: 'dupe', password: 'hunter22' }).error).toBeDefined();
+      expect(g.post({ action: 'login', username: 'keeper', password: 'hunter22' }).error).toBeUndefined();
+      expect(g.get({ action: 'players' }).players.find((p: { id: string }) => p.id === account.playerId)).toEqual({ id: account.playerId, name: 'Dupe' });
+      expect(g.post({ action: 'prunePlayers', key: 'secret' }).removed.map((p: { name: string }) => p.name)).toEqual(['Dupe']);
+    });
+
     it('a removed player keeps their PIN: adding them back or them signing up again gives the same one', () => {
       const g = fakeGoogle();
       create(g);
