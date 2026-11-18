@@ -1,7 +1,10 @@
 <script lang="ts">
   import { replaceEntrant, restructure } from '../../core';
   import type { Format, FormatOptions } from '../../core';
-  import { describeResult, FORMAT_LABEL, newId, TIER_LABEL, tierOf, toState } from '../lib/model';
+  import {
+    CATEGORY_SUGGESTIONS, categoryOf, cleanDivision, describeResult, DIVISION_SUGGESTIONS, divisionOf, FORMAT_LABEL, newId, OPEN, TIER_LABEL,
+    tierOf, toState,
+  } from '../lib/model';
   import type { LogEntry, Player, Row, Scoring, Tier, TournamentDoc } from '../lib/model';
   import TierPicker from './TierPicker.svelte';
   import { nameKey } from '../lib/players';
@@ -19,7 +22,9 @@
 
   let name = $state(doc.name);
   let game = $state(doc.game);
-  let category = $state(doc.category ?? '');
+  // an old "Category: U18" shows up as the division here, and moves there when saved
+  let category = $state(categoryOf(doc));
+  let division = $state(divisionOf(doc) === OPEN ? '' : divisionOf(doc));
   let tier = $state<Tier>(tierOf(doc));
   let format = $state<Format>(doc.format);
   let options = $state<FormatOptions>({ ...doc.options });
@@ -72,7 +77,8 @@
     if (JSON.stringify(scoring) !== JSON.stringify(doc.scoring)) notes.push('scoring changed');
     if (name.trim() !== doc.name) notes.push('renamed');
     if (game.trim() !== doc.game) notes.push('game changed');
-    if (category.trim() !== (doc.category ?? '')) notes.push('category changed');
+    if (category.trim() !== categoryOf(doc)) notes.push('category changed');
+    if ((cleanDivision(division) ?? OPEN) !== divisionOf(doc)) notes.push(`division → ${cleanDivision(division) ?? OPEN}`);
     if (tier !== tierOf(doc)) notes.push(`now a ${TIER_LABEL[tier].toLowerCase()}`);
 
     const out = restructure(tstate, { format, entrants: ids, options });
@@ -90,7 +96,7 @@
       summary: `Edited tournament: ${plan.notes.join('; ')}`,
       changes: [],
       restore: {
-        name: doc.name, game: doc.game, category: doc.category ?? '', tier: tierOf(doc), format: doc.format, options: doc.options,
+        name: doc.name, game: doc.game, category: doc.category ?? '', division: doc.division ?? '', tier: tierOf(doc), format: doc.format, options: doc.options,
         scoring: doc.scoring, entrants: doc.entrants, results: doc.results,
       },
     };
@@ -99,6 +105,7 @@
       name: name.trim(),
       game: game.trim(),
       category: category.trim() || undefined,
+      division: cleanDivision(division),
       tier,
       format,
       options: plan.options,
@@ -116,7 +123,16 @@
     <div class="col">
       <label class="field"><span>Name</span><input bind:value={name} /></label>
       <label class="field"><span>Game</span><input bind:value={game} /></label>
-      <label class="field"><span>Category <span class="muted">(optional)</span></span><input bind:value={category} placeholder="None" maxlength="40" /></label>
+      <label class="field">
+        <span>Category <span class="muted">(optional: Esports, Sports…)</span></span>
+        <input bind:value={category} placeholder="None" maxlength="40" list="edit-categories" />
+        <datalist id="edit-categories">{#each CATEGORY_SUGGESTIONS as c}<option value={c}></option>{/each}</datalist>
+      </label>
+      <label class="field">
+        <span>Division <span class="muted">(optional: U18, Women…)</span></span>
+        <input bind:value={division} placeholder="Open" maxlength="40" list="edit-divisions" />
+        <datalist id="edit-divisions">{#each DIVISION_SUGGESTIONS as d}<option value={d}></option>{/each}</datalist>
+      </label>
       <TierPicker bind:tier />
       <FormatFields bind:format bind:options bind:scoring entrantCount={rows.filter((r) => r.name.trim()).length} />
     </div>

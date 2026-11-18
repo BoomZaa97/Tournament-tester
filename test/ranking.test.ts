@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolve } from '../src/core';
-import { emptyDoc, toState } from '../src/app/lib/model';
+import { categoryOf, cleanDivision, divisionOf, emptyDoc, toState } from '../src/app/lib/model';
 import type { TournamentDoc } from '../src/app/lib/model';
 import { eventPoints, filterTournaments, placementPoints, PROVISIONAL, ranked, rankings, START_RATING } from '../src/app/lib/ranking';
 
@@ -102,12 +102,12 @@ describe('rankings', () => {
 
   it('filters by game, category and year', () => {
     const ts = [
-      played('x', 'single_elim', ['a', 'b'], { game: 'Chess', category: 'Open', createdAt: '2025-05-01T00:00:00Z' }),
-      played('y', 'single_elim', ['a', 'b'], { game: 'Chess', category: 'U18', createdAt: '2026-05-01T00:00:00Z' }),
+      played('x', 'single_elim', ['a', 'b'], { game: 'Chess', category: 'Sports', createdAt: '2025-05-01T00:00:00Z' }),
+      played('y', 'single_elim', ['a', 'b'], { game: 'Chess', category: 'Esports', createdAt: '2026-05-01T00:00:00Z' }),
       played('z', 'single_elim', ['a', 'b'], { game: 'Go', createdAt: '2026-06-01T00:00:00Z' }),
     ];
     expect(filterTournaments(ts, { game: 'Chess' }).map((t) => t.id)).toEqual(['x', 'y']);
-    expect(filterTournaments(ts, { game: 'Chess', category: 'U18' }).map((t) => t.id)).toEqual(['y']);
+    expect(filterTournaments(ts, { game: 'Chess', category: 'Esports' }).map((t) => t.id)).toEqual(['y']);
     expect(filterTournaments(ts, { year: 2026 }).map((t) => t.id)).toEqual(['y', 'z']);
     expect(filterTournaments(ts, {}).length).toBe(3);
   });
@@ -123,5 +123,30 @@ describe('rankings', () => {
     expect(eventPoints(2, 'semi')).toBe(105);
     expect(filterTournaments([major, semi, small], { tier: 'major' }).map((t) => t.id)).toEqual(['m']);
     expect(filterTournaments([major, semi, small], { tier: 'small' }).map((t) => t.id)).toEqual(['n']);
+  });
+});
+
+describe('category and division', () => {
+  it('division defaults to Open; old age-group categories count as the division', () => {
+    expect(divisionOf({})).toBe('Open');
+    expect(categoryOf({ category: 'Esports' })).toBe('Esports');
+    expect(divisionOf({ category: 'Esports', division: 'U18' })).toBe('U18');
+    expect(divisionOf({ division: 'open' })).toBe('Open');
+    // made before divisions existed
+    expect(categoryOf({ category: 'Open' })).toBe('');
+    expect(divisionOf({ category: 'Open' })).toBe('Open');
+    expect(divisionOf({ category: 'U18' })).toBe('U18');
+    expect(categoryOf({ category: 'U18' })).toBe('');
+    expect(categoryOf({ category: 'Doubles' })).toBe('Doubles');
+    expect(cleanDivision(' Open ')).toBeUndefined();
+    expect(cleanDivision(' U15  girls ')).toBe('U15 girls');
+  });
+
+  it('rankings filter by division', () => {
+    const a = { ...emptyDoc(), id: 'a', division: 'U18' };
+    const b = { ...emptyDoc(), id: 'b' };
+    const c = { ...emptyDoc(), id: 'c', category: 'U18' };
+    expect(filterTournaments([a, b, c], { division: 'U18' }).map((t) => t.id)).toEqual(['a', 'c']);
+    expect(filterTournaments([a, b, c], { division: 'Open' }).map((t) => t.id)).toEqual(['b']);
   });
 });

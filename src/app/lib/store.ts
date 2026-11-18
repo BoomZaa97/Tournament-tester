@@ -173,6 +173,8 @@ export interface Store {
   deleteAccount?(playerId: string): Promise<{ playerRemoved: boolean }>;
   /** Staff (shared mode). */
   accounts?(): Promise<StaffAccount[]>;
+  /** Admins: log this device in as a player (audited). `stopLoginAs` goes back. */
+  loginAs?(playerId: string, reason?: string): Promise<Account>;
   setRole?(playerId: string, role: Role): Promise<void>;
   /** Suspend for some days or for good, or lift it (neither). */
   suspend?(playerId: string, opts: { days?: number; forever?: boolean; reason?: string }): Promise<void>;
@@ -249,6 +251,8 @@ export const TWO_STEP = 'Enter the 6-digit code from your authenticator app';
 interface SavedAccount {
   token: string;
   account: Account;
+  /** An admin logged in as this player ("Log in as"): this device's own keys are not shared with the account. */
+  viewAs?: boolean;
   /** Tournament ids whose PIN / organizer key came from the account: removed again on log out. */
   pins: string[];
   keys: string[];
@@ -269,6 +273,26 @@ function saveAccount(a: SavedAccount) {
   writeJson(ACCOUNT, a);
 }
 /** Log out on this device: forget the account and the PINs and organizer keys it brought. */
+const VIEW_AS = 'tt.viewAs.v1'; // the admin's own saved account (or null) while logged in as someone
+
+/** Logged in as someone else via "Log in as". */
+export function viewingAs(): boolean {
+  return !!savedAccount()?.viewAs;
+}
+
+/** Back from "Log in as": the admin's own login (if they had one) comes back. */
+export function stopLoginAs() {
+  let prev: SavedAccount | null = null;
+  try {
+    prev = JSON.parse(localStorage.getItem(VIEW_AS) || 'null');
+    localStorage.removeItem(VIEW_AS);
+  } catch {
+    /* ignore */
+  }
+  forgetAccount();
+  if (prev?.token) saveAccount({ ...prev, pins: [], keys: [] });
+}
+
 export function forgetAccount() {
   const a = savedAccount();
   if (a) {
@@ -722,7 +746,8 @@ export class SheetsStore implements Store {
     if (!a) throw new Error(LOGGED_OUT);
     let r: { account: Account; pins: Record<string, { playerId: string; pin: string }>; orgKeys: Record<string, string> };
     try {
-      r = await this.call('POST', { action: 'me', token: a.token, orgKeys: readJson<string>(KEYS) });
+      // logged in as someone else: don't hand this device's organizer keys to their account
+      r = await this.call('POST', { action: 'me', token: a.token, orgKeys: a.viewAs ? {} : readJson<string>(KEYS) });
     } catch (e) {
       if (e instanceof Error && (e.message === LOGGED_OUT || e.message.startsWith(SUSPENDED))) forgetAccount();
       throw e;
@@ -760,6 +785,24 @@ export class SheetsStore implements Store {
 
   async deleteAccount(playerId: string) {
     return this.call<{ playerRemoved: boolean }>('POST', { action: 'deleteAccount', playerId });
+  }
+
+  async loginAs(playerId: string, reason?: string) {
+    const r = await this.call<{ token: string; account: Account }>('POST', { action: 'loginAs', playerId, reason: reason ?? '' });
+    const mine = savedAccount();
+    try {
+      // keep the admin's own login to come back to (only the first time, not when switching between players)
+      if (!mine?.viewAs) localStorage.setItem(VIEW_AS, JSON.stringify(mine));
+    } catch {
+      /* ignore */
+    }
+    if (mine) forgetAccount();
+    saveAccount({ token: r.token, account: r.account, pins: [], keys: [], viewAs: true });
+    try {
+      return await this.syncAccount();
+    } catch {
+      return r.account;
+    }
   }
 
   async accounts() {

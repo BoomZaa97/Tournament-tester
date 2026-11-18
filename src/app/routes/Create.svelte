@@ -7,31 +7,34 @@
   import FormatFields from '../components/FormatFields.svelte';
   import TierPicker from '../components/TierPicker.svelte';
   import { app, errorText } from '../lib/app.svelte';
-  import { emptyDoc, isByeMatch, matchNumbers } from '../lib/model';
+  import { CATEGORY_SUGGESTIONS, categoryOf, cleanDivision, DIVISION_SUGGESTIONS, emptyDoc, isByeMatch, matchNumbers } from '../lib/model';
   import type { Player, Row, Scoring, Tier } from '../lib/model';
   import { rowsToPlayers } from '../lib/players';
 
   let name = $state('');
   let game = $state('');
   let category = $state('');
+  let division = $state('');
   let tier = $state<Tier>('small');
   let format = $state<Format>('single_elim');
   let options = $state<FormatOptions>({});
   let scoring = $state<Scoring>({});
   let rows = $state<Row[]>([]);
   /** Shared mode: players can add themselves from the tournament page. */
-  let signup = $state(false);
   const shared = app.store.kind === 'sheets';
+  let signup = $state(shared); // on by default: people join with the code / QR, no list needed
   let known = $state<Player[]>([]);
   let games = $state<string[]>([]);
-  let categories = $state<string[]>([]);
+  let categories = $state<string[]>(CATEGORY_SUGGESTIONS);
+  let divisions = $state<string[]>(DIVISION_SUGGESTIONS);
   let saving = $state(false);
 
   app.store.loadAll().then((d) => {
     known = d.players;
     app.noteVerified(d.players);
     games = [...new Set(d.tournaments.map((t) => t.game).filter(Boolean))];
-    categories = [...new Set(d.tournaments.map((t) => t.category ?? '').filter(Boolean))];
+    categories = [...new Set([...d.tournaments.map(categoryOf).filter(Boolean), ...CATEGORY_SUGGESTIONS])];
+    divisions = [...new Set([...DIVISION_SUGGESTIONS, ...d.tournaments.map((t) => t.division ?? '').filter(Boolean)])];
   });
 
   const names = $derived(rows.map((r) => r.name.trim()).filter(Boolean));
@@ -55,9 +58,7 @@
   const problem = $derived(
     !name.trim()
       ? 'Give it a name.'
-      : names.length < 2 && !signup
-        ? 'Add at least 2 entrants, or let players sign up.'
-        : hasDupes
+      : hasDupes
           ? 'Two entrants have the same name.'
           : '',
   );
@@ -67,7 +68,7 @@
     saving = true;
     try {
       const { entrants, created } = rowsToPlayers(rows, known);
-      const doc = { ...emptyDoc(), name: name.trim(), game: game.trim(), category: category.trim() || undefined, tier, format, options, scoring, entrants, signup: shared && signup };
+      const doc = { ...emptyDoc(), name: name.trim(), game: game.trim(), category: category.trim() || undefined, division: cleanDivision(division), tier, format, options, scoring, entrants, signup: shared && signup };
       const saved = await app.store.save(doc, created);
       app.notify(shared ? 'Tournament created. You are its organizer on this device.' : 'Tournament created');
       app.go(`t/${saved.id}`);
@@ -107,23 +108,33 @@
           <datalist id="known-games">{#each games as g}<option value={g}></option>{/each}</datalist>
         </label>
         <label class="field">
-          <span>Category <span class="muted">(optional: Open, U18, Doubles…)</span></span>
+          <span>Category <span class="muted">(optional: Esports, Sports, Board games…)</span></span>
           <input bind:value={category} placeholder="None" list="known-categories" maxlength="40" />
           <datalist id="known-categories">{#each categories as c}<option value={c}></option>{/each}</datalist>
+        </label>
+        <label class="field">
+          <span>Division <span class="muted">(optional: age or level, e.g. U18, Women)</span></span>
+          <input bind:value={division} placeholder="Open" list="known-divisions" maxlength="40" />
+          <datalist id="known-divisions">{#each divisions as d}<option value={d}></option>{/each}</datalist>
         </label>
         <TierPicker bind:tier />
 
         <FormatFields bind:format bind:options bind:scoring entrantCount={names.length} />
 
         <hr class="rule" />
-        <div class="label">Entrants <span class="muted">— top of the list is seed 1</span></div>
-        <EntrantEditor bind:rows {known} />
         {#if shared}
-          <label class="check">
+          <label class="check signup">
             <input type="checkbox" bind:checked={signup} />
-            Let players sign up themselves (they get a PIN to report their own scores)
+            <span>
+              <b>Open sign-up</b><br />
+              <span class="small muted">Players join themselves with the join code or QR poster and get a PIN to report their own scores.</span>
+            </span>
           </label>
         {/if}
+        <div class="label">
+          Entrants <span class="muted">— {signup ? 'optional: add anyone now, or leave it to sign-up' : 'optional: you can add them later in the Edit tab'}. Top of the list is seed 1.</span>
+        </div>
+        <EntrantEditor bind:rows {known} />
 
         <div class="submit">
           <button class="primary" type="submit" disabled={!!problem || saving}>
@@ -145,7 +156,11 @@
             <Bracket {format} stage="finals" resolved={preview.resolved} names={preview.names} seeds={preview.seeds} numbers={preview.numbers} />
           {/if}
         {:else}
-          <div class="empty">Add two or more entrants and the bracket appears here.</div>
+          <div class="empty">
+            {signup
+              ? 'No players needed yet: once two people have signed up, the bracket appears.'
+              : 'Add two or more entrants and the bracket appears here (or create it now and add them later).'}
+          </div>
         {/if}
       </section>
     </div>
@@ -162,6 +177,8 @@
   .finalshead { margin: 24px 0 4px; }
   .ph { justify-content: space-between; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 2px solid var(--ink); }
   .intro { margin: -12px 0 18px; max-width: 640px; }
+  .signup { display: flex; gap: 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--card); }
+  .signup input { width: 18px; min-height: 0; margin-top: 3px; accent-color: var(--accent); flex: none; }
   .submit { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
   .submit .primary { min-height: 48px; padding: 0 22px; font-size: 16px; }
   @media (max-width: 820px) {

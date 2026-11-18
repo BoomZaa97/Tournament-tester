@@ -654,6 +654,28 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.get({ action: 'players' }).players.find((p: { id: string }) => p.id === alice.id)).toEqual({ id: alice.id, name: alice.name });
     });
 
+    it('log in as: admins and the owner get a session for players below them, written to the audit log', () => {
+      const g = fakeGoogle();
+      const boss = reg(g, { username: 'boss', name: 'Boss' });
+      const mod = reg(g, { username: 'mod', name: 'Mod' });
+      const dana = reg(g, { username: 'dana', name: 'Dana' });
+      g.post({ action: 'setRole', key: 'secret', playerId: boss.account.playerId, role: 'admin' });
+      g.post({ action: 'setRole', key: 'secret', playerId: mod.account.playerId, role: 'moderator' });
+      // moderators and players can't
+      expect(g.post({ action: 'loginAs', auth: mod.token, playerId: dana.account.playerId }).error).toMatch(/role can't/);
+      expect(g.post({ action: 'loginAs', playerId: dana.account.playerId }).error).toBeDefined();
+      // an admin can't log in as another admin (or the owner's staff above them)
+      expect(g.post({ action: 'loginAs', auth: boss.token, playerId: boss.account.playerId }).error).toMatch(/below your own/);
+      const as = g.post({ action: 'loginAs', auth: boss.token, playerId: dana.account.playerId, reason: 'Fix her name' });
+      expect(as.account).toMatchObject({ username: 'dana', playerId: dana.account.playerId });
+      expect(g.post({ action: 'me', token: as.token }).account.username).toBe('dana');
+      expect(g.post({ action: 'audit', key: 'secret' }).audit[0]).toMatchObject({ actor: 'Boss (@boss)', action: 'Logged in as', target: 'Dana (@dana)', detail: 'Fix her name' });
+      // the owner too; and "log out everywhere" ends it
+      expect(g.post({ action: 'loginAs', key: 'secret', playerId: mod.account.playerId }).error).toBeUndefined();
+      g.post({ action: 'logoutAll', key: 'secret', playerId: dana.account.playerId });
+      expect(g.post({ action: 'me', token: as.token }).error).toMatch(/log in again/);
+    });
+
     it('players delete their own account with their password; the name is free again', () => {
       const g = fakeGoogle();
       const dana = reg(g, { username: 'dana', name: 'Dana' });
@@ -970,6 +992,15 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.get({ action: 'all', lite: '1' }).tournaments[0].category).toBe('U18 girls');
     });
 
+    it('stores a division (age or level); Open is stored as empty', () => {
+      const g = fakeGoogle();
+      g.post({ key: 'secret', action: 'save', tournament: { ...doc, category: 'Esports', division: '  U18 ' } });
+      expect(g.get({ action: 'get', id: 't1' }).tournament).toMatchObject({ category: 'Esports', division: 'U18' });
+      const t = g.get({ action: 'get', id: 't1' }).tournament;
+      g.post({ key: 'secret', action: 'save', tournament: { ...t, division: 'open' } });
+      expect(g.get({ action: 'get', id: 't1' }).tournament.division).toBe('');
+    });
+
     it('stores the event size (major, semi, small); anything else is small', () => {
       const g = fakeGoogle();
       g.post({ key: 'secret', action: 'save', tournament: { ...doc, tier: 'major' } });
@@ -1219,7 +1250,7 @@ describe('Google Sheets backend (Code.gs)', () => {
       vm.runInContext(readFileSync('apps-script/Code.gs', 'utf8'), g.ctx as vm.Context); // the owner pastes the new script
       // newer scripts add fields (an empty category, a small event, no Discord); everything that was there stays the same
       const after = [1, 2, 3].map((n) => g.get({ action: 'get', id: 'e' + n }).tournament);
-      expect(after).toEqual(before.map((t) => ({ ...t, category: after[0].category, tier: after[0].tier, discord: false })));
+      expect(after).toEqual(before.map((t) => ({ ...t, category: after[0].category, division: '', tier: after[0].tier, discord: false })));
       expect(after[0].category).toBe('');
       expect(after[0].tier).toBe('small');
       for (const tab of ['Entrants', 'Results', 'Log']) {

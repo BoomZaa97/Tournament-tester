@@ -18,7 +18,7 @@
   import DropPanel from '../components/DropPanel.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import {
-    championOf, describeResult, FORMAT_LABEL, hasFinals, isTableFormat, logEntry, matchNumbers, nameMap, newId, pointsStageName,
+    categoryOf, championOf, describeResult, divisionOf, FORMAT_LABEL, OPEN, hasFinals, isTableFormat, logEntry, matchNumbers, nameMap, newId, pointsStageName,
     progressOf, restorePoint, roundName, standingOptions, STATUS_LABEL, statusOf, tierOf, toState, withEntrants,
   } from '../lib/model';
   import type { LogEntry, Player, TournamentDoc } from '../lib/model';
@@ -342,13 +342,14 @@
     const next = { ...doc, options: { ...doc.options, finals: qualified ? { ...finals, qualified } : finals } };
     const { name, game, format, options, scoring, entrants, results } = doc;
     const category = doc.category ?? '';
+    const division = doc.division ?? '';
     const tier = tierOf(doc);
     const summary = qualified
       ? `Finals started: ${qualified.map((s) => names.get(doc!.entrants[s - 1].id)).join(', ')}`
       : 'Finalists cleared';
     const entry: LogEntry = {
       id: newId(), time: new Date().toISOString(), summary, changes: [],
-      restore: { name, game, category, tier, format, options, scoring, entrants, results },
+      restore: { name, game, category, division, tier, format, options, scoring, entrants, results },
     };
     const ok = await persist({ ...next, log: [...doc.log, entry] });
     if (ok) app.notify(qualified ? 'Finals started' : 'Pick the finalists again');
@@ -431,7 +432,8 @@
         <TierTag tier={doc.tier} />
         {[
           doc.game,
-          doc.category,
+          categoryOf(doc),
+          divisionOf(doc) === OPEN ? '' : divisionOf(doc),
           FORMAT_LABEL[doc.format],
           `${doc.entrants.length}${doc.maxPlayers ? ` / ${doc.maxPlayers}` : ''} ${doc.entrants.length === 1 && !doc.maxPlayers ? 'entrant' : 'entrants'}`,
         ].filter(Boolean).join(' · ')}

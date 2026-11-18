@@ -1,7 +1,8 @@
 <script lang="ts">
   import Verified from '../components/Verified.svelte';
   import { app, errorText } from '../lib/app.svelte';
-  import { TIER_LABEL, TIER_WEIGHT, tierOf } from '../lib/model';
+  import { categoryOf, divisionOf, OPEN, TIER_LABEL, TIER_WEIGHT, tierOf } from '../lib/model';
+  import { START_RATING } from '../lib/ranking';
   import type { Tier } from '../lib/model';
   import { filterTournaments, PROVISIONAL, ranked, rankings } from '../lib/ranking';
   import type { RankBy, Ranked } from '../lib/ranking';
@@ -12,6 +13,7 @@
   let q = $state('');
   let game = $state('');
   let category = $state('');
+  let division = $state('');
   let tier = $state<Tier | ''>('');
   let year = $state(0);
   let by = $state<RankBy>('rating');
@@ -41,20 +43,37 @@
   const all = $derived(data?.tournaments ?? []);
   const games = $derived([...new Set(all.map((t) => t.game).filter(Boolean))].sort());
   const inGame = $derived(all.filter((t) => !game || t.game === game));
-  const categories = $derived([...new Set(inGame.map((t) => t.category ?? '').filter(Boolean))].sort());
+  const categories = $derived([...new Set(inGame.map(categoryOf).filter(Boolean))].sort());
+  const inCategory = $derived(inGame.filter((t) => !category || categoryOf(t) === category));
+  // Open first, then the rest A–Z
+  const divisions = $derived(
+    [...new Set(inCategory.map(divisionOf))].sort((a, b) => Number(b === OPEN) - Number(a === OPEN) || a.localeCompare(b)),
+  );
   const tiers = $derived((['major', 'semi', 'small'] as Tier[]).filter((x) => inGame.some((t) => tierOf(t) === x)));
   const years = $derived([...new Set(all.map((t) => new Date(t.createdAt).getFullYear()))].sort((a, b) => b - a));
   $effect(() => {
     if (category && !categories.includes(category)) category = '';
+    if (division && !divisions.includes(division)) division = '';
     if (tier && !tiers.includes(tier)) tier = '';
   });
 
-  const scope = $derived(data ? filterTournaments(data.tournaments, { game, category, tier, year: year || undefined }) : []);
+  const scope = $derived(data ? filterTournaments(data.tournaments, { game, category, division, tier, year: year || undefined }) : []);
   const anyVerified = $derived(!!data?.players.some((p) => p.account));
   const list = $derived.by(() => {
     if (!data) return [];
     // players who chose "hide me from the rankings" are left out (their matches still rate their opponents)
-    const rows = ranked([...rankings(scope, data.players).values()].filter((r) => !r.player.unranked), by);
+    const table = rankings(scope, data.players);
+    // with no filter, players with an account show up before their first match too (not ranked yet)
+    if (!game && !category && !division && !tier && !year) {
+      for (const p of data.players) {
+        if (!p.account || table.has(p.id)) continue;
+        table.set(p.id, {
+          player: p, rating: START_RATING, rated: 0, peak: START_RATING, change: 0, history: [], points: 0, events: 0, wins: 0,
+          losses: 0, draws: 0, titles: 0, medals: [0, 0, 0], best: null, majorTitles: 0, semiTitles: 0,
+        });
+      }
+    }
+    const rows = ranked([...table.values()].filter((r) => !r.player.unranked), by);
     // "verified only" hides the others but keeps everyone's real place in the whole ranking
     return verifiedOnly ? rows.filter((r) => app.verified.has(r.player.id)) : rows;
   });
@@ -99,6 +118,15 @@
         <select bind:value={category}>
           <option value="">All categories</option>
           {#each categories as c}<option value={c}>{c}</option>{/each}
+        </select>
+      </label>
+    {/if}
+    {#if divisions.length > 1}
+      <label class="field">
+        <span>Division</span>
+        <select bind:value={division}>
+          <option value="">All divisions</option>
+          {#each divisions as d}<option value={d}>{d}</option>{/each}
         </select>
       </label>
     {/if}

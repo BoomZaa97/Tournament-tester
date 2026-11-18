@@ -31,7 +31,7 @@ export interface LogEntry {
   summary: string;
   changes: Change[];
   /** For tournament edits (entrants/format): the previous setup, so it can be undone. */
-  restore?: Pick<TournamentDoc, 'name' | 'game' | 'format' | 'options' | 'scoring' | 'entrants' | 'results'> & { category?: string; tier?: Tier };
+  restore?: Pick<TournamentDoc, 'name' | 'game' | 'format' | 'options' | 'scoring' | 'entrants' | 'results'> & { category?: string; division?: string; tier?: Tier };
   undone?: boolean;
 }
 
@@ -58,8 +58,10 @@ export interface TournamentDoc {
   id: string;
   name: string;
   game: string;
-  /** Optional division inside the game (Open, U18, Doubles…): rankings can be split by it. */
+  /** What kind of competition (Esports, Sports, Board games…), optional. Read it with `categoryOf`. */
   category?: string;
+  /** Age or skill group (U18, Women, Pro…), optional. Unset = Open. Read it with `divisionOf`. */
+  division?: string;
   /** Shared mode: the organizer connected a Discord channel (the webhook link itself stays in the sheet). */
   discord?: boolean;
   /** How big the event is: majors and semi-majors give more ranking points. Unset = small. */
@@ -167,6 +169,38 @@ export function cleanCode(s: string): string {
   return s.toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
+// ---------------------------------------------------------------- category and division
+
+export const OPEN = 'Open';
+/** Suggestions in the Create / Edit forms (people can type anything). */
+export const CATEGORY_SUGGESTIONS = ['Esports', 'Sports', 'Board games', 'Card games', 'Fighting games', 'Racing'];
+export const DIVISION_SUGGESTIONS = [OPEN, 'U12', 'U15', 'U18', 'U21', 'Women', 'Men', '35+', 'Pro', 'Amateur'];
+/**
+ * Before divisions existed, Category held age groups ("Open", "U18"). Those still count as the
+ * division (and no category) until the tournament is edited.
+ */
+const DIVISION_LIKE = /^(open|u ?\d{1,2}|under ?\d{1,2}|\d{2} ?\+|women|men|girls|boys|junior|juniors|senior|seniors|youth|kids|pro|amateur|beginner|novice)$/i;
+
+/** The tournament's category (Esports, Sports…), '' if none. */
+export function categoryOf(t: Pick<TournamentDoc, 'category' | 'division'>): string {
+  const c = (t.category ?? '').trim();
+  return !t.division && DIVISION_LIKE.test(c) ? '' : c;
+}
+
+/** The tournament's division (age / skill group): 'Open' unless set. */
+export function divisionOf(t: Pick<TournamentDoc, 'category' | 'division'>): string {
+  const d = (t.division ?? '').trim();
+  if (d) return d.toLowerCase() === 'open' ? OPEN : d;
+  const c = (t.category ?? '').trim();
+  return DIVISION_LIKE.test(c) && c.toLowerCase() !== 'open' ? c : OPEN;
+}
+
+/** What a form saves: '' for Open (the default). */
+export function cleanDivision(raw: string): string | undefined {
+  const d = raw.replace(/\s+/g, ' ').trim();
+  return !d || d.toLowerCase() === 'open' ? undefined : d;
+}
+
 /** Shared mode, but the Google script was pasted before the newer features existed. */
 export function scriptOutdated(doc: Pick<TournamentDoc, 'code'>, kind: 'local' | 'sheets'): boolean {
   return kind === 'sheets' && !doc.code;
@@ -176,8 +210,8 @@ export const UPDATE_SCRIPT = 'The site owner needs to update the Google script f
 
 /** The setup before a change, so the change can be undone from the log. */
 export function restorePoint(doc: TournamentDoc): NonNullable<LogEntry['restore']> {
-  const { name, game, category, format, options, scoring, entrants, results } = doc;
-  return { name, game, category: category ?? '', tier: tierOf(doc), format, options, scoring, entrants, results };
+  const { name, game, category, division, format, options, scoring, entrants, results } = doc;
+  return { name, game, category: category ?? '', division: division ?? '', tier: tierOf(doc), format, options, scoring, entrants, results };
 }
 
 /**

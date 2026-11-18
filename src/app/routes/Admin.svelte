@@ -134,6 +134,22 @@
     }
     void label;
   }
+  async function loginAs(a: StaffAccount) {
+    const reason = prompt(`Log in as ${a.name}? You'll see the site as them and can act for them. This is written to the audit log.\n\nWhy? (optional)`);
+    if (reason === null) return;
+    working = a.id;
+    try {
+      await app.store.loginAs!(a.playerId, reason);
+      app.refreshAccount();
+      app.notify(`Logged in as ${a.name}`);
+      app.go(`p/${a.playerId}`);
+    } catch (e) {
+      app.notify(errorText(e), 'error');
+    } finally {
+      working = '';
+    }
+  }
+
   const changeRole = (a: StaffAccount, role: Role) =>
     act(a.id, 'role', () => app.store.setRole!(a.playerId, role), `${a.name} is now ${ROLE_LABEL[role].toLowerCase()}`);
   function suspendNow(a: StaffAccount) {
@@ -423,6 +439,9 @@
                   {:else}
                     <button class="small" disabled={working === a.id} onclick={() => ((open = open === a.id ? null : a.id), (reason = ''))}>Suspend…</button>
                   {/if}
+                  {#if app.store.can('roles') && !a.suspended}
+                    <button class="small" disabled={working === a.id} onclick={() => loginAs(a)}>Log in as</button>
+                  {/if}
                   <button class="small" disabled={working === a.id} onclick={() => logoutAll(a)}>Log out everywhere</button>
                   <button class="small" disabled={working === a.id} onclick={() => resetPassword(a)}>Reset password</button>
                   <button class="small danger" disabled={working === a.id} onclick={() => removeAccount(a)}>Remove account</button>
@@ -558,7 +577,7 @@
       <div class="roles" role="table" aria-label="Roles">
         <div class="rhead" role="row"><span role="columnheader">Role</span><span role="columnheader">How someone gets it</span><span role="columnheader">What they can do</span></div>
         <div role="row"><b role="cell">Site owner</b><span role="cell" class="rgets">The admin key, typed under Data & backup (per device)</span><span role="cell">Everything, including making admins and importing backups</span></div>
-        <div role="row"><b role="cell">Admin</b><span role="cell" class="rgets">Given by the site owner to an account</span><span role="cell">Everything below, plus giving roles up to moderator and the security settings</span></div>
+        <div role="row"><b role="cell">Admin</b><span role="cell" class="rgets">Given by the site owner to an account</span><span role="cell">Everything below, plus giving roles up to moderator, "Log in as" a player to fix things for them, and the security settings</span></div>
         <div role="row"><b role="cell">Moderator</b><span role="cell" class="rgets">Given by an admin</span><span role="cell">Fix or delete any tournament, rename and clean up players, edit profiles, suspend / log out / reset / remove accounts below them, read the audit log</span></div>
         <div role="row"><b role="cell">Organizer</b><span role="cell" class="rgets">Given by an admin, or anyone while creating is open</span><span role="cell">Create tournaments and run their own: results, entrants, format, finals, check-in, players' PINs</span></div>
         <div role="row"><b role="cell">Helper</b><span role="cell" class="rgets">The helper link from a tournament's Share panel</span><span role="cell">Same as the organizer, for that one tournament</span></div>

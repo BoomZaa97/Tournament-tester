@@ -82,6 +82,16 @@ Made because Challonge made fixing wrong results hard.
 - Deleting accounts: `deleteMe` (own password + code) or staff `deleteAccount`; both call `removePlayerIfUnused` (no
   entrant/waitlist/result → the player and profile go too, `playerRemoved`), so no separate clean-up.
 - Player pages show the player ID (copy button).
+- "Log in as" (Admin → Users, admins/owner only, `loginAs`): returns the player's normal token (audited, reason optional);
+  `SheetsStore.loginAs` keeps the admin's own saved account in `tt.viewAs.v1` and marks the saved one `viewAs` (its sync
+  sends no device org keys). Banner in App.svelte; "Back to my account" = `stopLoginAs()`.
+- Header: Tournaments, Rankings + `components/UserMenu.svelte` dropdown (profile, account, settings, admin, log out).
+  Logging in / signing up goes to `#/p/<playerId>` (or the `#/account/<path>` return path).
+- Category vs division: `TournamentDoc.category` = kind of competition (Esports, Sports…), `division` = age / level
+  (`Tournaments.division`, empty = Open). Read them with `categoryOf` / `divisionOf` (model.ts): an old category that
+  looks like an age group (`DIVISION_LIKE`: Open, U18…) counts as the division until the tournament is edited.
+  Rankings filter by both; with no filters, verified players without matches are listed as not ranked yet.
+- Create: sign-up is on by default in shared mode and no entrants are required (the page waits for 2).
 - Settings are split: `#/settings` (`routes/Settings.svelte`, everyone) = this device's look (`lib/prefs.ts`, `tt.prefs.v1`:
   theme auto/light/dark → `data-theme` on <html>, text size → `data-size=large` = `zoom: 1.12` on body; Bracket divides its
   connector measurements by that zoom) and "Your access" (role, account, tournaments organized/played on this device).
@@ -90,7 +100,7 @@ Made because Challonge made fixing wrong results hard.
 - Rankings (`lib/ranking.ts`, `routes/Players.svelte` at `#/players`, nav "Rankings"): computed in the browser from results,
   nothing stored. Elo (start 1500, K 40 under 10 rated matches then 24; forfeits/byes/walkovers don't count; ranked from
   `PROVISIONAL` = 5 rated matches) and placement points (`placementPoints`, finished tournaments only), filtered by game,
-  `TournamentDoc.category` (optional, `Tournaments.category`), event size and year. Event size = `TournamentDoc.tier`
+  category / division (see below), event size and year. Event size = `TournamentDoc.tier`
   ('major' | 'semi' | 'small', `Tournaments.tier`, anything else = small; `tierOf`, `TIER_WEIGHT`: points ×2 / ×1.5 / ×1 via
   `eventPoints`; `TierPicker` in create/edit, `TierTag` badge). Rankings page: podium, "You" row + jump, verified-only
   switch, Majors column. Player page: a rank card per game and per category they played, rating chart

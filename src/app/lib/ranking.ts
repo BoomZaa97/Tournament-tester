@@ -1,6 +1,6 @@
 import { resolve } from '../../core';
 import type { EntrantId } from '../../core';
-import { finalPlaces, matchNumbers, statusOf, TIER_WEIGHT, tierOf, toState } from './model';
+import { categoryOf, divisionOf, finalPlaces, matchNumbers, statusOf, TIER_WEIGHT, tierOf, toState } from './model';
 import type { Player, Tier, TournamentDoc } from './model';
 
 /**
@@ -39,6 +39,8 @@ export interface RankFilter {
   game?: string;
   /** '' or unset = every category. */
   category?: string;
+  /** '' or unset = every division (Open, U18…). */
+  division?: string;
   /** Only tournaments made in this year. */
   year?: number;
   /** '' or unset = every event size. */
@@ -49,7 +51,8 @@ export function filterTournaments(tournaments: TournamentDoc[], f: RankFilter): 
   return tournaments.filter(
     (t) =>
       (!f.game || t.game === f.game) &&
-      (!f.category || (t.category ?? '') === f.category) &&
+      (!f.category || categoryOf(t) === f.category) &&
+      (!f.division || divisionOf(t) === f.division) &&
       (!f.tier || tierOf(t) === f.tier) &&
       (!f.year || new Date(t.createdAt).getFullYear() === f.year),
   );

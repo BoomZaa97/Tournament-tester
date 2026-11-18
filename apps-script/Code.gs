@@ -37,7 +37,7 @@ var TABLES = {
   Players: ['id', 'name'],
   Tournaments: [
     'id', 'name', 'game', 'category', 'tier', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash',
-    'code', 'maxPlayers', 'checkIn', 'removedPins', 'discordWebhook',
+    'code', 'maxPlayers', 'checkIn', 'removedPins', 'discordWebhook', 'division',
   ],
   Entrants: ['tournamentId', 'tournament', 'seed', 'playerId', 'name', 'pin', 'checkedIn'],
   Results: [
@@ -163,6 +163,7 @@ function doPost(e) {
         return removed;
       }
       if (body.action === 'accounts') return listAccounts(actor);
+      if (body.action === 'loginAs') return logInAs(body, actor);
       if (body.action === 'setRole') return setRole(body, actor);
       if (body.action === 'suspend') return suspend(body, actor);
       if (body.action === 'audit') return readAudit(body, actor);
@@ -337,6 +338,7 @@ function assemble(t, data, lite) {
     name: t.name,
     game: t.game,
     category: t.category || '',
+    division: t.division || '',
     tier: tierOf(t.tier),
     signup: truthy(t.signup),
     code: t.code || '',
@@ -445,6 +447,8 @@ function saveTournament(doc, players, body, actor) {
     name: saved.name,
     game: saved.game,
     category: String(saved.category || '').replace(/\s+/g, ' ').trim().slice(0, 40),
+    // age or skill group; empty = Open
+    division: String(saved.division || '').replace(/\s+/g, ' ').trim().slice(0, 40).replace(/^open$/i, ''),
     tier: tierOf(saved.tier),
     format: saved.format,
     options: JSON.stringify(saved.options || {}),
@@ -1928,6 +1932,20 @@ function can(actor, perm) {
 
 function need(actor, perm) {
   if (!can(actor, perm)) throw new Error(actor && actor.rank ? 'Your role can\'t do this' : 'Only the site admin or staff can do this');
+}
+
+/**
+ * Admins (and the site owner) log in as a player below them, to look into or fix something for them.
+ * Skips the password and two-step code; always written to the audit log. The player's own sessions
+ * keep working; "Log out everywhere" ends this one too.
+ */
+function logInAs(body, actor) {
+  need(actor, 'roles');
+  var a = staffTarget(actor, body.playerId);
+  if (isSuspended(a)) throw new Error('This account is suspended. Lift the suspension first.');
+  var data = loadTables();
+  audit(actor, 'Logged in as', accountLabel(a), String(body.reason || '').trim().slice(0, 200));
+  return { token: tokenFor(a), account: accountInfo(a, data) };
 }
 
 /** The account of this player, if the actor may manage it (staff, and the account is below them). */

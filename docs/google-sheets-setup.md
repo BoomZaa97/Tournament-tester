@@ -92,7 +92,8 @@ New columns are added to the tabs by themselves on the next save:
 | Accounts | `totpSecret`, `totpPending`, `totpLast` | Two-step login. A secret: never shown on the site. Empty `totpSecret` to turn it off for someone who lost their phone. |
 | Audit (new tab) | `time`, `actor`, `role`, `action`, `target`, `detail` | What staff did, plus security events (locks, recoveries, two-step on/off). Newest first, last 2,000. |
 | Entrants, Results, Log, Waitlist | `tournament` | The tournament's name, next to its id, so you can tell the rows apart. |
-| Tournaments | `category` | Optional division inside the game (Open, U18, Doubles…). Rankings can be split by it. |
+| Tournaments | `category` | Optional kind of competition (Esports, Sports, Board games…). Rankings can be split by it. |
+| Tournaments | `division` | Optional age or level group (U18, Women…). Empty = Open. Rankings can be split by it. |
 | Tournaments | `discordWebhook` | The Discord channel link an organizer connected. It's a secret: never shown on the site. Empty it to stop the posts. |
 | Tournaments | `removedPins` | PINs of players the organizer removed, so they get the same PIN if they're added back. Leave it alone; it's never shown on the site. |
 | Tournaments | `tier` | Event size: `major`, `semi` or `small` (empty = small). Majors give double ranking points, semi-majors 1.5×. |

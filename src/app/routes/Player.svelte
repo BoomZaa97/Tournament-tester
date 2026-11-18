@@ -6,7 +6,7 @@
   import { buildHistory, winRate } from '../lib/history';
   import type { PlayerStats } from '../lib/history';
   import { squarePhoto } from '../lib/photo';
-  import { TIER_LABEL, TIERS } from '../lib/model';
+  import { categoryOf, TIER_LABEL, TIERS } from '../lib/model';
   import type { Tier } from '../lib/model';
   import { PROVISIONAL, ranked, rankings } from '../lib/ranking';
   import type { AllData, Profile } from '../lib/store';
@@ -91,12 +91,12 @@
     for (const game of [...new Set(stats.tournaments.map((t) => t.game))].sort()) {
       scopes.push({ game, category: '' });
       const inGame = d.tournaments.filter((t) => t.game === game);
-      const cats = new Set(inGame.filter((t) => mine.has(t.id)).map((t) => t.category ?? '').filter(Boolean));
+      const cats = new Set(inGame.filter((t) => mine.has(t.id)).map(categoryOf).filter(Boolean));
       // a category card only says something new when the game has other tournaments too
-      for (const category of [...cats].sort()) if (inGame.some((t) => (t.category ?? '') !== category)) scopes.push({ game, category });
+      for (const category of [...cats].sort()) if (inGame.some((t) => categoryOf(t) !== category)) scopes.push({ game, category });
     }
     return scopes.map(({ game, category }) => {
-      const ts = d.tournaments.filter((t) => t.game === game && (!category || t.category === category));
+      const ts = d.tournaments.filter((t) => t.game === game && (!category || categoryOf(t) === category));
       const list = ranked(rankings(ts, d.players).values(), 'rating');
       const me = list.find((r) => r.player.id === id)!;
       return {
@@ -435,7 +435,7 @@
               <span class="tbody">
                 <span><a href="#/t/{t.id}">{t.name}</a> <TierTag tier={t.tier} /></span>
                 <span class="muted small">
-                  {[t.game, t.category, `${t.entrants} entrants`].filter(Boolean).join(' · ')}{#if !t.finished}&nbsp;· in progress{/if}
+                  {[t.game, t.category, t.division, `${t.entrants} entrants`].filter(Boolean).join(' · ')}{#if !t.finished}&nbsp;· in progress{/if}
                 </span>
               </span>
               {#if t.points}<span class="pts small">+{t.points}</span>{/if}

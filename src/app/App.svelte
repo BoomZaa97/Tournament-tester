@@ -10,8 +10,19 @@
   import Settings from './routes/Settings.svelte';
   import Admin from './routes/Admin.svelte';
   import Account from './routes/Account.svelte';
+  import UserMenu from './components/UserMenu.svelte';
+  import { stopLoginAs, viewingAs } from './lib/store';
 
   const section = $derived(app.path[0] ?? '');
+  // an admin used "Log in as" on this device
+  const asOther = $derived((void app.account, viewingAs()));
+  function backToMe() {
+    stopLoginAs();
+    app.refreshAccount();
+    app.syncAccount();
+    app.notify('Back to your own account');
+    app.go('admin');
+  }
   // staff (site owner, admins, moderators) get the Admin menu; re-read when the account changes
   const staff = $derived((void app.account, app.store.kind === 'sheets' && app.store.can('audit')));
   // bring a logged-in account's PINs and organizer keys onto this device
@@ -26,15 +37,20 @@
     </a>
     <nav>
       <a href="#/" class:on={section === '' || section === 't' || section === 'j' || section === 'new'}>Tournaments</a>
-      <a href="#/players" class:on={section === 'players' || section === 'p'}>Rankings</a>
-      {#if staff}<a href="#/admin" class:on={section === 'admin'}>Admin</a>{/if}
-      <a href="#/settings" class:on={section === 'settings' || (section === 'admin' && !staff)}>Settings</a>
-      {#if app.store.kind === 'sheets'}
-        <a href="#/account" class="acct" class:on={section === 'account'}>{app.account ? app.account.name : 'Log in'}</a>
-      {/if}
+      <a href="#/players" class:on={section === 'players' || (section === 'p' && app.path[1] !== app.account?.playerId)}>Rankings</a>
     </nav>
+    <UserMenu {staff} {section} />
   </div>
 </header>
+
+{#if asOther && app.account}
+  <div class="viewas no-print" role="status">
+    <div class="wrap row">
+      <span>You're logged in as <b>{app.account.name}</b> (@{app.account.username}). Everything you do counts as them.</span>
+      <button class="small" onclick={backToMe}>Back to my account</button>
+    </div>
+  </div>
+{/if}
 
 <main>
   {#key app.path.join('/')}
@@ -135,12 +151,6 @@
     color: var(--ink-2);
     border-bottom: 3px solid transparent;
   }
-  nav a.acct {
-    max-width: 140px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
   nav a.on {
     color: var(--ink);
     border-bottom-color: var(--accent);
@@ -148,6 +158,9 @@
   main {
     padding-bottom: 80px;
   }
+  .viewas { background: var(--accent); color: #fff; padding: 8px 0; font-size: 15px; }
+  .viewas .row { justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .viewas button { background: #fff; color: #16181d; border-color: #fff; }
   .toast {
     position: fixed;
     left: 50%;
@@ -170,7 +183,7 @@
     .bar { gap: 0 4px; min-height: 0; padding-top: 10px; }
     .brand { font-size: 18px; }
     .brand small { display: none; }
-    nav { width: 100%; justify-content: flex-start; margin-top: 2px; }
+    nav { width: 100%; justify-content: flex-start; margin-top: 2px; order: 3; }
     nav a { padding: 6px 8px; font-size: 14px; }
   }
 </style>

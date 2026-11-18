@@ -1,6 +1,6 @@
 <script lang="ts">
   import { app, errorText } from '../lib/app.svelte';
-  import { ROLE_LABEL, TWO_STEP, forgetAccount, orgKeyIds } from '../lib/store';
+  import { ROLE_LABEL, TWO_STEP, forgetAccount, orgKeyIds, stopLoginAs, viewingAs } from '../lib/store';
   import type { TournamentDoc } from '../lib/model';
   import QrCode from '../components/QrCode.svelte';
 
@@ -9,9 +9,22 @@
     next?: string;
   }
   let { next = '' }: Props = $props();
+  /** Where to go after logging in: where they came from, else their profile. */
+  const after = (playerId: string) => app.go(next || `p/${playerId}`);
 
   const can = $derived(!!app.store.login);
-  let mode = $state<'login' | 'register' | 'recover'>('login');
+  // "Create account" in the top menu opens this form on sign-up
+  let mode = $state<'login' | 'register' | 'recover'>(
+    (() => {
+      try {
+        const s = sessionStorage.getItem('tt.signup');
+        sessionStorage.removeItem('tt.signup');
+        return s ? 'register' : 'login';
+      } catch {
+        return 'login';
+      }
+    })(),
+  );
   let username = $state('');
   let password = $state('');
   let name = $state('');
@@ -24,6 +37,8 @@
   /** A recovery code to show once (after sign-up, recovery, or making a new one). */
   let shownCode = $state('');
   let savedIt = $state(false);
+  /** The code was shown right after logging in / signing up: "Done" then goes on to the profile. */
+  let leaveAfterCode = false;
   /** Two-step login is on for this account: the login form asks for the code. */
   let needCode = $state(false);
   let loginCode = $state('');
@@ -54,7 +69,8 @@
         // show it before going anywhere: it's the only way back in without the site admin
         shownCode = code;
         savedIt = false;
-      } else if (next) app.go(next);
+        leaveAfterCode = true;
+      } else after(a.playerId);
     } catch (err) {
       error = errorText(err);
       // name used by a player who played before: offer the join code + PIN fields
@@ -165,7 +181,8 @@
 
   function doneWithCode() {
     shownCode = '';
-    if (next) app.go(next);
+    if (leaveAfterCode && app.account) after(app.account.playerId);
+    leaveAfterCode = false;
   }
 
   // ---- two-step login
@@ -276,6 +293,14 @@
   }
 
   function logOut() {
+    if (viewingAs()) {
+      stopLoginAs();
+      app.refreshAccount();
+      app.syncAccount();
+      app.notify('Back to your own account');
+      app.go('admin');
+      return;
+    }
     forgetAccount();
     mode = 'login';
     error = '';
