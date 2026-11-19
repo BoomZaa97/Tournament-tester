@@ -551,6 +551,63 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.post({ action: 'requestOfficial', id: 'o1', orgKey: ORG }).official).toBe('pending');
     });
 
+    it('helpers: own links the organizer can remove; a new organizer link stops old copies', () => {
+      const g = fakeGoogle();
+      create(g);
+      const HELP = 'helper-key-for-sam-0123';
+      const save = (orgKey: string) => {
+        const t = g.get({ action: 'get', id: 'o1' }).tournament;
+        return g.post({ action: 'save', orgKey, tournament: { ...t, name: 'Renamed ' + t.version }, players: [] });
+      };
+      // only the organizer (or staff) sees and changes the list; keys are never sent back
+      expect(g.post({ action: 'helpers', id: 'o1', orgKey: 'wrong-key-0123456789' }).error).toMatch(/organizer/i);
+      expect(g.post({ action: 'helpers', id: 'o1', orgKey: ORG })).toEqual({ you: 'main', helpers: [] });
+      expect(g.post({ action: 'helpers', id: 'o1', orgKey: ORG, op: 'add', name: '  ', helperKey: HELP }).error).toMatch(/name/);
+      expect(g.post({ action: 'helpers', id: 'o1', orgKey: ORG, op: 'add', name: 'Sam', helperKey: 'short' }).error).toMatch(/key/);
+      const added = g.post({ action: 'helpers', id: 'o1', orgKey: ORG, op: 'add', name: '  Sam  ', helperKey: HELP });
+      expect(added.helpers).toEqual([{ id: expect.any(String), name: 'Sam', at: expect.any(String) }]);
+      expect(JSON.stringify(g.get({ action: 'all' }))).not.toContain('helpers');
+      expect(JSON.stringify(g.get({ action: 'get', id: 'o1' }))).not.toContain(HELP);
+
+      // a helper edits like the organizer, but can't delete or manage helpers
+      expect(g.post({ action: 'check', id: 'o1', orgKey: HELP })).toMatchObject({ organizer: true, helper: true });
+      expect(save(HELP).error).toBeUndefined();
+      expect(g.post({ action: 'helpers', id: 'o1', orgKey: HELP })).toEqual({ you: 'helper', helpers: [] });
+      expect(g.post({ action: 'helpers', id: 'o1', orgKey: HELP, op: 'add', name: 'Pal', helperKey: 'pal-key-0123456789' }).error).toMatch(/Helpers can't/);
+      expect(g.post({ action: 'helpers', id: 'o1', orgKey: HELP, op: 'reset', newKey: 'new-key-0123456789' }).error).toMatch(/Helpers can't/);
+      expect(g.post({ action: 'delete', id: 'o1', orgKey: HELP }).error).toMatch(/Helpers can't/);
+      // the helper list survives organizer saves
+      expect(save(ORG).error).toBeUndefined();
+      expect(g.post({ action: 'helpers', id: 'o1', orgKey: ORG }).helpers).toHaveLength(1);
+
+      // an account that holds the helper key keeps it while it works
+      const sam = reg(g, { username: 'sam', name: 'Sam P' });
+      expect(g.post({ action: 'me', token: sam.token, orgKeys: { o1: HELP } }).orgKeys).toEqual({ o1: HELP });
+
+      // removed: the link stops working at once, and the account forgets it
+      const id = added.helpers[0].id;
+      expect(g.post({ action: 'helpers', id: 'o1', orgKey: ORG, op: 'remove', helperId: id }).helpers).toEqual([]);
+      expect(save(HELP).error).toMatch(/organizer/i);
+      expect(g.post({ action: 'me', token: sam.token }).orgKeys).toEqual({});
+      expect(g.post({ action: 'helpers', id: 'o1', orgKey: ORG, op: 'remove', helperId: id }).error).toMatch(/already removed/);
+
+      // a new organizer link: the old key stops working, the new one works
+      const NEW = 'brand-new-organizer-key-01';
+      expect(g.post({ action: 'helpers', id: 'o1', orgKey: ORG, op: 'reset', newKey: NEW }).you).toBe('main');
+      expect(save(ORG).error).toMatch(/organizer/i);
+      expect(save(NEW).error).toBeUndefined();
+
+      // staff can see and remove helpers (audited), but not replace the organizer's key
+      const mod = reg(g, { username: 'mod', name: 'Mod' });
+      g.post({ action: 'setRole', key: 'secret', playerId: mod.account.playerId, role: 'moderator' });
+      g.post({ action: 'helpers', id: 'o1', orgKey: NEW, op: 'add', name: 'Kim', helperKey: 'kim-key-0123456789' });
+      const staffView = g.post({ action: 'helpers', id: 'o1', auth: mod.token });
+      expect(staffView.you).toBe('staff');
+      expect(g.post({ action: 'helpers', id: 'o1', auth: mod.token, op: 'reset', newKey: 'x-key-0123456789ab' }).error).toMatch(/Only the organizer/);
+      expect(g.post({ action: 'helpers', id: 'o1', auth: mod.token, op: 'remove', helperId: staffView.helpers[0].id }).helpers).toEqual([]);
+      expect(g.post({ action: 'audit', key: 'secret' }).audit[0]).toMatchObject({ action: 'Removed a helper', detail: 'Kim' });
+    });
+
     it('announcements: staff post, edit and remove them; everyone reads them with the site settings', () => {
       const g = fakeGoogle();
       const joe = reg(g, { username: 'joe', name: 'Joe' });

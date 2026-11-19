@@ -8,6 +8,17 @@ export interface OfficialState {
   official: Official;
   officialNote: string;
 }
+/** Someone the organizer gave their own edit link (only a hash of it is stored). */
+export interface Helper {
+  id: string;
+  name: string;
+  at: string;
+}
+/** `you`: this device's organizer key is the organizer's own ('main') or a helper's; or staff without a key. */
+export interface HelpersState {
+  you: 'main' | 'helper' | 'staff';
+  helpers: Helper[];
+}
 import type { ChTournament } from './challonge';
 
 export class VersionConflictError extends Error {
@@ -163,6 +174,13 @@ export interface Store {
   discord?(id: string, url: string): Promise<boolean>;
   /** Organizer: ask staff to make the tournament official (or withdraw the request). */
   requestOfficial?(id: string, note: string, cancel?: boolean): Promise<OfficialState>;
+  /** Organizer: who else can edit this tournament. Helpers get their own link each and can be removed. */
+  helpers?(id: string): Promise<HelpersState>;
+  /** A new helper; `link` is shown once (only its hash is stored). */
+  addHelper?(id: string, name: string): Promise<HelpersState & { link: string }>;
+  removeHelper?(id: string, helperId: string): Promise<HelpersState>;
+  /** A new organizer key: every old copy of the organizer link stops working. This device keeps the new one. */
+  resetOrgKey?(id: string): Promise<HelpersState>;
   /** Staff: make a tournament official ('yes'), refuse ('no') or clear it (''). */
   setOfficial(id: string, status: Official, note: string): Promise<OfficialState>;
   /** A Challonge tournament as Challonge's API returns it (fetched by the Google script; the key is never stored). */
@@ -370,13 +388,23 @@ export function forgetOrgKey(id: string) {
   const keys = readJson<string>(KEYS);
   delete keys[id];
   writeJson(KEYS, keys);
+  dispatchEvent(new Event(KEYS_CHANGED));
 }
+/** Fired when this device loses an organizer key, so open pages stop offering edits. */
+export const KEYS_CHANGED = 'tt:keys';
 
-/** Link that gives a helper the same rights as the organizer. */
-export function helperLink(id: string): string | undefined {
-  const key = orgKeyFor(id);
-  return key ? `${location.href.split('#')[0]}#/t/${id}/org/${key}` : undefined;
+/** Link that lets a device edit a tournament with an organizer or helper key. */
+export function keyLink(id: string, key: string): string {
+  return `${location.href.split('#')[0]}#/t/${id}/org/${key}`;
 }
+/** This device's organizer link (for the organizer's own other devices). */
+export function organizerLink(id: string): string | undefined {
+  const key = orgKeyFor(id);
+  return key ? keyLink(id, key) : undefined;
+}
+/** Code.gs's answer when an organizer key doesn't (or no longer) work. */
+const NOT_ORGANIZER = 'Only the organizer of this tournament (or the site admin) can change it';
+export const KEY_GONE = "This device can't edit this tournament any more: the organizer removed its link or made a new one.";
 
 // ---------------------------------------------------------------- local
 
@@ -632,6 +660,15 @@ export class SheetsStore implements Store {
     if (body.error === 'conflict') throw new VersionConflictError();
     // An older Google script that doesn't have this feature yet.
     if (typeof body.error === 'string' && body.error.startsWith('Unknown action')) throw new Error(UPDATE_SCRIPT);
+    if (body.error === NOT_ORGANIZER && params.orgKey) {
+      // a removed helper, or an organizer link that was replaced: stop offering edits on this device
+      const tid = String(params.id ?? (params.tournament as { id?: string } | undefined)?.id ?? '');
+      // (another request may have found out first and forgotten it already)
+      if (tid && (orgKeyFor(tid) === params.orgKey || !orgKeyFor(tid))) {
+        if (orgKeyFor(tid)) forgetOrgKey(tid);
+        throw new Error(KEY_GONE);
+      }
+    }
     if (body.error) throw new Error(body.error);
     return body as T;
   }
@@ -937,6 +974,31 @@ export class SheetsStore implements Store {
 
   async requestOfficial(id: string, note: string, cancel = false) {
     return this.call<OfficialState>('POST', { action: 'requestOfficial', id, note, cancel, orgKey: orgKeyFor(id) ?? '' });
+  }
+
+  private helperCall(id: string, extra: Record<string, unknown> = {}) {
+    return this.call<HelpersState>('POST', { action: 'helpers', id, orgKey: orgKeyFor(id) ?? '', ...extra });
+  }
+
+  helpers(id: string) {
+    return this.helperCall(id);
+  }
+
+  async addHelper(id: string, name: string) {
+    const key = makeOrgKey();
+    const r = await this.helperCall(id, { op: 'add', name, helperKey: key });
+    return { ...r, link: keyLink(id, key) };
+  }
+
+  removeHelper(id: string, helperId: string) {
+    return this.helperCall(id, { op: 'remove', helperId });
+  }
+
+  async resetOrgKey(id: string) {
+    const newKey = makeOrgKey();
+    const r = await this.helperCall(id, { op: 'reset', newKey });
+    rememberOrgKey(id, newKey);
+    return r;
   }
 
   async setOfficial(id: string, status: Official, note: string) {

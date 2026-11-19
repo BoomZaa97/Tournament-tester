@@ -10,10 +10,12 @@
   let data = $state<AllData | null>(null);
   let error = $state('');
   let q = $state('');
-  /** #/players/<game> opens that game's ranking; ALL = every game together. */
+  /** #/players/<game> opens that game's ranking; ALL = every game together; OVERVIEW = the top of each game. */
   const ALL = 'all-games';
+  const OVERVIEW = 'overview';
   const fromLink = app.path[1] ?? '';
-  let game = $state(fromLink === ALL ? '' : fromLink);
+  let game = $state(fromLink === ALL || fromLink === OVERVIEW ? '' : fromLink);
+  let overview = $state(fromLink === OVERVIEW);
   let category = $state('');
   let division = $state('');
   let tier = $state<Tier | ''>('');
@@ -32,7 +34,9 @@
     const top = [...count].sort((a, b) => b[1] - a[1])[0]?.[0];
     if (top === undefined) return; // nothing yet (e.g. an empty copy from last time): wait for the sheet
     picked = true;
-    game = top;
+    // several games: start on the overview (each game's top players); one game: its ranking
+    if (count.size > 1) overview = true;
+    else game = top;
   }
   // what this device saw last time, until the sheet answers
   const seen = app.store.peekAll();
@@ -51,13 +55,41 @@
     for (const t of all) if (t.game) count.set(t.game, (count.get(t.game) ?? 0) + 1);
     return [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([g]) => g);
   });
-  function pickGame(g: string) {
+  function pickGame(g: string, c = '') {
     picked = true;
+    overview = false;
     game = g;
-    category = '';
+    category = c;
     // keep the link shareable without reloading the page
     history.replaceState(null, '', '#/players/' + encodeURIComponent(g || ALL));
+    if (c) scrollTo({ top: 0 });
   }
+  function pickOverview() {
+    picked = true;
+    overview = true;
+    game = '';
+    category = '';
+    history.replaceState(null, '', '#/players/' + OVERVIEW);
+  }
+  /** The overview: each game (most played first) with its top players and its categories. */
+  const showOverview = $derived(overview && games.length > 1);
+  const board = $derived.by(() => {
+    if (!data || !showOverview) return [];
+    const players = data.players;
+    return games.map((g) => {
+      const ts = filterTournaments(all, { game: g });
+      const rows = ranked(rankings(ts, players).values(), by);
+      // ranked players first; before anyone is ranked, the ones still settling (shown greyed, no place)
+      const top = rows.slice(0, 5).filter((r, i, l) => r.rank !== null || !l.some((x) => x.rank !== null));
+      return {
+        game: g,
+        events: ts.length,
+        players: rows.length,
+        top,
+        cats: [...new Set(ts.map(categoryOf).filter(Boolean))].sort(),
+      };
+    });
+  });
   const inGame = $derived(all.filter((t) => !game || t.game === game));
   const categories = $derived([...new Set(inGame.map(categoryOf).filter(Boolean))].sort());
   const inCategory = $derived(inGame.filter((t) => !category || categoryOf(t) === category));
@@ -111,20 +143,21 @@
 </script>
 
 <div class="wrap page">
-  <h1>Rankings{#if game}<span class="game">&nbsp;· {game}</span>{/if}</h1>
+  <h1>Rankings{#if showOverview}<span class="game">&nbsp;· every game</span>{:else if game}<span class="game">&nbsp;· {game}</span>{/if}</h1>
   <p class="muted intro">
     Each game has its own ranking: a rating in one game says nothing about another.
   </p>
 
   {#if games.length > 1}
     <div class="chips games" role="tablist" aria-label="Game">
+      <button role="tab" class="allg" class:on={showOverview} aria-selected={showOverview} onclick={pickOverview}>Overview</button>
       {#each games as g}
         <button role="tab" class:on={game === g} aria-selected={game === g} onclick={() => pickGame(g)}>{g}</button>
       {/each}
-      <button role="tab" class="allg" class:on={!game} aria-selected={!game} onclick={() => pickGame('')}>All games</button>
+      <button role="tab" class="allg" class:on={!game && !showOverview} aria-selected={!game && !showOverview} onclick={() => pickGame('')}>All games together</button>
     </div>
   {/if}
-  {#if categories.length > 1}
+  {#if categories.length > 1 && !showOverview}
     <div class="chips cats" role="tablist" aria-label="Category">
       <button role="tab" class:on={!category} aria-selected={!category} onclick={() => (category = '')}>All categories</button>
       {#each categories as c}
@@ -133,6 +166,7 @@
     </div>
   {/if}
 
+  {#if !showOverview}
   <div class="controls">
     {#if divisions.length > 1}
       <label class="field">
@@ -166,6 +200,7 @@
       <input type="search" placeholder="Player name" bind:value={q} />
     </label>
   </div>
+  {/if}
 
   <div class="bar">
     <div class="by" role="tablist" aria-label="Rank by">
@@ -176,7 +211,9 @@
     {#if anyVerified}
       <label class="check small"><input type="checkbox" bind:checked={verifiedOnly} /> Verified players only</label>
     {/if}
-    {#if mine}
+    {#if showOverview}
+      <!-- the overview has no "you" row: open a game for that -->
+    {:else if mine}
       <button class="small ghost me-btn" onclick={jumpToMe}>
         You: {mine.rank ? `#${mine.rank}` : 'not ranked yet'}
       </button>
@@ -195,6 +232,40 @@
     <p class="notice">Couldn't load: {error}</p>
   {:else if !data}
     <p class="muted">Loading…</p>
+  {:else if showOverview}
+    <div class="board">
+      {#each board as b (b.game)}
+        <section class="card">
+          <h2><button class="link gname" onclick={() => pickGame(b.game)}>{b.game}</button></h2>
+          <p class="small muted sub">{b.events} tournament{b.events === 1 ? '' : 's'} · {b.players} player{b.players === 1 ? '' : 's'}</p>
+          {#if b.top.length}
+            <ol class="mini">
+              {#each b.top as r (r.player.id)}
+                <li class:me={r.player.id === myId}>
+                  <span class="mrank">{r.rank ?? '–'}</span>
+                  <span class="mname">
+                    {#if anon(r)}<span class="anon">Anonymous</span>{:else}<a href="#/p/{r.player.id}">{r.player.name}</a><Verified id={r.player.id} />{/if}
+                  </span>
+                  <span class="mval" class:prov={r.rank === null}>{value(r)}</span>
+                </li>
+              {/each}
+            </ol>
+            {#if b.top[0].rank === null}<p class="small muted settle">Nobody ranked yet: grey numbers are still settling ({PROVISIONAL} matches needed).</p>{/if}
+          {:else}
+            <p class="small muted">
+              {by === 'points' ? 'No points yet: points come from finished tournaments.' : by === 'confirmed' ? 'No official tournaments here yet.' : `Nobody ranked yet: players need ${PROVISIONAL} rated matches.`}
+            </p>
+          {/if}
+          <div class="foot">
+            <button class="link small" onclick={() => pickGame(b.game)}>Full ranking →</button>
+            {#if b.cats.length > 1}
+              <span class="small muted">By category:</span>
+              {#each b.cats as c}<button class="link small" onclick={() => pickGame(b.game, c)}>{c}</button>{/each}
+            {/if}
+          </div>
+        </section>
+      {/each}
+    </div>
   {:else if shown.length === 0}
     <div class="empty">
       {q.trim() ? `Nobody called “${q.trim()}” here.` : verifiedOnly ? 'No verified players here yet.' : 'No players here yet. They appear once they play in a tournament.'}
@@ -354,6 +425,31 @@
   .medals { white-space: nowrap; color: var(--ink-2); }
   .divider td { padding-top: 18px; font: 600 13px var(--font-cond); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); border-bottom: 2px solid var(--line-strong); }
   .note { margin-top: 12px; max-width: 640px; }
+
+  button.link {
+    background: none; border: 0; padding: 0; min-height: 0; color: var(--ink-2); cursor: pointer;
+    text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px;
+  }
+  button.link:hover { color: var(--ink); text-decoration-color: currentColor; }
+  .card h2 button.link { text-decoration: none; color: var(--ink); }
+  .card h2 button.link:hover { text-decoration: underline; }
+  .board { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 14px; }
+  .card { border: 1px solid var(--line-strong); border-top: 3px solid var(--ink); border-radius: var(--radius); background: var(--card); padding: 12px 14px; min-width: 0; }
+  .card h2 { margin: 0; font-size: 24px; border: 0; padding: 0; }
+  .gname { font: inherit; text-transform: inherit; color: var(--ink); text-align: left; }
+  .sub { margin: 0 0 8px; }
+  .mini { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  .mini li { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: baseline; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .mini li:first-child .mrank { color: var(--accent); }
+  .mini li.me { box-shadow: inset 3px 0 0 var(--accent); padding-left: 6px; }
+  .mrank { font: 700 17px var(--font-cond); color: var(--muted); }
+  .mname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mname a { font-weight: 600; text-decoration: none; }
+  .mname a:hover { text-decoration: underline; }
+  .mval { font: 700 17px var(--font-cond); font-variant-numeric: tabular-nums; }
+  .mval.prov { color: var(--muted); }
+  .settle { margin: 6px 0 0; }
+  .foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-top: 10px; }
   @media (max-width: 640px) {
     .hide-s { display: none; }
     .podium { grid-template-columns: minmax(0, 1fr); gap: 6px; }

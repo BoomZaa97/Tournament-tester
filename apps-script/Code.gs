@@ -10,7 +10,8 @@
  *   - the site admin (ADMIN_KEY): everything;
  *   - a tournament's organizer: anyone can create a tournament; their browser makes a
  *     random organizer key and only its SHA-256 hash is stored (orgKeyHash). Helpers get
- *     the same key through a helper link;
+ *     their own key each (hidden `helpers` column, hashes only), which the organizer can remove;
+ *     a helper can do everything except delete the tournament or manage helpers;
  *   - players: sign up while sign-up is open, and report their own unplayed matches
  *     with their 6-digit PIN (Entrants.pin, never sent to viewers). Guessing is limited: after
  *     too many wrong PINs a tournament refuses PINs for a while (PIN_LIMIT, kept in CacheService).
@@ -38,7 +39,7 @@ var TABLES = {
   Tournaments: [
     'id', 'name', 'game', 'category', 'tier', 'format', 'options', 'scoring', 'createdAt', 'updatedAt', 'version', 'signup', 'orgKeyHash',
     'code', 'maxPlayers', 'checkIn', 'removedPins', 'discordWebhook', 'division',
-    'official', 'officialNote',
+    'official', 'officialNote', 'helpers',
   ],
   Entrants: ['tournamentId', 'tournament', 'seed', 'playerId', 'name', 'pin', 'checkedIn'],
   Results: [
@@ -92,7 +93,8 @@ function doPost(e) {
     var actor = whoIs(body, adminKey);
     if (body.action === 'check') {
       var row = body.id ? findTournament(readTable('Tournaments'), body.id) : null;
-      return { admin: actor.role === 'owner', role: actor.role, organizer: !!row && isOrganizer(body, row) };
+      var kind = row ? organizerKind(body, row) : '';
+      return { admin: actor.role === 'owner', role: actor.role, organizer: !!kind, helper: kind === 'helper' };
     }
 
     // reads nothing from the sheet: no need to wait for the lock
@@ -137,6 +139,7 @@ function doPost(e) {
       }
       if (body.action === 'discord') return setDiscord(body, can(actor, 'tournaments'));
       if (body.action === 'requestOfficial') return requestOfficial(body, actor);
+      if (body.action === 'helpers') return manageHelpers(body, actor);
       if (body.action === 'setOfficial') return setOfficial(body, actor);
       if (body.action === 'register') return register(body);
       if (body.action === 'login') return logIn(body.username, body.password, body.code);
@@ -589,8 +592,10 @@ function saveTournament(doc, players, body, actor) {
 
 function deleteTournament(id, body, actor) {
   var row = findTournament(readTable('Tournaments'), id);
-  var organizer = row && isOrganizer(body, row);
-  if (row && !can(actor, 'tournaments') && !organizer) throw new Error(NOT_ORGANIZER);
+  var organizer = row && organizerKind(body, row) === 'main';
+  if (row && !can(actor, 'tournaments') && !organizer) {
+    throw new Error(isOrganizer(body, row) ? HELPER_CANT : NOT_ORGANIZER);
+  }
   if (row && !organizer) audit(actor, 'Deleted tournament', row.name, '');
   PER_TOURNAMENT.forEach(function (name) {
     writeBlock(name, { id: id }, []);
@@ -713,7 +718,95 @@ function findTournament(rows, id) {
 }
 
 function isOrganizer(body, row) {
-  return !!(row && row.orgKeyHash && body.orgKey && sha256(String(body.orgKey)) === row.orgKeyHash);
+  return !!organizerKind(body, row);
+}
+
+/** 'main' (the organizer's own key), 'helper' (a key from the helper list) or ''. */
+function organizerKind(body, row) {
+  return keyKind(body && body.orgKey, row);
+}
+
+function keyKind(key, row) {
+  if (!row || !key) return '';
+  var h = sha256(String(key));
+  if (row.orgKeyHash && h === row.orgKeyHash) return 'main';
+  return helpersOf(row).some(function (x) {
+    return x.hash === h;
+  })
+    ? 'helper'
+    : '';
+}
+
+// ------------------------------------------------------------------ helpers
+
+var HELPER_CANT = "Helpers can't do this. Ask the tournament's organizer.";
+var HELPERS_MAX = 20;
+
+/** The helper list of a tournament row: [{id, name, hash, at}] (hidden column, never sent as is). */
+function helpersOf(row) {
+  var list = json(row && row.helpers, []);
+  return Array.isArray(list) ? list : [];
+}
+
+/**
+ * The organizer (or staff) manages who else can edit a tournament:
+ *   - no `op`: who am I here, and (organizer/staff) the helper list without the keys;
+ *   - `add`: a helper with a name and a new key the browser made (≥ 16 chars; only its hash is kept);
+ *   - `remove`: one helper by id; their link stops working at once;
+ *   - `reset`: a new organizer key (`newKey`); every old copy of the organizer link stops working.
+ * Only `updatedAt` changes, not the bracket's version.
+ */
+function manageHelpers(body, actor) {
+  var rows = readTable('Tournaments');
+  var t = findTournament(rows, body.id);
+  if (!t) throw new Error('Tournament not found');
+  var kind = organizerKind(body, t);
+  var staff = can(actor, 'tournaments');
+  var you = kind || (staff ? 'staff' : '');
+  if (!you) throw new Error(NOT_ORGANIZER);
+  var op = String(body.op || '');
+  var list = helpersOf(t);
+  var shown = function () {
+    return {
+      you: you,
+      helpers:
+        you === 'helper'
+          ? []
+          : list.map(function (h) {
+              return { id: h.id, name: h.name, at: h.at };
+            }),
+    };
+  };
+  if (!op) return shown();
+  if (you === 'helper') throw new Error(HELPER_CANT);
+  var now = new Date().toISOString();
+  if (op === 'add') {
+    var name = String(body.name || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (!name) throw new Error('Give the helper a name, so you know whose link it is');
+    if (String(body.helperKey || '').length < 16) throw new Error('Missing helper key');
+    if (list.length >= HELPERS_MAX) throw new Error('A tournament can have up to ' + HELPERS_MAX + ' helpers');
+    list.push({ id: Utilities.getUuid().slice(0, 8), name: name, hash: sha256(String(body.helperKey)), at: now });
+    if (you === 'staff') audit(actor, 'Added a helper', t.name, name);
+  } else if (op === 'remove') {
+    var gone = list.filter(function (h) {
+      return h.id === body.helperId;
+    })[0];
+    if (!gone) throw new Error('That helper was already removed');
+    list = list.filter(function (h) {
+      return h !== gone;
+    });
+    if (you === 'staff') audit(actor, 'Removed a helper', t.name, gone.name);
+  } else if (op === 'reset') {
+    if (you !== 'main') throw new Error('Only the organizer can make a new organizer link');
+    if (String(body.newKey || '').length < 16) throw new Error('Missing organizer key');
+    t.orgKeyHash = sha256(String(body.newKey));
+  } else {
+    throw new Error('Unknown helpers change');
+  }
+  t.helpers = list.length ? JSON.stringify(list) : '';
+  t.updatedAt = now;
+  writeRow('Tournaments', t);
+  return shown();
 }
 
 function sha256(s) {
@@ -1653,12 +1746,12 @@ function aboutMe(token, deviceKeys) {
     .slice(0, 500)
     .forEach(function (id) {
       var t = findTournament(data.Tournaments, id);
-      if (t && t.orgKeyHash && sha256(String(deviceKeys[id])) === t.orgKeyHash) keys[id] = String(deviceKeys[id]);
+      if (t && keyKind(deviceKeys[id], t)) keys[id] = String(deviceKeys[id]);
     });
-  // forget keys of deleted tournaments, and keys that no longer match (organizer key changed by hand)
+  // forget keys of deleted tournaments, and keys that no longer work (new organizer link, helper removed)
   Object.keys(keys).forEach(function (id) {
     var t = findTournament(data.Tournaments, id);
-    if (!t || sha256(keys[id]) !== t.orgKeyHash) delete keys[id];
+    if (!t || !keyKind(keys[id], t)) delete keys[id];
   });
   var after = JSON.stringify(keys);
   if (after !== before && after.length <= CELL_LIMIT) a.orgKeys = after;

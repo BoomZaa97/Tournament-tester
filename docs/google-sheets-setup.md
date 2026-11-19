@@ -8,7 +8,7 @@ This lets other people see, run and join tournaments, and keeps all data in a Go
 |---|---|---|
 | You (site admin) | Your **admin key**, entered in the site's Settings → Admin settings (`#/admin`) | Everything, on every tournament. Rename players, delete spam. |
 | Organizer | Whoever creates a tournament. Their browser gets a secret organizer key for it automatically | Edit or delete **that** tournament, open sign-up, set a player limit, move people up from the waitlist, run check-in, drop players, settle disputed scores, see its player PINs |
-| Helper | Opens the organizer's **helper link** (Edit tab → Players and helpers) | Same as the organizer, for that tournament |
+| Helper | Opens their own **helper link** (organizer: Edit tab → Players and helpers → Helpers) | Same as the organizer for that tournament, except deleting it or managing helpers. The organizer can remove a helper at any time. |
 | Player | Signs up on the tournament page (if sign-up is open) and gets a **6-digit PIN**, or gets it from the organizer | Report the score of their own unplayed match; confirm or dispute a score their opponent reported; check in ("I'm here") before the start; drop out once it has started. Fixing a result stays with the organizer. |
 | Account holder | Makes a username + password on the site's **Log in** page (optional) | The same as above, on any device: logging in brings their PINs and the organizer keys of tournaments they made. Join a tournament with one tap. Change their own display name. |
 | Everyone else | The site link | View |
@@ -94,6 +94,7 @@ New columns are added to the tabs by themselves on the next save:
 | Entrants, Results, Log, Waitlist | `tournament` | The tournament's name, next to its id, so you can tell the rows apart. |
 | Tournaments | `category` | Optional kind of competition (Esports, Sports, Board games…). Rankings can be split by it. |
 | Tournaments | `division` | Optional age or level group (U18, Women…). Empty = Open. Rankings can be split by it. |
+| Tournaments | `helpers` | Hidden: the tournament's helpers as JSON (name and a SHA-256 hash of their key; never the key). Empty = none. |
 | Tournaments | `official`, `officialNote` | Official tournament: `pending` (the organizer asked), `yes` (staff approved; counts towards the confirmed rating) or `no` (refused). The note is the organizer's message or the staff's reason. |
 | Tournaments | `discordWebhook` | The Discord channel link an organizer connected. It's a secret: never shown on the site. Empty it to stop the posts. |
 | Tournaments | `removedPins` | PINs of players the organizer removed, so they get the same PIN if they're added back. Leave it alone; it's never shown on the site. |
@@ -136,7 +137,8 @@ If a manual edit makes later matches wrong, the app marks them **Check** and let
 ## Limits and trade-offs
 
 - Anyone can create a tournament on your site. Delete spam with your admin key (tournament → Edit → Delete).
-- Losing a browser's organizer key: open a helper link you sent someone, or edit it with the admin key.
+- Losing a browser's organizer key: log in to the account that made it, or edit it with the admin key.
+- A helper or organizer link got out: remove that helper, or make a new organizer link (Share panel). Old copies stop working at once.
 - PIN guesses aren't rate-limited (a guess takes a second or two, and there are a million PINs).
 
 

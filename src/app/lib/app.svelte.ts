@@ -1,5 +1,5 @@
 import { SvelteSet } from 'svelte/reactivity';
-import { getSettings, LOGGED_OUT, makeStore, myAccount } from './store';
+import { getSettings, KEYS_CHANGED, LOGGED_OUT, makeStore, myAccount } from './store';
 import type { Account, Settings, Store } from './store';
 import type { Player } from './model';
 
@@ -22,6 +22,8 @@ class AppState {
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor() {
+    // a removed helper link (or a replaced organizer link) was found out: pages re-check what this device can edit
+    addEventListener(KEYS_CHANGED, () => this.accountSync++);
     addEventListener('hashchange', () => {
       this.path = parse(location.hash);
       scrollTo(0, 0);

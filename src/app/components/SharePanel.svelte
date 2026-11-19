@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app, errorText } from '../lib/app.svelte';
-  import { helperLink } from '../lib/store';
+  import { organizerLink } from '../lib/store';
+  import type { HelpersState } from '../lib/store';
   import { scriptOutdated, UPDATE_SCRIPT } from '../lib/model';
   import type { TournamentDoc } from '../lib/model';
 
@@ -41,7 +42,68 @@
 
   const viewLink = `${location.href.split('#')[0]}#/t/${doc.id}`;
   const joinLink = `${location.href.split('#')[0]}#/j/${doc.id}`;
-  const helper = helperLink(doc.id);
+  // ---- helpers: each gets their own link, which the organizer can remove
+  let orgLink = $state(organizerLink(doc.id));
+  let hs = $state<HelpersState | null>(null);
+  let hsError = $state('');
+  let helperName = $state('');
+  /** The link just made: shown once (the sheet keeps only a hash). */
+  let fresh = $state<{ name: string; link: string } | null>(null);
+  const oldScript = $derived(hsError === UPDATE_SCRIPT);
+
+  $effect(() => {
+    if (!app.store.helpers) return;
+    app.store.helpers(doc.id).then(
+      (r) => (hs = r),
+      (e) => (hsError = errorText(e)),
+    );
+  });
+
+  async function helperChange(run: () => Promise<HelpersState>, done?: string) {
+    busy = true;
+    try {
+      hs = await run();
+      if (done) app.notify(done);
+      return true;
+    } catch (e) {
+      app.notify(errorText(e), 'error');
+      return false;
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function addHelper() {
+    const name = helperName.trim();
+    if (!name || !app.store.addHelper) return;
+    let link = '';
+    const ok = await helperChange(async () => {
+      const r = await app.store.addHelper!(doc.id, name);
+      link = r.link;
+      return r;
+    });
+    if (ok) {
+      fresh = { name, link };
+      helperName = '';
+    }
+  }
+
+  async function removeHelper(id: string, name: string) {
+    if (!app.store.removeHelper || !confirm(`Remove ${name}? Their helper link stops working at once.`)) return;
+    if (await helperChange(() => app.store.removeHelper!(doc.id, id), `${name} can't edit any more`) && fresh?.name === name) fresh = null;
+  }
+
+  async function resetKey() {
+    if (!app.store.resetOrgKey) return;
+    const sure = confirm(
+      'Make a new organizer link? Every old copy of your organizer link stops working, including old helper links shared before ' +
+        "helpers got their own. This device keeps editing; on your other devices, open the new link or log in.",
+    );
+    if (sure && (await helperChange(() => app.store.resetOrgKey!(doc.id), 'New organizer link made: old copies stopped working'))) {
+      orgLink = organizerLink(doc.id);
+    }
+  }
+  const added = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
   const started = $derived(Object.keys(doc.results).length > 0);
 
   let pins = $state<Record<string, string> | null>(null);
@@ -98,14 +160,58 @@
   </div>
 
   <div class="item">
-    <div class="label">Helper link</div>
-    {#if helper}
-      <p class="small muted"><b>Anyone with this link can edit this tournament.</b> Only send it to people helping you run it.</p>
-      <div class="row"><code class="secret">{helper}</code><button class="small" onclick={() => copy(helper)}>Copy</button></div>
+    <div class="label">Helpers</div>
+    {#if oldScript}
+      {#if orgLink}
+        <p class="small muted"><b>Anyone with this link can edit this tournament.</b> Only send it to people helping you run it.</p>
+        <div class="row"><code class="secret">{orgLink}</code><button class="small" onclick={() => copy(orgLink!)}>Copy</button></div>
+      {/if}
+      <p class="small muted">Separate helper links you can take back: {UPDATE_SCRIPT}</p>
+    {:else if hsError}
+      <p class="small warn">{hsError}</p>
+    {:else if !hs}
+      <p class="small muted">Loading…</p>
+    {:else if hs.you === 'helper'}
+      <p class="small muted">You're a helper here: you can run the tournament but not delete it. The organizer can take this device's access away.</p>
     {:else}
-      <p class="small muted">You're editing as the site admin. The helper link is on the organizer's device.</p>
+      <p class="small muted">
+        Each helper gets their own link. Helpers can do everything except delete the tournament or change helpers.
+        Remove someone and their link stops working at once.
+      </p>
+      {#if hs.helpers.length}
+        <ul class="helpers">
+          {#each hs.helpers as h (h.id)}
+            <li>
+              <span><b>{h.name}</b> <span class="muted small">added {added(h.at)}</span></span>
+              <button class="small" disabled={busy} onclick={() => removeHelper(h.id, h.name)}>Remove</button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      {#if fresh}
+        <div class="fresh">
+          <p class="small"><b>Link for {fresh.name}.</b> Copy it now and send it to them: it isn't shown again.</p>
+          <div class="row"><code class="secret">{fresh.link}</code><button class="small" onclick={() => copy(fresh!.link)}>Copy</button></div>
+        </div>
+      {/if}
+      <form class="row" onsubmit={(e) => { e.preventDefault(); addHelper(); }}>
+        <input bind:value={helperName} maxlength="40" placeholder="Helper's name" autocomplete="off" aria-label="Helper's name" />
+        <button class="small" type="submit" disabled={busy || !helperName.trim()}>Make helper link</button>
+      </form>
     {/if}
   </div>
+
+  {#if !oldScript && hs?.you === 'main' && orgLink}
+    <div class="item">
+      <div class="label">Your organizer link</div>
+      <p class="small muted">Opens editing on your own other devices. Don't share it: give other people a helper link.</p>
+      <div class="row"><code class="secret">{orgLink}</code><button class="small" onclick={() => copy(orgLink!)}>Copy</button></div>
+      <p class="small muted">Sent it to someone, or shared an old helper link? Make a new one: every old copy stops working.</p>
+      <button class="small" disabled={busy} onclick={resetKey}>Make a new organizer link</button>
+    </div>
+  {:else if hs?.you === 'staff'}
+    <p class="small muted">You're editing as staff. The organizer link is on the organizer's device.</p>
+  {/if}
 
   <div class="item">
     <label class="check">
@@ -199,6 +305,9 @@
     border-radius: var(--radius);
   }
   .pins { max-width: 360px; }
+  .helpers { list-style: none; margin: 4px 0; padding: 0; border-top: 1px solid var(--line); max-width: 480px; }
+  .helpers li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .fresh { border: 1px solid var(--accent); border-radius: var(--radius); padding: 8px 10px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
   .max { width: 120px; }
   .row input:not(.max) { flex: 1; min-width: 0; }
   .warn { color: var(--warn); }

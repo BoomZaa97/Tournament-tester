@@ -32,7 +32,8 @@ Made because Challonge made fixing wrong results hard.
 | Role | Proof sent to Code.gs | Rights |
 |---|---|---|
 | Site admin | `key` = `ADMIN_KEY` | Everything; only one who can rename players, clean up unused players (`prunePlayers`: no tournament, no account; Admin page) or import backups |
-| Organizer / helper | `orgKey` (random, made by the creator's browser, `tt.keys.v1`); sheet stores only `Tournaments.orgKeyHash` (SHA-256) | Save/delete that tournament, `pins`. Helper link = `#/t/<id>/org/<key>` |
+| Organizer | `orgKey` (random, made by the creator's browser, `tt.keys.v1`); sheet stores only `Tournaments.orgKeyHash` (SHA-256) | Save/delete that tournament, `pins`, manage helpers. Own-device link = `#/t/<id>/org/<key>` |
+| Helper | Their own `orgKey` (same `tt.keys.v1`, same `#/t/<id>/org/<key>` link); sheet stores `{id, name, hash, at}` in hidden `Tournaments.helpers` | Everything the organizer can except delete the tournament or manage helpers |
 | Player | 6-digit `Entrants.pin` (`tt.pins.v1`); never in GET responses; guessing limited per tournament (`pinOwner` / `PIN_LIMIT`: 10 wrong in 10 min or 40 in 6 h → all PINs refused, counts in CacheService; account `claims` count too, max 50) | `signup` (only while `signup` is on and no results), `report` (own match, no result yet) |
 
 - Anyone can create: a new tournament (`version` 0) is accepted with any `orgKey` ≥ 16 chars.
@@ -122,9 +123,17 @@ Made because Challonge made fixing wrong results hard.
   switch, Majors column. Player page: a rank card per game and per category they played, rating chart
   (`components/RatingChart.svelte`), leaderboard around them, "By event size" honours table, tournaments with tier tag and
   points (filter chips), medals, recent form, head-to-head.
-- Rankings are per game: game chips at the top (most played first, default = most played, "All games" last), category chips
-  under them, link `#/players/<game>` (`all-games` = every game; chips use `history.replaceState`, no reload). Home "Top
-  players" and the Player page's Rating stat use the (player's) most played game.
+- Rankings are per game: game chips at the top ("Overview" first, then games most played first, "All games together"
+  last), category chips under them, link `#/players/<game>` (`all-games` = every game, `overview` = a card per game with
+  its top 5 and links to its categories; default = overview with 2+ games, else the one game; chips use
+  `history.replaceState`, no reload). Home "Top players" and the Player page's Rating stat use the (player's) most played game.
+- Helper links (Code.gs `helpers` action, `manageHelpers`; `organizerKind` → 'main' | 'helper' | ''): no `op` = `{you, helpers}`
+  (no hashes; helpers get an empty list), `add` (name + `helperKey` made by the browser; NOT `key`, which `SheetsStore.call`
+  always overwrites with the admin key), `remove`, `reset` (`newKey`: new `orgKeyHash`, organizer only; old copies of the
+  organizer link, incl. old shared "helper links", stop working). Staff can list/remove (audited). `aboutMe` keeps any working
+  key (`keyKind`). Site: Share panel → Helpers (new link shown once). A request refused with the "Only the organizer…" error
+  while sending a key → `forgetOrgKey` + `KEY_GONE` message; `KEYS_CHANGED` event bumps `app.accountSync`, so
+  `Tournament.svelte`'s `canEdit` drops the Edit tab.
 - Official tournaments: `Tournaments.official` ('' | 'pending' | 'yes' | 'no', `officialOf`) + `officialNote`. Organizer
   `requestOfficial` (org key; `cancel` withdraws), staff `setOfficial` (perm 'tournaments', audited). Saves never change it
   (`saveTournament` copies unknown stored columns). `isOfficial(t)`, `OfficialTag` badge, `components/OfficialPanel.svelte`

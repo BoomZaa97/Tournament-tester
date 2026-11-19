@@ -45,7 +45,10 @@
   }
 
   /** Organizer or helper of this tournament on this device, or the site admin. */
-  const canEdit = $derived(app.store.canEdit(id));
+  const canEdit = $derived.by(() => {
+    void app.accountSync; // the account brought a key, or this device lost one
+    return app.store.canEdit(id);
+  });
 
   // What this device saw last time: shown at once while the sheet answers (4–6 s).
   const cached = app.store.peek(id);
