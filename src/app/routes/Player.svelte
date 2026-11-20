@@ -109,7 +109,11 @@
     const d = data;
     const mine = new Set(stats.tournaments.map((t) => t.id));
     const scopes: { game: string; category: string }[] = [];
-    for (const game of [...new Set(stats.tournaments.map((t) => t.game))].sort()) {
+    // most played first (the same game as the Rating stat at the top), then A–Z
+    const played = new Map<string, number>();
+    for (const t of stats.tournaments) played.set(t.game, (played.get(t.game) ?? 0) + 1);
+    const games = [...played.keys()].sort((a, b) => played.get(b)! - played.get(a)! || a.localeCompare(b));
+    for (const game of games) {
       scopes.push({ game, category: '' });
       const inGame = d.tournaments.filter((t) => t.game === game);
       const cats = new Set(inGame.filter((t) => mine.has(t.id)).map(categoryOf).filter(Boolean));

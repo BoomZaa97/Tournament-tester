@@ -45,8 +45,11 @@
   const top = $derived.by(() => {
     if (!tournaments?.length) return [];
     const me = app.account?.playerId;
-    return ranked(rankings(tournaments.filter((t) => !topGame || t.game === topGame), players).values(), 'rating')
-      .filter((r) => r.rank !== null)
+    const rows = ranked(rankings(tournaments.filter((t) => !topGame || t.game === topGame), players).values(), 'rating');
+    // nobody has enough matches yet (a new site): show the leaders anyway, marked as still settling
+    const anyRanked = rows.some((r) => r.rank !== null);
+    return rows
+      .filter((r) => r.rank !== null || (!anyRanked && r.rated > 0))
       .slice(0, 5)
       .map((r) => ({ ...r, anon: !!r.player.unranked && r.player.id !== me }));
   });
@@ -123,7 +126,7 @@
                 <span class="small muted">{[r.t.game, FORMAT_LABEL[r.t.format]].filter(Boolean).join(' · ')}</span>
                 <span class="prog small num">
                   <span class="bar" aria-hidden="true"><span style="width: {r.total ? (100 * r.played) / r.total : 0}%"></span></span>
-                  {r.played}/{r.total}
+                  {r.played} of {r.total}
                 </span>
               </li>
             {/each}
@@ -182,12 +185,13 @@
           <ol class="top">
             {#each top as r (r.player.id)}
               <li>
-                <span class="rk num">{r.rank}</span>
+                <span class="rk num">{r.rank ?? '–'}</span>
                 <span class="pl">{#if r.anon}<span class="muted">Anonymous</span>{:else}<a href="#/p/{r.player.id}">{r.player.name}</a><Verified id={r.player.id} />{/if}</span>
-                <span class="num rt">{Math.round(r.rating)}</span>
+                <span class="num rt" class:settling={r.rank === null}>{Math.round(r.rating)}</span>
               </li>
             {/each}
           </ol>
+          {#if top[0].rank === null}<p class="small muted settle">Nobody is ranked yet: grey ratings are still settling.</p>{/if}
           <a class="small more-link" href={topGame ? `#/players/${encodeURIComponent(topGame)}` : '#/players'}>Full rankings →</a>
         </section>
       {/if}
@@ -275,7 +279,9 @@
   .lines a:not(.btn):hover { text-decoration: underline; }
   .lines a.tname { font: 700 19px/1.15 var(--font-cond); text-transform: uppercase; }
   .champ { font: 700 17px var(--font-cond); text-transform: uppercase; }
-  .prog { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); }
+  .prog { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); white-space: nowrap; }
+  .bar { width: 48px; height: 5px; background: var(--line); border-radius: 1px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: var(--accent); }
 
   .top li { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); }
   .top .pl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -283,6 +289,8 @@
   .top .rk { font: 700 17px var(--font-cond); color: var(--muted); }
   .top li:first-child .rk { color: var(--accent); }
   .top .rt { font-weight: 600; }
+  .top .rt.settling { color: var(--muted); }
+  .settle { margin: 6px 0 0; }
   .more-link { display: inline-block; margin-top: 8px; }
   .sec > p.small { margin: 8px 0 4px; }
 

@@ -74,9 +74,20 @@ function doGet(e) {
     var action = p.action || 'all';
     tidyOnce();
     // lite: without each tournament's log (the biggest part), for lists and player pages
-    if (action === 'all') return readAll(!!p.lite);
+    if (action === 'all') {
+      return cachedRead(p.lite ? 'all-lite' : 'all', function () {
+        return readAll(!!p.lite);
+      });
+    }
     // since: the updatedAt the page already has; if nothing changed, only { same: true } comes back
-    if (action === 'get') return readTournament(p.id, p.since);
+    if (action === 'get') {
+      var one = cachedRead('get:' + p.id, function () {
+        return readTournament(p.id);
+      });
+      var tt = one.tournament;
+      if (p.since && tt && tt.code && String(tt.updatedAt) === String(p.since)) return { same: true };
+      return one;
+    }
     if (action === 'players') return { players: readPlayers(readTable('Players'), readTable('Accounts')) };
     if (action === 'code') return findByCode(e.parameter.code);
     if (action === 'profile') return readProfile(p.id, false);
@@ -184,12 +195,102 @@ function doPost(e) {
 
 function handle(fn) {
   var out;
+  WROTE = false;
   try {
     out = fn();
   } catch (err) {
     out = { error: err && err.message ? err.message : String(err) };
   }
+  // after every write (even a failed request's), old cached copies of the sheet are no longer used
+  if (WROTE) dataChanged();
   return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// ------------------------------------------------------------------ read cache
+
+/**
+ * Public reads (`GET all`, `GET get`) are kept in CacheService for a few minutes, so a busy event's
+ * viewers don't each read the whole sheet (and the script answers them much faster). Cache keys carry
+ * a stamp that every write changes (`putRows` / `deleteRows` set WROTE, `handle` calls dataChanged,
+ * hand edits go through onEdit), so nobody is ever served a copy from before a change. The stamp is
+ * read BEFORE the sheet, so a copy made while a write was happening is filed under the old stamp.
+ * Big answers are split into pieces (CacheService keeps at most 100 KB per value).
+ */
+var WROTE = false;
+var READ_CACHE_SECS = 300;
+var CACHE_PIECE = 30000; // characters; up to 3 bytes each
+var CACHE_PIECES_MAX = 150;
+
+function readCache() {
+  try {
+    return CacheService.getScriptCache();
+  } catch (e) {
+    return null;
+  }
+}
+
+function dataStamp(cache) {
+  var s = cache.get('data-stamp');
+  if (!s) {
+    s = Utilities.getUuid().slice(0, 8);
+    cache.put('data-stamp', s, 21600);
+  }
+  return s;
+}
+
+function dataChanged() {
+  var cache = readCache();
+  try {
+    if (cache) cache.put('data-stamp', Utilities.getUuid().slice(0, 8), 21600);
+  } catch (e) {
+    // the copies run out within READ_CACHE_SECS anyway
+  }
+}
+
+function cachedRead(name, compute) {
+  var cache = readCache();
+  var base = '';
+  try {
+    if (cache) base = 'read:' + dataStamp(cache) + ':' + name;
+  } catch (e) {
+    cache = null;
+  }
+  if (!cache) return compute();
+  try {
+    var count = Number(cache.get(base));
+    if (count > 0) {
+      var keys = [];
+      for (var i = 0; i < count; i++) keys.push(base + ':' + i);
+      var got = cache.getAll(keys);
+      var parts = keys.map(function (k) {
+        return got[k];
+      });
+      if (parts.every(function (x) {
+        return typeof x === 'string';
+      })) {
+        return JSON.parse(parts.join(''));
+      }
+    }
+  } catch (e) {
+    // fall through: read the sheet
+  }
+  var out = compute();
+  // nothing was written while answering (ensureCodes may write): keep a copy
+  if (!WROTE && !out.error) {
+    try {
+      var text = JSON.stringify(out);
+      var n = Math.max(1, Math.ceil(text.length / CACHE_PIECE));
+      if (n <= CACHE_PIECES_MAX) {
+        var pieces = {};
+        for (var j = 0; j < n; j++) pieces[base + ':' + j] = text.slice(j * CACHE_PIECE, (j + 1) * CACHE_PIECE);
+        cache.putAll(pieces, READ_CACHE_SECS);
+        cache.put(base, String(n), READ_CACHE_SECS);
+      }
+    } catch (e) {
+      // too big or the cache is busy: just don't keep it
+    }
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------ reads
@@ -223,6 +324,7 @@ function readPlayers(players, accounts) {
 
 /** One tournament and its players. Reads only that tournament's rows. */
 function readTournament(id, since) {
+  // (GET get passes no `since`: it compares against the cached answer instead)
   var data = loadOne(id);
   var t = findTournament(data.Tournaments, id);
   if (!t) return { tournament: null };
@@ -2301,6 +2403,7 @@ function setNews(body, actor) {
   }
   site.news = news;
   PropertiesService.getScriptProperties().setProperty('SITE', JSON.stringify(site));
+  WROTE = true; // the site settings are part of GET all
   return { site: publicSite() };
 }
 
@@ -2312,6 +2415,7 @@ function setSite(body, actor) {
     audit(actor, 'Changed security setting', 'Who can create tournaments', site.lockCreate ? 'Only organizers and staff' : 'Anyone');
   }
   PropertiesService.getScriptProperties().setProperty('SITE', JSON.stringify(site));
+  WROTE = true; // the site settings are part of GET all
   return { site: publicSite() };
 }
 
@@ -2506,6 +2610,7 @@ function readBlock(name, id) {
 /** Write rows starting at sheet row `row` (as plain text, so "007" stays "007"). */
 function putRows(sheet, row, headers, rows) {
   if (!rows.length) return;
+  WROTE = true;
   var values = rows.map(function (r) {
     return headers.map(function (h) {
       return h ? safe(r[h]) : '';
@@ -2519,6 +2624,7 @@ function putRows(sheet, row, headers, rows) {
 /** Sheets refuses to delete every row under a frozen header, so keep one empty row if needed. */
 function deleteRows(sheet, row, n) {
   if (n <= 0) return;
+  WROTE = true;
   if (sheet.getMaxRows() - n < 2) sheet.insertRowsAfter(sheet.getMaxRows(), 1);
   sheet.deleteRows(row, n);
 }
@@ -2615,7 +2721,10 @@ function writeTable(name, rows) {
   // write first, then clear what's left below, so a failure never leaves the tab empty
   putRows(sheet, 2, headers, rows);
   var extra = last - 1 - rows.length;
-  if (extra > 0) sheet.getRange(rows.length + 2, 1, extra, Math.max(sheet.getLastColumn(), headers.length)).clearContent();
+  if (extra > 0) {
+    WROTE = true;
+    sheet.getRange(rows.length + 2, 1, extra, Math.max(sheet.getLastColumn(), headers.length)).clearContent();
+  }
 }
 
 // ------------------------------------------------------------------ keeping the sheet tidy
@@ -2695,6 +2804,7 @@ function onEdit(e) {
         ts.getRange(r, u + 1, 1, 1).setNumberFormat('@').setValues([[now]]);
       });
     });
+    dataChanged(); // pages stop getting the cached copy from before this edit
   } catch (err) {
     // never get in the way of editing
   }

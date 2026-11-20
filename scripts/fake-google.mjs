@@ -121,6 +121,9 @@ export function fakeGoogle({ adminKey = 'secret', codePath = 'apps-script/Code.g
         get: (k) => cached(k),
         getAll: (ks) => Object.fromEntries(ks.filter((k) => cached(k) !== null).map((k) => [k, cached(k)])),
         put: (k, v, secs = 600) => void cache.set(k, { value: String(v), expires: clock + Math.min(secs, 21600) * 1000 }),
+        putAll: (o, secs = 600) => {
+          for (const [k, v] of Object.entries(o)) cache.set(k, { value: String(v), expires: clock + Math.min(secs, 21600) * 1000 });
+        },
         remove: (k) => void cache.delete(k),
       }),
     },

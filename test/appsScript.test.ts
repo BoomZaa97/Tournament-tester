@@ -1125,6 +1125,42 @@ describe('Google Sheets backend (Code.gs)', () => {
       expect(g.get({ action: 'get', id: 't1' }).tournament.division).toBe('');
     });
 
+    it('public reads come from the cache until anything changes', () => {
+      const g = fakeGoogle();
+      g.post({ key: 'secret', action: 'save', tournament: doc, players: doc.entrants });
+      // count how often the sheet is really read
+      let reads = 0;
+      const tab = g.ctx.SpreadsheetApp as { getActiveSpreadsheet: () => { getSheetByName: (n: string) => unknown } };
+      const real = tab.getActiveSpreadsheet;
+      tab.getActiveSpreadsheet = () => {
+        reads++;
+        return real();
+      };
+      const first = g.get({ action: 'all', lite: '1' });
+      const afterFirst = reads;
+      expect(afterFirst).toBeGreaterThan(0);
+      expect(g.get({ action: 'all', lite: '1' })).toEqual(first);
+      expect(reads).toBe(afterFirst); // second time: no sheet read at all
+      const one = g.get({ action: 'get', id: 't1' });
+      expect(g.get({ action: 'get', id: 't1', since: one.tournament.updatedAt })).toEqual({ same: true });
+
+      // a save, a player's sign-up (any write) and a site setting all show up at once
+      g.post({ key: 'secret', action: 'save', tournament: { ...one.tournament, name: 'Saturday' }, players: [] });
+      expect(g.get({ action: 'all', lite: '1' }).tournaments[0].name).toBe('Saturday');
+      expect(g.get({ action: 'get', id: 't1', since: one.tournament.updatedAt }).tournament.name).toBe('Saturday');
+      g.post({ key: 'secret', action: 'site', lockCreate: true });
+      expect(g.get({ action: 'all', lite: '1' }).site.lockCreate).toBe(true);
+
+      // a read that fails isn't kept; big answers are kept in pieces
+      const many = Array.from({ length: 400 }, (_, i) => ({ id: 'x' + i, name: 'Player with a long name ' + i }));
+      g.post({ key: 'secret', action: 'save', tournament: { ...doc, id: 't2', entrants: many, results: {}, log: [] }, players: many });
+      const big = g.get({ action: 'all', lite: '1' });
+      expect(JSON.stringify(big).length).toBeGreaterThan(30000);
+      const before = reads;
+      expect(g.get({ action: 'all', lite: '1' })).toEqual(big);
+      expect(reads).toBe(before);
+    });
+
     it('stores the event size (major, semi, small); anything else is small', () => {
       const g = fakeGoogle();
       g.post({ key: 'secret', action: 'save', tournament: { ...doc, tier: 'major' } });
@@ -1135,6 +1171,7 @@ describe('Google Sheets backend (Code.gs)', () => {
       // typed by hand in the sheet
       const col = g.sheets.get('Tournaments')![0].indexOf('tier');
       g.sheets.set('Tournaments', 1, col, ' Semi ');
+      (g.ctx.onEdit as (e: unknown) => void)({ range: g.tab('Tournaments').getRange(2, col + 1) });
       expect(g.get({ action: 'get', id: 't1' }).tournament.tier).toBe('semi');
     });
 

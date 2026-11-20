@@ -124,7 +124,7 @@
   <div class="top">
     <div>
       <h1>Tournaments</h1>
-      {#if tournaments}<p class="muted sub">{counts.all} in total{#if counts.running} · {counts.running} in progress{/if}</p>{/if}
+      {#if tournaments}<p class="muted sub">{counts.all} in total{#if counts.running}{` · ${counts.running} in progress`}{/if}</p>{/if}
     </div>
     {#if canCreate}<a class="btn primary" href="#/new">New tournament</a>{/if}
   </div>

@@ -95,7 +95,8 @@ Made because Challonge made fixing wrong results hard.
   Rankings filter by both; with no filters, verified players without matches are listed as not ranked yet.
 - Create: sign-up is on by default in shared mode and no entrants are required (the page waits for 2).
 - Home (`routes/Home.svelte`, `#/`): plain "results sheet" front page, no marketing hero / step lists / stat cards.
-  Masthead (date line, "Tournaments & results", counts, New tournament). Left: On now, Taking sign-ups, Latest results
+  Masthead (date line, "Tournaments & results", counts, New tournament). Top players shows the
+  leaders greyed ("still settling") while nobody has PROVISIONAL rated matches yet. Left: On now, Taking sign-ups, Latest results
   (or a short "Nothing here yet" text). Right: join-code box, Top players (most played game), Official. Then the 6 most
   recent tournaments + link to the Tournaments page. No nav item is highlighted on Home (the brand links to it).
 - Tournaments page (`routes/Tournaments.svelte`, `#/tournaments`, nav "Tournaments"): status tabs with counts, search,
@@ -197,6 +198,13 @@ Other details:
   (`lib/saveQueue.ts`: one at a time, each sent with the last server `version`, waiting for the first load; a failure drops
   the queue, puts back `queue.confirmed` and reloads). Player report/confirm still wait for the sheet (PIN checks).
   `SHEET_DELAY=5000 npm run sheet:fake` mimics the slowness; `GET /fail?n=1` on it makes the next save fail.
+- Read cache (Code.gs "read cache"): `GET all` (lite and full) and `GET get` answers are kept in CacheService for 5 min
+  (`cachedRead`, split into 30k-char pieces), keyed by a `data-stamp`. `putRows` / `deleteRows` / `writeTable` clears and SITE
+  writes set `WROTE`; `handle` then calls `dataChanged()` (new stamp), and `onEdit` calls it for hand edits, so a change is
+  never hidden. The stamp is read before the sheet. `get&since` compares against the cached answer. Tests that edit the fake
+  sheet by hand must call `onEdit` (like the real sheet does).
+- Link previews: static Open Graph tags in `index.html` + `public/og-card.png` (1200×630, drawn on a canvas in the site's
+  look). The image URL is absolute (the live Pages URL). CI runs `npm run typecheck` too.
 - `SheetsStore` POSTs as `text/plain` (no CORS preflight, which Apps Script can't answer). Saves carry a `version`;
   mismatch → `conflict` error → app reloads.
 - Svelte: don't name variables `state` in components (clashes with `$state`); the codebase uses `tstate`.
@@ -253,7 +261,7 @@ Push to `main` = deploy. Check UI changes in a real browser (Playwright, desktop
   on any GET for older rows. Public lookup `GET action=code&code=…`. LocalStore makes codes too. Poster: `#/t/<id>/poster`
   (`routes/Poster.svelte`, QR drawn by `components/QrCode.svelte` with `qrcode-generator`, always black on white).
 - Phone sign-up page `#/j/<id>` (`routes/Join.svelte`): the poster QR, the home page's code box and the share panel all point
-  here. Name → Join, then PIN / waitlist place, "I'm here", next match and scores to confirm (links to
+  here. Before the first result it lists "Who's in" (own name in accent, "here" after check-in, waitlist names). Name → Join, then PIN / waitlist place, "I'm here", next match and scores to confirm (links to
   `#/t/<id>/matches/<matchId>`, which opens that match). Nothing to do there (sign-up closed, no check-in, not a player on
   this device) → `location.replace` to the bracket.
 - Saves now return `assemble(...)` of what was stored (code, waitlist, check-ins), not the posted doc.

@@ -273,6 +273,21 @@
 
     {#if actionError}<p class="err">{actionError}</p>{/if}
 
+    {#if !results && doc.entrants.length}
+      <!-- before the start: people at the door look for their own name -->
+      <details class="whosin" open={doc.entrants.length <= 16}>
+        <summary>Who's in <span class="muted">({doc.entrants.length}{waiting ? ` + ${waiting} waiting` : ''})</span></summary>
+        <ol>
+          {#each doc.entrants as e (e.id)}
+            <li class:me={e.id === mine?.playerId}>{names.get(e.id) ?? e.name}{#if doc.checkIn && doc.checkedIn?.includes(e.id)}<span class="here">here</span>{/if}</li>
+          {/each}
+        </ol>
+        {#if waiting}
+          <p class="small muted">Waitlist: {(doc.waitlist ?? []).map((w) => w.name).join(', ')}</p>
+        {/if}
+      </details>
+    {/if}
+
     <a class="btn big" href={bracket}>{results ? 'Bracket and standings' : 'See the tournament page'}</a>
   {/if}
 </div>
@@ -298,6 +313,13 @@
   .pinline { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
   .pin { font: 700 40px/1 var(--font-cond); letter-spacing: 0.14em; color: var(--accent); font-variant-numeric: tabular-nums; }
   .big { min-height: 52px; font-size: 18px; width: 100%; }
+  .whosin { border-top: 1px solid var(--line); padding-top: 10px; }
+  .whosin summary { cursor: pointer; font: 700 15px var(--font-cond); letter-spacing: 0.08em; text-transform: uppercase; }
+  .whosin ol { margin: 8px 0 0; padding: 0 0 0 26px; columns: 2; column-gap: 20px; }
+  .whosin li { padding: 3px 0; break-inside: avoid; overflow-wrap: anywhere; }
+  .whosin li.me { font-weight: 700; color: var(--accent); }
+  .whosin p { margin: 8px 0 0; }
+  .here { margin-left: 6px; font: 600 11px var(--font-cond); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ok); }
   input.big { padding: 12px 14px; }
   .pinbox { letter-spacing: 0.2em; font-variant-numeric: tabular-nums; }
   .done { font-weight: 600; }
