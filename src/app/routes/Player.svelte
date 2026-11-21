@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { gameOf } from '../lib/games';
   import RatingChart from '../components/RatingChart.svelte';
   import TierTag from '../components/TierTag.svelte';
   import OfficialTag from '../components/OfficialTag.svelte';
@@ -87,10 +88,10 @@
   const overall = $derived.by(() => {
     if (!data || !stats) return null;
     const count = new Map<string, number>();
-    for (const t of stats.tournaments) count.set(t.game, (count.get(t.game) ?? 0) + 1);
+    for (const t of stats.tournaments) count.set(gameOf(t), (count.get(gameOf(t)) ?? 0) + 1);
     const game = [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
     if (game === undefined) return null;
-    const rows = rankings(data.tournaments.filter((t) => t.game === game), data.players);
+    const rows = rankings(data.tournaments.filter((t) => gameOf(t) === game), data.players);
     const list = ranked(rows.values(), 'rating');
     const conf = ranked(rows.values(), 'confirmed');
     const me = list.find((r) => r.player.id === id);
@@ -111,21 +112,22 @@
     const scopes: { game: string; category: string }[] = [];
     // most played first (the same game as the Rating stat at the top), then A–Z
     const played = new Map<string, number>();
-    for (const t of stats.tournaments) played.set(t.game, (played.get(t.game) ?? 0) + 1);
+    for (const t of stats.tournaments) played.set(gameOf(t), (played.get(gameOf(t)) ?? 0) + 1);
     const games = [...played.keys()].sort((a, b) => played.get(b)! - played.get(a)! || a.localeCompare(b));
     for (const game of games) {
       scopes.push({ game, category: '' });
-      const inGame = d.tournaments.filter((t) => t.game === game);
+      const inGame = d.tournaments.filter((t) => gameOf(t) === game);
       const cats = new Set(inGame.filter((t) => mine.has(t.id)).map(categoryOf).filter(Boolean));
       // a category card only says something new when the game has other tournaments too
       for (const category of [...cats].sort()) if (inGame.some((t) => categoryOf(t) !== category)) scopes.push({ game, category });
     }
     return scopes.map(({ game, category }) => {
-      const ts = d.tournaments.filter((t) => t.game === game && (!category || categoryOf(t) === category));
+      const ts = d.tournaments.filter((t) => gameOf(t) === game && (!category || categoryOf(t) === category));
       const list = ranked(rankings(ts, d.players).values(), 'rating');
       const me = list.find((r) => r.player.id === id)!;
       return {
         key: `${game}|${category}`,
+        game,
         label: (game || 'No game set') + (category ? ` · ${category}` : ''),
         me,
         list,
@@ -135,6 +137,12 @@
       };
     });
   });
+  /** Headline places: top 10 in a game (or a category of it), best first. Hidden for players who chose Anonymous. */
+  const topPlaces = $derived(
+    !stats || (stats.player.unranked && app.account?.playerId !== id)
+      ? []
+      : gameCards.filter((c) => c.me.rank !== null && c.me.rank <= 10).sort((a, b) => a.me.rank! - b.me.rank! || a.label.localeCompare(b.label)),
+  );
   let chartKey = $state<string | null>(null);
   const chartCard = $derived(gameCards.find((c) => c.key === chartKey) ?? gameCards.find((c) => c.me.history.length));
   /** The leaderboard around this player in the chosen game: two above, two below. */
@@ -302,6 +310,13 @@
     {#if stats.player.account}<p class="acct"><Verified id={stats.player.id} label /> <span class="small muted">This name belongs to the player's own account. Nobody else can use it.</span></p>{/if}
     {#if stats.player.privateProfile && !profile}<p class="small muted">This player's profile is private.</p>{/if}
     {#if stats.player.privateProfile && profile}<p class="small muted">Private profile: only {app.account?.playerId === id ? 'you' : 'this player'} and staff can see the photo, bio and links.</p>{/if}
+    {#if topPlaces.length}
+      <ul class="topplaces" aria-label="Top places in the rankings">
+        {#each topPlaces as c (c.key)}
+          <li class:first={c.me.rank === 1}><a href="#/players/{encodeURIComponent(c.game)}"><b>No. {c.me.rank}</b> in {c.label}</a></li>
+        {/each}
+      </ul>
+    {/if}
     {#if stats.player.unranked}<p class="small muted">Shown as Anonymous in the rankings at the player's request.</p>{/if}
     {#if profile?.bio}<p class="bio">{profile.bio}</p>{/if}
     {#if profile?.links.length}
@@ -484,7 +499,7 @@
               <span class="tbody">
                 <span><a href="#/t/{t.id}">{t.name}</a> <TierTag tier={t.tier} /> <OfficialTag official={t.official ? 'yes' : ''} /></span>
                 <span class="muted small">
-                  {[t.game, t.category, t.division, `${t.entrants} entrants`].filter(Boolean).join(' · ')}{#if !t.finished}&nbsp;· in progress{/if}
+                  {[gameOf(t), t.category, t.division, `${t.entrants} entrants`].filter(Boolean).join(' · ')}{#if !t.finished}&nbsp;· in progress{/if}
                 </span>
               </span>
               {#if t.points}<span class="pts small">+{t.points}</span>{/if}
@@ -554,6 +569,15 @@
   .back { display: inline-block; margin-bottom: 8px; color: var(--muted); text-decoration: none; }
   .titlebar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .acct { margin: 2px 0 0; }
+  .topplaces { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .topplaces a {
+    display: inline-block; padding: 3px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius);
+    font: 600 15px var(--font-cond); letter-spacing: 0.03em; text-decoration: none; color: var(--ink-2);
+  }
+  .topplaces a:hover { border-color: var(--ink); color: var(--ink); }
+  .topplaces b { color: var(--ink); }
+  .topplaces .first a { border-color: var(--accent); }
+  .topplaces .first b { color: var(--accent); }
   .pid { margin: 2px 0 0; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
   .pid code { font-size: 13px; background: var(--card); border: 1px solid var(--line); padding: 1px 5px; border-radius: 3px; user-select: all; color: var(--ink); }
   .pid .linkish { background: none; border: 0; padding: 0; min-height: 0; color: var(--ink); text-decoration: underline; font: inherit; cursor: pointer; }

@@ -1,3 +1,4 @@
+import { gameOf } from './games';
 import { resolve } from '../../core';
 import type { EntrantId } from '../../core';
 import { categoryOf, divisionOf, finalPlaces, isOfficial, matchNumbers, statusOf, TIER_WEIGHT, tierOf, toState } from './model';
@@ -52,7 +53,7 @@ export interface RankFilter {
 export function filterTournaments(tournaments: TournamentDoc[], f: RankFilter): TournamentDoc[] {
   return tournaments.filter(
     (t) =>
-      (!f.game || t.game === f.game) &&
+      (!f.game || gameOf(t) === f.game) &&
       (!f.category || categoryOf(t) === f.category) &&
       (!f.division || divisionOf(t) === f.division) &&
       (!f.tier || tierOf(t) === f.tier) &&

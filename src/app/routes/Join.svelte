@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { gameOf } from '../lib/games';
   import { onDestroy } from 'svelte';
   import { resolve } from '../../core';
   import type { ResolvedMatch } from '../../core';
@@ -147,7 +148,7 @@
     <p class="muted">Loading…</p>
   {:else}
     <header>
-      <div class="label">{[doc.game, FORMAT_LABEL[doc.format]].filter(Boolean).join(' · ')}</div>
+      <div class="label">{[gameOf(doc), FORMAT_LABEL[doc.format]].filter(Boolean).join(' · ')}</div>
       <h1>{doc.name}</h1>
       <p class="spots">
         {#if results}

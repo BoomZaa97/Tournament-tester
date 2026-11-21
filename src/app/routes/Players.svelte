@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { canonicalGame, gameOf } from '../lib/games';
   import Verified from '../components/Verified.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import { categoryOf, divisionOf, isOfficial, OPEN, TIER_LABEL, TIER_WEIGHT, tierOf } from '../lib/model';
@@ -14,7 +15,8 @@
   const ALL = 'all-games';
   const OVERVIEW = 'overview';
   const fromLink = app.path[1] ?? '';
-  let game = $state(fromLink === ALL || fromLink === OVERVIEW ? '' : fromLink);
+  // #/players/cs2 opens CS2 too
+  let game = $state(fromLink === ALL || fromLink === OVERVIEW ? '' : canonicalGame(fromLink));
   let overview = $state(fromLink === OVERVIEW);
   let category = $state('');
   let division = $state('');
@@ -30,7 +32,7 @@
     if (picked || fromLink) return;
     // start on the game with the most tournaments: a rating across different games means little
     const count = new Map<string, number>();
-    for (const t of d.tournaments) if (t.game) count.set(t.game, (count.get(t.game) ?? 0) + 1);
+    for (const t of d.tournaments) if (gameOf(t)) count.set(gameOf(t), (count.get(gameOf(t)) ?? 0) + 1);
     const top = [...count].sort((a, b) => b[1] - a[1])[0]?.[0];
     if (top === undefined) return; // nothing yet (e.g. an empty copy from last time): wait for the sheet
     picked = true;
@@ -52,7 +54,7 @@
   // most played first
   const games = $derived.by(() => {
     const count = new Map<string, number>();
-    for (const t of all) if (t.game) count.set(t.game, (count.get(t.game) ?? 0) + 1);
+    for (const t of all) if (gameOf(t)) count.set(gameOf(t), (count.get(gameOf(t)) ?? 0) + 1);
     return [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([g]) => g);
   });
   function pickGame(g: string, c = '') {
@@ -90,7 +92,7 @@
       };
     });
   });
-  const inGame = $derived(all.filter((t) => !game || t.game === game));
+  const inGame = $derived(all.filter((t) => !game || gameOf(t) === game));
   const categories = $derived([...new Set(inGame.map(categoryOf).filter(Boolean))].sort());
   const inCategory = $derived(inGame.filter((t) => !category || categoryOf(t) === category));
   // Open first, then the rest A–Z

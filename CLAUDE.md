@@ -94,6 +94,14 @@ Made because Challonge made fixing wrong results hard.
   looks like an age group (`DIVISION_LIKE`: Open, U18…) counts as the division until the tournament is edited.
   Rankings filter by both; with no filters, verified players without matches are listed as not ranked yet.
 - Create: sign-up is on by default in shared mode and no entrants are required (the page waits for 2).
+- Games (`lib/games.ts`): rankings are per game, so a game is written one way. `GAMES` = built-in list (Esports / Sports /
+  Board & card games, with aliases: "cs2", "CSGO", "Counter-Strike 2" → CS2). Read a tournament's game ONLY with
+  `gameOf(t)` (maps old free-typed names; compare/group/show with it), never `t.game`. `canonicalGame(raw, used)` = list name
+  for a name/alias, else a spelling already used on the site (`gameKey`: case/spaces/punctuation ignored), else tidied as typed.
+  `components/GamePicker.svelte` (Create + Edit setup): select with "Played here" (`usedGames`), the list, "Other game…" →
+  required name ("Saved as CS2" hint). The game is required on Create and on Edit setup. Picking a listed game fills the
+  category (`categoryForGame`) unless the organizer typed one. Challonge import stores `canonicalGame(got.game)`. Links
+  `#/players/cs2` open CS2. Player page: "No. N in <game>" badges for top-10 places (not shown for Anonymous players).
 - Home (`routes/Home.svelte`, `#/`): plain "results sheet" front page, no marketing hero / step lists / stat cards.
   Masthead (date line, "Tournaments & results", counts, New tournament). Top players shows the
   leaders greyed ("still settling") while nobody has PROVISIONAL rated matches yet. Left: On now, Taking sign-ups, Latest results

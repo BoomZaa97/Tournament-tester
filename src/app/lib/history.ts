@@ -1,3 +1,4 @@
+import { gameOf } from './games';
 import { resolve } from '../../core';
 import type { EntrantId } from '../../core';
 import { categoryOf, divisionOf, finalPlaces, isOfficial, matchNumbers, OPEN, roundName, statusOf, tierOf, toState } from './model';
@@ -62,7 +63,7 @@ export function buildHistory(tournaments: TournamentDoc[], players: Player[]): M
       const place = places.get(e.id) ?? null;
       const tier = tierOf(t);
       s.tournaments.push({
-        id: t.id, name: t.name, game: t.game, category: categoryOf(t), division: divisionOf(t) === OPEN ? '' : divisionOf(t), tier, official: isOfficial(t), place, finished, at: t.createdAt,
+        id: t.id, name: t.name, game: gameOf(t), category: categoryOf(t), division: divisionOf(t) === OPEN ? '' : divisionOf(t), tier, official: isOfficial(t), place, finished, at: t.createdAt,
         points: finished && place ? eventPoints(place, tier) : 0, entrants: t.entrants.length,
       });
       if (place === 1 && finished) s.titles++;
@@ -81,7 +82,7 @@ export function buildHistory(tournaments: TournamentDoc[], players: Player[]): M
         s.matches.push({
           tournamentId: t.id,
           tournamentName: t.name,
-          game: t.game,
+          game: gameOf(t),
           matchNo: numbers.get(m.template.id) ?? 0,
           round: roundName(m.template, state.structure.matches, t.format),
           opponent: other,

@@ -10,6 +10,9 @@
   import { nameKey } from '../lib/players';
   import EntrantEditor from './EntrantEditor.svelte';
   import FormatFields from './FormatFields.svelte';
+  import GamePicker from './GamePicker.svelte';
+  import { app } from '../lib/app.svelte';
+  import { gameOf, usedGames } from '../lib/games';
 
   interface Props {
     doc: TournamentDoc;
@@ -21,7 +24,8 @@
   let { doc, known, names, onapply, ondelete }: Props = $props();
 
   let name = $state(doc.name);
-  let game = $state(doc.game);
+  let game = $state(gameOf(doc));
+  const used = usedGames(app.store.peekAll()?.tournaments ?? []);
   // an old "Category: U18" shows up as the division here, and moves there when saved
   let category = $state(categoryOf(doc));
   let division = $state(divisionOf(doc) === OPEN ? '' : divisionOf(doc));
@@ -35,6 +39,7 @@
   const plan = $derived.by(() => {
     const live = rows.filter((r) => r.name.trim());
     const lower = live.map((r) => nameKey(r.name));
+    if (!game) return { error: 'Pick the game: each game has its own ranking.' };
     if (live.length < 2) return { error: 'A tournament needs at least 2 entrants.' };
     if (new Set(lower).size !== lower.length) return { error: 'Two entrants have the same name.' };
 
@@ -76,7 +81,7 @@
     if (JSON.stringify(options) !== JSON.stringify(doc.options)) notes.push('options changed');
     if (JSON.stringify(scoring) !== JSON.stringify(doc.scoring)) notes.push('scoring changed');
     if (name.trim() !== doc.name) notes.push('renamed');
-    if (game.trim() !== doc.game) notes.push('game changed');
+    if (game !== gameOf(doc)) notes.push(`game → ${game}`);
     if (category.trim() !== categoryOf(doc)) notes.push('category changed');
     if ((cleanDivision(division) ?? OPEN) !== divisionOf(doc)) notes.push(`division → ${cleanDivision(division) ?? OPEN}`);
     if (tier !== tierOf(doc)) notes.push(`now a ${TIER_LABEL[tier].toLowerCase()}`);
@@ -103,7 +108,7 @@
     const next: TournamentDoc = {
       ...doc,
       name: name.trim(),
-      game: game.trim(),
+      game,
       category: category.trim() || undefined,
       division: cleanDivision(division),
       tier,
@@ -122,7 +127,7 @@
   <div class="cols">
     <div class="col">
       <label class="field"><span>Name</span><input bind:value={name} /></label>
-      <label class="field"><span>Game</span><input bind:value={game} /></label>
+      <div class="field"><label for="edit-game">Game</label><GamePicker bind:game {used} id="edit-game" /></div>
       <label class="field">
         <span>Category <span class="muted">(optional: Esports, Sports…)</span></span>
         <input bind:value={category} placeholder="None" maxlength="40" list="edit-categories" />

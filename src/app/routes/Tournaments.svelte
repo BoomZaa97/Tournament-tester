@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { gameOf } from '../lib/games';
   import { app, errorText } from '../lib/app.svelte';
   import TournamentRows from '../components/TournamentRows.svelte';
   import { categoryOf, divisionOf, FORMAT_LABEL, OPEN, summaryOf, TIER_LABEL, tierOf } from '../lib/model';
@@ -62,8 +63,8 @@
   const summaries = $derived((tournaments ?? []).map((t) => ({ t, ...summaryOf(t) })));
   const all = $derived(summaries.map((r) => r.t));
   const uniq = (xs: string[]) => [...new Set(xs.filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  const games = $derived(uniq(all.map((t) => t.game)));
-  const categories = $derived(uniq(all.filter((t) => !f.game || t.game === f.game).map(categoryOf)));
+  const games = $derived(uniq(all.map((t) => gameOf(t))));
+  const categories = $derived(uniq(all.filter((t) => !f.game || gameOf(t) === f.game).map(categoryOf)));
   const divisions = $derived(
     [...new Set(all.map(divisionOf))].sort((a, b) => Number(b === OPEN) - Number(a === OPEN) || a.localeCompare(b)),
   );
@@ -88,14 +89,14 @@
     const list = summaries.filter(
       ({ t, status }) =>
         (f.status === 'all' || status === f.status) &&
-        (!f.game || t.game === f.game) &&
+        (!f.game || gameOf(t) === f.game) &&
         (!f.category || categoryOf(t) === f.category) &&
         (!f.division || divisionOf(t) === f.division) &&
         (!f.tier || tierOf(t) === f.tier) &&
         (!f.format || t.format === f.format) &&
         (!f.official || t.official === 'yes') &&
         (!f.signup || (status === 'setup' && !!t.signup)) &&
-        (!needle || [t.name, t.game, categoryOf(t), t.code].some((s) => s?.toLowerCase().includes(needle))),
+        (!needle || [t.name, gameOf(t), categoryOf(t), t.code].some((s) => s?.toLowerCase().includes(needle))),
     );
     const by: Record<Sort, (a: (typeof list)[number], b: (typeof list)[number]) => number> = {
       recent: (a, b) => b.t.updatedAt.localeCompare(a.t.updatedAt),

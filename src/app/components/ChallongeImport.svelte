@@ -2,6 +2,7 @@
   import TierPicker from './TierPicker.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import { fromChallonge } from '../lib/challonge';
+  import { canonicalGame } from '../lib/games';
   import type { ChTournament, Imported } from '../lib/challonge';
   import { emptyDoc, FORMAT_LABEL, logEntry } from '../lib/model';
   import type { Player, Tier } from '../lib/model';
@@ -42,7 +43,7 @@
         {
           ...doc,
           name: got.name,
-          game: got.game,
+          game: canonicalGame(got.game ?? ''),
           tier,
           format: got.format,
           options: got.options,

@@ -167,7 +167,7 @@ input, select, textarea {
 textarea { resize: vertical; line-height: 1.5; }
 
 .field { display: grid; gap: 6px; }
-.field > span { font-weight: 600; font-size: 14px; }
+.field > span, .field > label { font-weight: 600; font-size: 14px; }
 .check { display: flex; align-items: center; gap: 8px; font-size: 15px; cursor: pointer; }
 .check input { width: 18px; height: 18px; min-height: 0; accent-color: var(--accent); }
 

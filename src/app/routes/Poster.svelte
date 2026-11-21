@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { gameOf } from '../lib/games';
   import QrCode from '../components/QrCode.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import { FORMAT_LABEL, scriptOutdated, UPDATE_SCRIPT } from '../lib/model';
@@ -37,7 +38,7 @@
       <p class="notice small no-print">No join code yet: {UPDATE_SCRIPT} The QR code works already.</p>
     {/if}
     <article class="poster">
-      <div class="label">{[doc.game, FORMAT_LABEL[doc.format]].filter(Boolean).join(' · ')}</div>
+      <div class="label">{[gameOf(doc), FORMAT_LABEL[doc.format]].filter(Boolean).join(' · ')}</div>
       <h1>{doc.name}</h1>
       <p class="lead">{doc.signup ? 'Playing? Scan to sign up and get your PIN.' : 'Scan to follow the bracket and report your scores.'}</p>
       <div class="qr"><QrCode text={link} label="QR code for {doc.name}" /></div>

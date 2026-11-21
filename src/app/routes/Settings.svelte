@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { gameOf } from '../lib/games';
   import Verified from '../components/Verified.svelte';
   import { app } from '../lib/app.svelte';
   import { getPrefs, savePrefs } from '../lib/prefs';
@@ -113,7 +114,7 @@
         {#each organizing as o (o.id)}
           <li>
             <a href="#/t/{o.id}">{o.t?.name ?? 'Tournament ' + o.id}</a>
-            {#if o.t?.game}<span class="small muted">{o.t.game}</span>{/if}
+            {#if o.t && gameOf(o.t)}<span class="small muted">{gameOf(o.t)}</span>{/if}
             <span class="spacer"></span>
             <button class="small ghost" onclick={() => forget(o.id, o.t?.name ?? o.id)}>Stop editing here</button>
           </li>

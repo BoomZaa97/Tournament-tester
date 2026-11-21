@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { gameOf } from '../lib/games';
   import { app, errorText } from '../lib/app.svelte';
   import TournamentRows from '../components/TournamentRows.svelte';
   import Verified from '../components/Verified.svelte';
@@ -39,13 +40,13 @@
   // top players of the most played game (a rating only means something within one game)
   const topGame = $derived.by(() => {
     const count = new Map<string, number>();
-    for (const t of tournaments ?? []) if (t.game) count.set(t.game, (count.get(t.game) ?? 0) + 1);
+    for (const t of tournaments ?? []) if (gameOf(t)) count.set(gameOf(t), (count.get(gameOf(t)) ?? 0) + 1);
     return [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? '';
   });
   const top = $derived.by(() => {
     if (!tournaments?.length) return [];
     const me = app.account?.playerId;
-    const rows = ranked(rankings(tournaments.filter((t) => !topGame || t.game === topGame), players).values(), 'rating');
+    const rows = ranked(rankings(tournaments.filter((t) => !topGame || gameOf(t) === topGame), players).values(), 'rating');
     // nobody has enough matches yet (a new site): show the leaders anyway, marked as still settling
     const anyRanked = rows.some((r) => r.rank !== null);
     return rows
@@ -123,7 +124,7 @@
             {#each live as r (r.t.id)}
               <li>
                 <a class="tname" href="#/t/{r.t.id}">{r.t.name}</a>
-                <span class="small muted">{[r.t.game, FORMAT_LABEL[r.t.format]].filter(Boolean).join(' · ')}</span>
+                <span class="small muted">{[gameOf(r.t), FORMAT_LABEL[r.t.format]].filter(Boolean).join(' · ')}</span>
                 <span class="prog small num">
                   <span class="bar" aria-hidden="true"><span style="width: {r.total ? (100 * r.played) / r.total : 0}%"></span></span>
                   {r.played} of {r.total}
@@ -142,7 +143,7 @@
               <li>
                 <a class="tname" href="#/j/{r.t.id}">{r.t.name}</a>
                 <span class="small muted">
-                  {[r.t.game, `${r.t.entrants.length}${r.t.maxPlayers ? ` of ${r.t.maxPlayers}` : ''} signed up`].filter(Boolean).join(' · ')}
+                  {[gameOf(r.t), `${r.t.entrants.length}${r.t.maxPlayers ? ` of ${r.t.maxPlayers}` : ''} signed up`].filter(Boolean).join(' · ')}
                 </span>
                 <a class="btn small" href="#/j/{r.t.id}">Sign up</a>
               </li>
@@ -158,7 +159,7 @@
             {#each results as r (r.t.id)}
               <li>
                 <span><b class="champ">{r.champion}</b> won <a href="#/t/{r.t.id}">{r.t.name}</a></span>
-                <span class="small muted">{[r.t.game, plural(r.t.entrants.length, 'player'), short(r.t.updatedAt)].filter(Boolean).join(' · ')}</span>
+                <span class="small muted">{[gameOf(r.t), plural(r.t.entrants.length, 'player'), short(r.t.updatedAt)].filter(Boolean).join(' · ')}</span>
               </li>
             {/each}
           </ul>
@@ -203,7 +204,7 @@
             {#each officials.slice(0, 4) as r (r.t.id)}
               <li>
                 <a href="#/t/{r.t.id}">{r.t.name}</a>
-                <span class="small muted">{[r.t.game, STATUS_LABEL[r.status]].filter(Boolean).join(' · ')}</span>
+                <span class="small muted">{[gameOf(r.t), STATUS_LABEL[r.status]].filter(Boolean).join(' · ')}</span>
               </li>
             {/each}
           </ul>

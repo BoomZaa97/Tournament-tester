@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { gameOf } from '../lib/games';
   import TierTag from './TierTag.svelte';
   import OfficialTag from './OfficialTag.svelte';
   import { categoryOf, FORMAT_LABEL, STATUS_LABEL, tierOf } from '../lib/model';
@@ -25,7 +26,7 @@
       <a href="#/t/{t.id}">
         <span class="name">{t.name || 'Untitled'}</span>
         <span class="meta">
-          {#if t.game}<span>{t.game}</span>{/if}
+          {#if gameOf(t)}<span>{gameOf(t)}</span>{/if}
           {#if categoryOf(t)}<span>{categoryOf(t)}</span>{/if}
           {#if t.official === 'yes'}<span><OfficialTag official={t.official} /></span>{/if}
           {#if tierOf(t) !== 'small'}<span><TierTag tier={t.tier} /></span>{/if}

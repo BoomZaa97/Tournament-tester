@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { gameOf } from '../lib/games';
   import { onDestroy } from 'svelte';
   import { applyEdit, groupStandings, resolve, undo } from '../../core';
   import type { Decision, ResolvedMatch, ResultInput } from '../../core';
@@ -453,7 +454,7 @@
         <OfficialTag official={doc.official} />
         <TierTag tier={doc.tier} />
         {[
-          doc.game,
+          gameOf(doc),
           categoryOf(doc),
           divisionOf(doc) === OPEN ? '' : divisionOf(doc),
           FORMAT_LABEL[doc.format],

@@ -5,6 +5,8 @@
   import ChallongeImport from '../components/ChallongeImport.svelte';
   import EntrantEditor from '../components/EntrantEditor.svelte';
   import FormatFields from '../components/FormatFields.svelte';
+  import GamePicker from '../components/GamePicker.svelte';
+  import { categoryForGame, usedGames } from '../lib/games';
   import TierPicker from '../components/TierPicker.svelte';
   import { app, errorText } from '../lib/app.svelte';
   import { CATEGORY_SUGGESTIONS, categoryOf, cleanDivision, DIVISION_SUGGESTIONS, emptyDoc, isByeMatch, matchNumbers } from '../lib/model';
@@ -32,9 +34,17 @@
   app.store.loadAll().then((d) => {
     known = d.players;
     app.noteVerified(d.players);
-    games = [...new Set(d.tournaments.map((t) => t.game).filter(Boolean))];
+    games = usedGames(d.tournaments);
     categories = [...new Set([...d.tournaments.map(categoryOf).filter(Boolean), ...CATEGORY_SUGGESTIONS])];
     divisions = [...new Set([...DIVISION_SUGGESTIONS, ...d.tournaments.map((t) => t.division ?? '').filter(Boolean)])];
+  });
+
+  // picking a game fills in its usual category (until the organizer types their own)
+  let autoCategory = '';
+  $effect(() => {
+    const suggested = categoryForGame(game);
+    if (category === autoCategory) category = suggested;
+    autoCategory = suggested;
   });
 
   const names = $derived(rows.map((r) => r.name.trim()).filter(Boolean));
@@ -58,7 +68,9 @@
   const problem = $derived(
     !name.trim()
       ? 'Give it a name.'
-      : hasDupes
+      : !game
+        ? 'Pick the game: each game has its own ranking.'
+        : hasDupes
           ? 'Two entrants have the same name.'
           : '',
   );
@@ -68,7 +80,7 @@
     saving = true;
     try {
       const { entrants, created } = rowsToPlayers(rows, known);
-      const doc = { ...emptyDoc(), name: name.trim(), game: game.trim(), category: category.trim() || undefined, division: cleanDivision(division), tier, format, options, scoring, entrants, signup: shared && signup };
+      const doc = { ...emptyDoc(), name: name.trim(), game, category: category.trim() || undefined, division: cleanDivision(division), tier, format, options, scoring, entrants, signup: shared && signup };
       const saved = await app.store.save(doc, created);
       app.notify(shared ? 'Tournament created. You are its organizer on this device.' : 'Tournament created');
       app.go(`t/${saved.id}`);
@@ -102,11 +114,10 @@
           <span>Name</span>
           <input bind:value={name} placeholder="Friday Night #12" required />
         </label>
-        <label class="field">
-          <span>Game <span class="muted">(optional)</span></span>
-          <input bind:value={game} placeholder="Any game" list="known-games" />
-          <datalist id="known-games">{#each games as g}<option value={g}></option>{/each}</datalist>
-        </label>
+        <div class="field">
+          <label for="create-game">Game</label>
+          <GamePicker bind:game used={games} id="create-game" />
+        </div>
         <label class="field">
           <span>Category <span class="muted">(optional: Esports, Sports, Board games…)</span></span>
           <input bind:value={category} placeholder="None" list="known-categories" maxlength="40" />

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { gameOf } from '../lib/games';
   import { app, errorText } from '../lib/app.svelte';
   import { LocalStore, ROLE_LABEL, ROLE_RANK, SheetsStore, saveSettings, siteSettings } from '../lib/store';
   import type { AllData, AuditRow, Role, Settings, StaffAccount, Store } from '../lib/store';
@@ -219,7 +220,7 @@
   let tq = $state('');
   const tlist = $derived(
     [...(all?.tournaments ?? [])]
-      .filter((t) => !tq.trim() || `${t.name} ${t.game} ${t.category ?? ''}`.toLowerCase().includes(tq.trim().toLowerCase()))
+      .filter((t) => !tq.trim() || `${t.name} ${gameOf(t)} ${t.category ?? ''}`.toLowerCase().includes(tq.trim().toLowerCase()))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
   );
   // organizers asked for these to be official (counted in the confirmed rating)
@@ -527,7 +528,7 @@
             <li>
               <div>
                 <a href="#/t/{t.id}">{t.name}</a> <TierTag tier={t.tier} />
-                <div class="small muted">{[t.game, `${t.entrants.length} entrants`, STATUS_LABEL[statusOf(t)], `made ${t.createdAt.slice(0, 10)}`].filter(Boolean).join(' · ')}</div>
+                <div class="small muted">{[gameOf(t), `${t.entrants.length} entrants`, STATUS_LABEL[statusOf(t)], `made ${t.createdAt.slice(0, 10)}`].filter(Boolean).join(' · ')}</div>
                 {#if t.officialNote}<div class="small">“{t.officialNote}”</div>{/if}
               </div>
               <div class="row">
@@ -551,7 +552,7 @@
             <li>
               <div>
                 <a href="#/t/{t.id}">{t.name}</a> <TierTag tier={t.tier} /> <OfficialTag official={t.official} pending />
-                <div class="small muted">{[t.game, t.category, `${t.entrants.length} entrants`, STATUS_LABEL[statusOf(t)], `made ${t.createdAt.slice(0, 10)}`].filter(Boolean).join(' · ')}</div>
+                <div class="small muted">{[gameOf(t), t.category, `${t.entrants.length} entrants`, STATUS_LABEL[statusOf(t)], `made ${t.createdAt.slice(0, 10)}`].filter(Boolean).join(' · ')}</div>
               </div>
               <div class="row">
                 {#if t.official === 'yes'}

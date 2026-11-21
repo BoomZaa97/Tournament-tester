@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { gameOf } from '../lib/games';
   import { app, errorText } from '../lib/app.svelte';
   import { ROLE_LABEL, TWO_STEP, forgetAccount, orgKeyIds, stopLoginAs, viewingAs } from '../lib/store';
   import type { TournamentDoc } from '../lib/model';
@@ -345,7 +346,7 @@
       {#if playing.length}
         <ul class="list">
           {#each newest(playing) as t (t.id)}
-            <li><a href="#/{t.signup || t.checkIn ? 'j' : 't'}/{t.id}">{t.name}</a> <span class="small muted">{t.game}</span></li>
+            <li><a href="#/{t.signup || t.checkIn ? 'j' : 't'}/{t.id}">{t.name}</a> <span class="small muted">{gameOf(t)}</span></li>
           {/each}
         </ul>
       {:else}
@@ -358,7 +359,7 @@
         <h2>Running</h2>
         <ul class="list">
           {#each newest(running) as t (t.id)}
-            <li><a href="#/t/{t.id}">{t.name}</a> <span class="small muted">{t.game}</span></li>
+            <li><a href="#/t/{t.id}">{t.name}</a> <span class="small muted">{gameOf(t)}</span></li>
           {/each}
         </ul>
       </section>
