@@ -54,6 +54,7 @@
     });
 
   const all = $derived(data?.tournaments ?? []);
+  const canCreate = $derived((void app.account, app.store.can('create')));
   // most played first
   const games = $derived.by(() => {
     const count = new Map<string, number>();
@@ -200,6 +201,15 @@
   <p class="muted intro">
     Each game has its own ranking: a rating in one game says nothing about another.
   </p>
+  {#if data && !games.length}
+    <div class="start">
+      <p>
+        <b>No tournaments with a game have been played yet</b>, so there's nothing to rank. As soon as one has results,
+        its game gets a ranking here, with an overview of every game and of each category (like Esports) across its games.
+      </p>
+      {#if canCreate}<a class="btn primary" href="#/new">New tournament</a>{/if}
+    </div>
+  {/if}
 
   {#if games.length > 1}
     <div class="chips games" role="tablist" aria-label="Game">
@@ -484,6 +494,8 @@
   button.link:hover { color: var(--ink); text-decoration-color: currentColor; }
   .card h2 button.link { text-decoration: none; color: var(--ink); }
   .card h2 button.link:hover { text-decoration: underline; }
+  .start { border: 1px solid var(--line-strong); padding: 14px 16px; margin: 0 0 22px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .start p { margin: 0; flex: 1 1 320px; }
   .bycat { margin: 26px 0 10px; font-size: 20px; }
   .board { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 14px; }
   .card { border: 1px solid var(--line-strong); border-top: 3px solid var(--ink); border-radius: var(--radius); background: var(--card); padding: 12px 14px; min-width: 0; }
