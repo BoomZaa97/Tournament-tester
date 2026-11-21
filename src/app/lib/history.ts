@@ -104,6 +104,58 @@ export function buildHistory(tournaments: TournamentDoc[], players: Player[]): M
   return out;
 }
 
+/** One game's part of a player's record (matches, tournaments, titles). */
+export function statsForGame(s: PlayerStats, game: string): PlayerStats {
+  const matches = s.matches.filter((m) => m.game === game);
+  const tournaments = s.tournaments.filter((t) => t.game === game);
+  return {
+    player: s.player,
+    matches,
+    tournaments,
+    wins: matches.filter((m) => m.outcome === 'W').length,
+    losses: matches.filter((m) => m.outcome === 'L').length,
+    draws: matches.filter((m) => m.outcome === 'D').length,
+    titles: tournaments.filter((t) => t.finished && t.place === 1).length,
+  };
+}
+
+export interface GameLine {
+  game: string;
+  events: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  titles: number;
+  /** Best finishing place in a finished tournament. */
+  best: number | null;
+  points: number;
+  /** When they last played it. */
+  last: string;
+}
+
+/** A player's record split by game, most played first. */
+export function byGame(s: PlayerStats): GameLine[] {
+  const games = [...new Set(s.tournaments.map((t) => t.game))];
+  return games
+    .map((game) => {
+      const g = statsForGame(s, game);
+      const places = g.tournaments.filter((t) => t.finished && t.place).map((t) => t.place!);
+      const dates = [...g.tournaments.map((t) => t.at), ...g.matches.map((m) => m.at)].sort();
+      return {
+        game,
+        events: g.tournaments.length,
+        wins: g.wins,
+        losses: g.losses,
+        draws: g.draws,
+        titles: g.titles,
+        best: places.length ? Math.min(...places) : null,
+        points: g.tournaments.reduce((n, t) => n + t.points, 0),
+        last: dates[dates.length - 1] ?? '',
+      };
+    })
+    .sort((a, b) => b.events - a.events || b.wins + b.losses + b.draws - (a.wins + a.losses + a.draws) || a.game.localeCompare(b.game));
+}
+
 export function winRate(s: Pick<PlayerStats, 'wins' | 'losses' | 'draws'>): string {
   const n = s.wins + s.losses + s.draws;
   return n ? `${Math.round(((s.wins + s.draws / 2) / n) * 100)}%` : '–';

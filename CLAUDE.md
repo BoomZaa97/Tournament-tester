@@ -102,6 +102,12 @@ Made because Challonge made fixing wrong results hard.
   required name ("Saved as CS2" hint). The game is required on Create and on Edit setup. Picking a listed game fills the
   category (`categoryForGame`) unless the organizer typed one. Challonge import stores `canonicalGame(got.game)`. Links
   `#/players/cs2` open CS2. Player page: "No. N in <game>" badges for top-10 places (not shown for Anonymous players).
+- Categories across games: ranking links are `#/players/<game | all-games>[/<category>]` (`all-games/Esports` = everyone in
+  Esports, every game); category chips rewrite the link. The overview adds "By category" cards for categories played in 2+
+  games. Player page: an "<category> (all games)" rank card (and "No. N" badge) for those categories.
+- Player page per game (`lib/history.ts` `byGame` / `statsForGame`): with 2+ games, a "By game" table (events, record,
+  win %, titles, best, rating + rank, last played) and game chips; picking a game shows the stats row, rank cards, chart,
+  event sizes, tournaments, head-to-head and matches for that game only (`view` in Player.svelte; `stats` = all games).
 - Home (`routes/Home.svelte`, `#/`): plain "results sheet" front page, no marketing hero / step lists / stat cards.
   Masthead (date line, "Tournaments & results", counts, New tournament). Top players shows the
   leaders greyed ("still settling") while nobody has PROVISIONAL rated matches yet. Left: On now, Taking sign-ups, Latest results

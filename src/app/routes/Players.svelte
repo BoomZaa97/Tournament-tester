@@ -11,14 +11,17 @@
   let data = $state<AllData | null>(null);
   let error = $state('');
   let q = $state('');
-  /** #/players/<game> opens that game's ranking; ALL = every game together; OVERVIEW = the top of each game. */
+  /**
+   * #/players/<game>[/<category>] opens that game's ranking (in that category); ALL = every game together
+   * (#/players/all-games/Esports = one category across its games); OVERVIEW = the top of each game and category.
+   */
   const ALL = 'all-games';
   const OVERVIEW = 'overview';
   const fromLink = app.path[1] ?? '';
   // #/players/cs2 opens CS2 too
   let game = $state(fromLink === ALL || fromLink === OVERVIEW ? '' : canonicalGame(fromLink));
   let overview = $state(fromLink === OVERVIEW);
-  let category = $state('');
+  let category = $state(fromLink === OVERVIEW ? '' : (app.path[2] ?? ''));
   let division = $state('');
   let tier = $state<Tier | ''>('');
   let year = $state(0);
@@ -57,14 +60,21 @@
     for (const t of all) if (gameOf(t)) count.set(gameOf(t), (count.get(gameOf(t)) ?? 0) + 1);
     return [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([g]) => g);
   });
+  /** Keeps the link shareable without reloading the page. */
+  function writeLink() {
+    history.replaceState(null, '', '#/players/' + encodeURIComponent(game || ALL) + (category ? '/' + encodeURIComponent(category) : ''));
+  }
   function pickGame(g: string, c = '') {
     picked = true;
     overview = false;
     game = g;
     category = c;
-    // keep the link shareable without reloading the page
-    history.replaceState(null, '', '#/players/' + encodeURIComponent(g || ALL));
+    writeLink();
     if (c) scrollTo({ top: 0 });
+  }
+  function pickCategory(c: string) {
+    category = c;
+    writeLink();
   }
   function pickOverview() {
     picked = true;
@@ -92,6 +102,25 @@
       };
     });
   });
+  /** One card per category played in 2+ games (Esports = CS2 + Valorant + …): its players across those games. */
+  const catBoard = $derived.by(() => {
+    if (!data || !showOverview) return [];
+    const players = data.players;
+    const gamesOf = new Map<string, Set<string>>();
+    for (const t of all) {
+      const c = categoryOf(t);
+      if (c && gameOf(t)) gamesOf.set(c, (gamesOf.get(c) ?? new Set()).add(gameOf(t)));
+    }
+    return [...gamesOf]
+      .filter(([, gs]) => gs.size > 1)
+      .map(([c, gs]) => {
+        const ts = filterTournaments(all, { category: c });
+        const rows = ranked(rankings(ts, players).values(), by);
+        const top = rows.slice(0, 5).filter((r, i, l) => r.rank !== null || !l.some((x) => x.rank !== null));
+        return { category: c, games: games.filter((g) => gs.has(g)), events: ts.length, players: rows.length, top };
+      })
+      .sort((a, b) => b.events - a.events || a.category.localeCompare(b.category));
+  });
   const inGame = $derived(all.filter((t) => !game || gameOf(t) === game));
   const categories = $derived([...new Set(inGame.map(categoryOf).filter(Boolean))].sort());
   const inCategory = $derived(inGame.filter((t) => !category || categoryOf(t) === category));
@@ -102,6 +131,7 @@
   const tiers = $derived((['major', 'semi', 'small'] as Tier[]).filter((x) => inGame.some((t) => tierOf(t) === x)));
   const years = $derived([...new Set(all.map((t) => new Date(t.createdAt).getFullYear()))].sort((a, b) => b - a));
   $effect(() => {
+    if (!data) return; // a category from the link stays until there's something to check it against
     if (category && !categories.includes(category)) category = '';
     if (division && !divisions.includes(division)) division = '';
     if (tier && !tiers.includes(tier)) tier = '';
@@ -144,8 +174,29 @@
   }
 </script>
 
+{#snippet mini(top: Ranked[])}
+    {#if top.length}
+      <ol class="mini">
+        {#each top as r (r.player.id)}
+          <li class:me={r.player.id === myId}>
+            <span class="mrank">{r.rank ?? '–'}</span>
+            <span class="mname">
+              {#if anon(r)}<span class="anon">Anonymous</span>{:else}<a href="#/p/{r.player.id}">{r.player.name}</a><Verified id={r.player.id} />{/if}
+            </span>
+            <span class="mval" class:prov={r.rank === null}>{value(r)}</span>
+          </li>
+        {/each}
+      </ol>
+      {#if top[0].rank === null}<p class="small muted settle">Nobody ranked yet: grey numbers are still settling ({PROVISIONAL} matches needed).</p>{/if}
+    {:else}
+      <p class="small muted">
+        {by === 'points' ? 'No points yet: points come from finished tournaments.' : by === 'confirmed' ? 'No official tournaments here yet.' : `Nobody ranked yet: players need ${PROVISIONAL} rated matches.`}
+      </p>
+    {/if}
+  {/snippet}
+
 <div class="wrap page">
-  <h1>Rankings{#if showOverview}<span class="game">&nbsp;· every game</span>{:else if game}<span class="game">&nbsp;· {game}</span>{/if}</h1>
+  <h1>Rankings{#if showOverview}<span class="game">&nbsp;· every game</span>{:else if game || category}<span class="game">&nbsp;· {[game, category].filter(Boolean).join(' · ')}</span>{/if}</h1>
   <p class="muted intro">
     Each game has its own ranking: a rating in one game says nothing about another.
   </p>
@@ -161,9 +212,9 @@
   {/if}
   {#if categories.length > 1 && !showOverview}
     <div class="chips cats" role="tablist" aria-label="Category">
-      <button role="tab" class:on={!category} aria-selected={!category} onclick={() => (category = '')}>All categories</button>
+      <button role="tab" class:on={!category} aria-selected={!category} onclick={() => pickCategory('')}>All categories</button>
       {#each categories as c}
-        <button role="tab" class:on={category === c} aria-selected={category === c} onclick={() => (category = c)}>{c}</button>
+        <button role="tab" class:on={category === c} aria-selected={category === c} onclick={() => pickCategory(c)}>{c}</button>
       {/each}
     </div>
   {/if}
@@ -240,24 +291,7 @@
         <section class="card">
           <h2><button class="link gname" onclick={() => pickGame(b.game)}>{b.game}</button></h2>
           <p class="small muted sub">{b.events} tournament{b.events === 1 ? '' : 's'} · {b.players} player{b.players === 1 ? '' : 's'}</p>
-          {#if b.top.length}
-            <ol class="mini">
-              {#each b.top as r (r.player.id)}
-                <li class:me={r.player.id === myId}>
-                  <span class="mrank">{r.rank ?? '–'}</span>
-                  <span class="mname">
-                    {#if anon(r)}<span class="anon">Anonymous</span>{:else}<a href="#/p/{r.player.id}">{r.player.name}</a><Verified id={r.player.id} />{/if}
-                  </span>
-                  <span class="mval" class:prov={r.rank === null}>{value(r)}</span>
-                </li>
-              {/each}
-            </ol>
-            {#if b.top[0].rank === null}<p class="small muted settle">Nobody ranked yet: grey numbers are still settling ({PROVISIONAL} matches needed).</p>{/if}
-          {:else}
-            <p class="small muted">
-              {by === 'points' ? 'No points yet: points come from finished tournaments.' : by === 'confirmed' ? 'No official tournaments here yet.' : `Nobody ranked yet: players need ${PROVISIONAL} rated matches.`}
-            </p>
-          {/if}
+          {@render mini(b.top)}
           <div class="foot">
             <button class="link small" onclick={() => pickGame(b.game)}>Full ranking →</button>
             {#if b.cats.length > 1}
@@ -268,6 +302,21 @@
         </section>
       {/each}
     </div>
+    {#if catBoard.length}
+      <h2 class="bycat">By category <span class="small muted">· players across every game in it</span></h2>
+      <div class="board">
+        {#each catBoard as b (b.category)}
+          <section class="card">
+            <h2><button class="link gname" onclick={() => pickGame('', b.category)}>{b.category}</button></h2>
+            <p class="small muted sub">{b.games.join(', ')} · {b.events} tournament{b.events === 1 ? '' : 's'} · {b.players} player{b.players === 1 ? '' : 's'}</p>
+            {@render mini(b.top)}
+            <div class="foot">
+              <button class="link small" onclick={() => pickGame('', b.category)}>Full ranking →</button>
+            </div>
+          </section>
+        {/each}
+      </div>
+    {/if}
   {:else if shown.length === 0}
     <div class="empty">
       {q.trim() ? `Nobody called “${q.trim()}” here.` : verifiedOnly ? 'No verified players here yet.' : 'No players here yet. They appear once they play in a tournament.'}
@@ -435,6 +484,7 @@
   button.link:hover { color: var(--ink); text-decoration-color: currentColor; }
   .card h2 button.link { text-decoration: none; color: var(--ink); }
   .card h2 button.link:hover { text-decoration: underline; }
+  .bycat { margin: 26px 0 10px; font-size: 20px; }
   .board { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 14px; }
   .card { border: 1px solid var(--line-strong); border-top: 3px solid var(--ink); border-radius: var(--radius); background: var(--card); padding: 12px 14px; min-width: 0; }
   .card h2 { margin: 0; font-size: 24px; border: 0; padding: 0; }

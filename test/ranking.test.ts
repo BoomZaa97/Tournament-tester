@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { resolve } from '../src/core';
 import { categoryOf, cleanDivision, divisionOf, emptyDoc, toState } from '../src/app/lib/model';
 import type { TournamentDoc } from '../src/app/lib/model';
+import { buildHistory, byGame, statsForGame } from '../src/app/lib/history';
 import { eventPoints, filterTournaments, placementPoints, PROVISIONAL, ranked, rankings, START_RATING } from '../src/app/lib/ranking';
 
 let clock = Date.parse('2026-01-01T10:00:00Z');
@@ -171,5 +172,23 @@ describe('category and division', () => {
     const c = { ...emptyDoc(), id: 'c', category: 'U18' };
     expect(filterTournaments([a, b, c], { division: 'U18' }).map((t) => t.id)).toEqual(['a', 'c']);
     expect(filterTournaments([a, b, c], { division: 'Open' }).map((t) => t.id)).toEqual(['b']);
+  });
+});
+
+describe('player record by game', () => {
+  it('splits matches, titles and best places per game, most played first', () => {
+    const cs = played('cs1', 'single_elim', ['a', 'b', 'c', 'd'], { game: 'cs2' });
+    const cs2 = played('cs2', 'round_robin', ['a', 'b', 'c'], { game: 'Counter-Strike 2' });
+    const val = played('v1', 'single_elim', ['b', 'c'], { game: 'Valorant' }, () => 'p2');
+    const b = buildHistory([cs, cs2, val], []).get('b')!;
+    const lines = byGame(b);
+    expect(lines.map((l) => l.game)).toEqual(['CS2', 'Valorant']);
+    expect(lines[0]).toMatchObject({ events: 2, wins: 2, losses: 2, titles: 0, best: 2 });
+    expect(lines[1]).toMatchObject({ events: 1, wins: 0, losses: 1, titles: 0, best: 2 });
+    const only = statsForGame(b, 'Valorant');
+    expect(only.matches.every((m) => m.game === 'Valorant')).toBe(true);
+    expect(only.tournaments.map((t) => t.id)).toEqual(['v1']);
+    expect(only.wins + only.losses + only.draws).toBe(only.matches.length);
+    expect(statsForGame(buildHistory([cs, cs2, val], []).get('c')!, 'Valorant').titles).toBe(1);
   });
 });

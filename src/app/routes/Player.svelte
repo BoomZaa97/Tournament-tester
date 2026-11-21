@@ -5,7 +5,7 @@
   import OfficialTag from '../components/OfficialTag.svelte';
   import Verified from '../components/Verified.svelte';
   import { app, errorText } from '../lib/app.svelte';
-  import { buildHistory, winRate } from '../lib/history';
+  import { buildHistory, byGame, statsForGame, winRate } from '../lib/history';
   import type { PlayerStats } from '../lib/history';
   import { squarePhoto } from '../lib/photo';
   import { categoryOf, TIER_LABEL, TIERS } from '../lib/model';
@@ -84,12 +84,27 @@
     }
   };
 
+  // ---- one line per game they played; picking one shows the rest of the page for that game only
+  const games = $derived(stats ? byGame(stats) : []);
+  let pickedGame = $state('');
+  $effect(() => {
+    if (pickedGame && !games.some((g) => g.game === pickedGame)) pickedGame = '';
+  });
+  const view = $derived(stats && pickedGame ? statsForGame(stats, pickedGame) : stats);
+  function pickGame(g: string) {
+    pickedGame = g;
+    chartKey = null;
+    allMatches = false;
+    allH2h = false;
+    tierFilter = '';
+  }
+
   // ---- rating and confirmed rating in the player's main game (ratings only make sense within one game)
   const overall = $derived.by(() => {
     if (!data || !stats) return null;
     const count = new Map<string, number>();
     for (const t of stats.tournaments) count.set(gameOf(t), (count.get(gameOf(t)) ?? 0) + 1);
-    const game = [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
+    const game = pickedGame || [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
     if (game === undefined) return null;
     const rows = rankings(data.tournaments.filter((t) => gameOf(t) === game), data.players);
     const list = ranked(rows.values(), 'rating');
@@ -121,14 +136,20 @@
       // a category card only says something new when the game has other tournaments too
       for (const category of [...cats].sort()) if (inGame.some((t) => categoryOf(t) !== category)) scopes.push({ game, category });
     }
+    // a category across every game in it (Esports = CS2 + Valorant + …), when it has more than one game
+    const myCats = new Set(stats.tournaments.map((t) => t.category).filter(Boolean));
+    for (const category of [...myCats].sort()) {
+      if (new Set(d.tournaments.filter((t) => categoryOf(t) === category).map(gameOf)).size > 1) scopes.push({ game: '', category });
+    }
     return scopes.map(({ game, category }) => {
-      const ts = d.tournaments.filter((t) => gameOf(t) === game && (!category || categoryOf(t) === category));
+      const ts = d.tournaments.filter((t) => (!game || gameOf(t) === game) && (!category || categoryOf(t) === category));
       const list = ranked(rankings(ts, d.players).values(), 'rating');
       const me = list.find((r) => r.player.id === id)!;
       return {
         key: `${game}|${category}`,
         game,
-        label: (game || 'No game set') + (category ? ` · ${category}` : ''),
+        label: !game ? `${category} (all games)` : game + (category ? ` · ${category}` : ''),
+        link: '#/players/' + encodeURIComponent(game || 'all-games') + (category ? '/' + encodeURIComponent(category) : ''),
         me,
         list,
         of: list.filter((r) => r.rank !== null).length,
@@ -144,7 +165,9 @@
       : gameCards.filter((c) => c.me.rank !== null && c.me.rank <= 10).sort((a, b) => a.me.rank! - b.me.rank! || a.label.localeCompare(b.label)),
   );
   let chartKey = $state<string | null>(null);
-  const chartCard = $derived(gameCards.find((c) => c.key === chartKey) ?? gameCards.find((c) => c.me.history.length));
+  /** With a game picked, only that game's cards. */
+  const cardsShown = $derived(pickedGame ? gameCards.filter((c) => c.game === pickedGame) : gameCards);
+  const chartCard = $derived(cardsShown.find((c) => c.key === chartKey) ?? cardsShown.find((c) => c.me.history.length));
   /** The leaderboard around this player in the chosen game: two above, two below. */
   const around = $derived.by(() => {
     const c = chartCard;
@@ -158,7 +181,7 @@
   // ---- by event size (major / semi-major / small)
   let tierFilter = $state<Tier | ''>('');
   const honours = $derived.by(() => {
-    const ts = stats?.tournaments ?? [];
+    const ts = view?.tournaments ?? [];
     return TIERS.filter((t) => ts.some((x) => x.tier === t)).map((tier) => {
       const mine = ts.filter((x) => x.tier === tier);
       const done = mine.filter((x) => x.finished && x.place);
@@ -173,16 +196,16 @@
     });
   });
   const majorTitles = $derived(honours.find((h) => h.tier === 'major')?.medals[0] ?? 0);
-  const tournamentsShown = $derived((stats?.tournaments ?? []).filter((t) => !tierFilter || t.tier === tierFilter));
+  const tournamentsShown = $derived((view?.tournaments ?? []).filter((t) => !tierFilter || t.tier === tierFilter));
   let allMatches = $state(false);
   let allH2h = $state(false);
 
   const medals = $derived(
-    [1, 2, 3].map((p) => stats?.tournaments.filter((t) => t.finished && t.place === p).length ?? 0),
+    [1, 2, 3].map((p) => view?.tournaments.filter((t) => t.finished && t.place === p).length ?? 0),
   );
-  const form = $derived(stats?.matches.slice(0, 10) ?? []);
+  const form = $derived(view?.matches.slice(0, 10) ?? []);
   const streak = $derived.by(() => {
-    const ms = stats?.matches ?? [];
+    const ms = view?.matches ?? [];
     if (!ms.length) return '';
     const n = ms.findIndex((m) => m.outcome !== ms[0].outcome);
     const count = n < 0 ? ms.length : n;
@@ -205,9 +228,9 @@
   load();
 
   const h2h = $derived.by(() => {
-    if (!stats) return [];
+    if (!view) return [];
     const m = new Map<string, { opp: string; w: number; l: number; d: number }>();
-    for (const x of stats.matches) {
+    for (const x of view.matches) {
       const r = m.get(x.opponent) ?? { opp: x.opponent, w: 0, l: 0, d: 0 };
       if (x.outcome === 'W') r.w++;
       else if (x.outcome === 'L') r.l++;
@@ -282,6 +305,7 @@
   {:else if !stats}
     <p class="muted">Loading…</p>
   {:else}
+    {@const v = view ?? stats}
     <div class="head">
     {#if profile?.photo}<img class="photo" src={profile.photo} alt="" width="96" height="96" />{/if}
     <div class="who">
@@ -313,7 +337,7 @@
     {#if topPlaces.length}
       <ul class="topplaces" aria-label="Top places in the rankings">
         {#each topPlaces as c (c.key)}
-          <li class:first={c.me.rank === 1}><a href="#/players/{encodeURIComponent(c.game)}"><b>No. {c.me.rank}</b> in {c.label}</a></li>
+          <li class:first={c.me.rank === 1}><a href={c.link}><b>No. {c.me.rank}</b> in {c.label}</a></li>
         {/each}
       </ul>
     {/if}
@@ -369,6 +393,14 @@
       </p>
     {/if}
 
+    {#if games.length > 1}
+      <div class="chips gamepick" role="tablist" aria-label="Show games">
+        <button role="tab" class:on={!pickedGame} aria-selected={!pickedGame} onclick={() => pickGame('')}>All games</button>
+        {#each games.filter((x) => x.game) as g (g.game)}
+          <button role="tab" class:on={pickedGame === g.game} aria-selected={pickedGame === g.game} onclick={() => pickGame(g.game)}>{g.game || 'No game set'}</button>
+        {/each}
+      </div>
+    {/if}
     <dl class="stats">
       <div>
         <dt class="label" title="Elo rating from every rated match{overall?.game ? ` in ${overall.game}` : ''}">Rating{#if overall?.several}<span class="g">&nbsp;· {overall.game}</span>{/if}</dt>
@@ -390,20 +422,52 @@
           </small>
         </dd>
       </div>
-      <div><dt class="label">Titles</dt><dd>{stats.titles}{#if majorTitles}<small class="sub">{majorTitles} major</small>{/if}</dd></div>
+      <div><dt class="label">Titles</dt><dd>{v.titles}{#if majorTitles}<small class="sub">{majorTitles} major</small>{/if}</dd></div>
       <div>
         <dt class="label" title="1st / 2nd / 3rd places">Medals</dt>
         <dd class="medals"><span>{medals[0]}</span><i>/</i><span>{medals[1]}</span><i>/</i><span>{medals[2]}</span></dd>
       </div>
-      <div><dt class="label">Record</dt><dd>{stats.wins}–{stats.losses}{stats.draws ? `–${stats.draws}` : ''}<small class="sub">{winRate(stats)} won</small></dd></div>
-      <div><dt class="label">Events</dt><dd>{stats.tournaments.length}</dd></div>
+      <div><dt class="label">Record</dt><dd>{v.wins}–{v.losses}{v.draws ? `–${v.draws}` : ''}<small class="sub">{winRate(v)} won</small></dd></div>
+      <div><dt class="label">Events</dt><dd>{v.tournaments.length}</dd></div>
     </dl>
 
-    {#if gameCards.length}
+    {#if games.length > 1}
+      <section class="bygame">
+        <h2>By game</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Game</th><th class="num">Events</th><th class="num">Record</th><th class="num hide-xs">Won</th>
+              <th class="num">Titles</th><th class="num hide-xs">Best</th><th class="num">Rating</th><th class="hide-xs">Last played</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each games as g (g.game)}
+              {@const card = gameCards.find((c) => c.key === g.game + '|')}
+              <tr class:on={pickedGame === g.game}>
+                <td>{#if g.game}<button class="linkish gname" onclick={() => pickGame(pickedGame === g.game ? '' : g.game)}>{g.game}</button>{:else}<span class="muted">No game set</span>{/if}</td>
+                <td class="num">{g.events}</td>
+                <td class="num">{g.wins}–{g.losses}{g.draws ? `–${g.draws}` : ''}</td>
+                <td class="num hide-xs">{winRate(g)}</td>
+                <td class="num" class:gold={g.titles > 0}>{g.titles || '–'}</td>
+                <td class="num hide-xs">{g.best ? ordinal(g.best) : '–'}</td>
+                <td class="num">
+                  {#if card}{Math.round(card.me.rating)}{#if card.me.rank}<small class="muted">&nbsp;#{card.me.rank}</small>{/if}{:else}–{/if}
+                </td>
+                <td class="hide-xs small muted">{g.last ? new Date(g.last).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+        <p class="small muted">Pick a game to see only its tournaments, opponents and matches below.</p>
+      </section>
+    {/if}
+
+    {#if cardsShown.length}
       <section class="ranks">
         <h2>Rankings</h2>
         <div class="cards">
-          {#each gameCards as c (c.key)}
+          {#each cardsShown as c (c.key)}
             <button class="gcard" class:on={chartCard?.key === c.key} onclick={() => (chartKey = c.key)} disabled={!c.me.history.length}>
               <span class="label">{c.label}</span>
               <span class="big">
@@ -425,11 +489,11 @@
           {/each}
         </div>
         {#if chartCard?.me.history.length}
-          <h3 class="charthead">Rating{gameCards.length > 1 ? ` · ${chartCard.label}` : ''}</h3>
+          <h3 class="charthead">Rating{cardsShown.length > 1 ? ` · ${chartCard.label}` : ''}</h3>
           <RatingChart points={chartCard.me.history} />
         {/if}
         {#if around.length > 1}
-          <h3 class="charthead">Leaderboard{gameCards.length > 1 ? ` · ${chartCard!.label}` : ''}</h3>
+          <h3 class="charthead">Leaderboard{cardsShown.length > 1 ? ` · ${chartCard!.label}` : ''}</h3>
           <table class="around">
             <tbody>
               {#each around as r (r.player.id)}
@@ -444,7 +508,7 @@
               {/each}
             </tbody>
           </table>
-          <a class="small" href="#/players">Full rankings →</a>
+          <a class="small" href={chartCard?.link ?? '#/players'}>Full rankings →</a>
         {/if}
       </section>
     {/if}
@@ -491,7 +555,7 @@
             </div>
           {/if}
         </div>
-        {#if !stats.tournaments.length}<p class="muted">No tournaments yet.</p>{/if}
+        {#if !v.tournaments.length}<p class="muted">No tournaments yet.</p>{/if}
         <ul class="plain">
           {#each tournamentsShown as t (t.id)}
             <li>
@@ -541,9 +605,9 @@
             {#if streak}<span class="small muted">{streak}</span>{/if}
           </div>
         {/if}
-        {#if stats.matches.length}
+        {#if v.matches.length}
           <ul class="plain matches">
-            {#each allMatches ? stats.matches : stats.matches.slice(0, 15) as m, i (i)}
+            {#each allMatches ? v.matches : v.matches.slice(0, 15) as m, i (i)}
               <li>
                 <span class="res r-{m.outcome}">{m.outcome}</span>
                 <span class="mbody">
@@ -553,8 +617,8 @@
               </li>
             {/each}
           </ul>
-          {#if stats.matches.length > 15}
-            <button class="small ghost more" onclick={() => (allMatches = !allMatches)}>{allMatches ? 'Show fewer' : `Show all ${stats.matches.length} matches`}</button>
+          {#if v.matches.length > 15}
+            <button class="small ghost more" onclick={() => (allMatches = !allMatches)}>{allMatches ? 'Show fewer' : `Show all ${v.matches.length} matches`}</button>
           {/if}
         {:else}
           <p class="muted">No matches played yet.</p>
@@ -642,6 +706,12 @@
   .around .nm a { font-weight: 600; }
   .around tr.self td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
   .around tr.self td:first-child { box-shadow: inset 3px 0 0 var(--accent); color: var(--accent); }
+  .bygame { margin-bottom: 32px; }
+  .bygame table { margin: 8px 0 6px; }
+  .bygame .gold { color: var(--accent); font-weight: 700; }
+  .bygame tr.on td { background: var(--accent-soft); }
+  .bygame .gname { background: none; border: 0; padding: 0; min-height: 0; color: var(--ink); text-decoration: underline; font: inherit; font-weight: 600; cursor: pointer; text-align: left; }
+  .gamepick { margin: 4px 0 10px; }
   .honours { margin-bottom: 32px; }
   .honours table { margin-top: 8px; }
   .honours .gold { color: var(--accent); font-weight: 700; }
